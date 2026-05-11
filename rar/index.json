@@ -1,0 +1,10 @@
+{
+  "schema": "rapp-rar-index/1.0",
+  "neighborhood_rappid": "rappid:v2:neighborhood:@rapp-commons/origin:3929ce90ebe97fe2a95432e9f647f3a3@github.com/kody-w/rapp-commons",
+  "updated_at": "2026-05-11T00:00:00Z",
+  "note": "The commons does not ship any neighborhood-specific agents. Visitors install agents from upstream RAR (kody-w/RAR) — egg_hatcher to join, twin_agent to host sub-twins. This file exists so federation tools that walk neighborhood rar/index.json find a valid empty manifest here.",
+  "agents":  [],
+  "rapps":   [],
+  "senses":  [],
+  "organs":  []
+}
