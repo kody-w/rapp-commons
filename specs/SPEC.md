@@ -16,7 +16,8 @@ The canonical parent spec lives at `https://github.com/kody-w/RAPP/blob/main/pag
 - **Article XLVI** — rappid IS the global address; estate entries store ONLY `{rappid, added_at, via}`; no per-consumer parsers.
 - **Article XLVII + .5/.5.1/.5.2/.5.3** — substrate-agnostic federation; this neighborhood is reachable over github raw, GitHub Pages, LAN HTTP, AirDrop'd egg, and sneakernet file://.
 - **Article XLVIII** — two-tier estate; the operator joining keeps their public + private estates separate; private path is opaque.
-- **Article L** — substrate federation (the umbrella rule): operators can federate the commons across any substrate that can serve the canonical JSON.
+- **Article L** — `.egg` is the universal portable unit; one extension, one hatcher, refuses on unknown kinds.
+- **Article LI** — every neighborhood front gate (`index.html` at repo root) MUST display a tether QR on first paint. The commons conforms — `index.html` includes the canonical `rapp-front-gate-qr/1.0` snippet (QRious-rendered, encodes `.well-known/neighborhood.egg`, gracefully degrades to plain-URL text when the CDN is unreachable). See `pages/docs/QR_FRONT_GATE.md` in the parent RAPP repo for the spec.
 
 ## Antipatterns inherited from upstream
 
