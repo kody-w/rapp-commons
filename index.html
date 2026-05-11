@@ -179,6 +179,40 @@ async function renderHolocardBlock() {
   }
 }
 renderHolocardBlock();
+
+// ── 🛎️ Ring the doorbell — loads sphere.html (3D doorman) in an iframe
+//    on the front gate itself. Auth (rapp_settings.ghuToken) passes
+//    through silently because same-origin localStorage is shared with
+//    the tether and the sphere. ──
+let doormanCallDurTimer = 0;
+function openDoormanCall() {
+  const modal = document.getElementById('doorman-call');
+  const iframe = document.getElementById('doorman-call-iframe');
+  const sphereUrl = 'https://kody-w.github.io/RAPP/pages/sphere.html?seed=kody-w/rapp-commons';
+  iframe.src = sphereUrl;
+  modal.style.display = 'flex';
+  const startedAt = Date.now();
+  if (doormanCallDurTimer) clearInterval(doormanCallDurTimer);
+  doormanCallDurTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    const mm = String(Math.floor(s/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    document.getElementById('doorman-call-duration').textContent = mm + ':' + ss;
+  }, 1000);
+}
+function closeDoormanCall() {
+  const modal = document.getElementById('doorman-call');
+  const iframe = document.getElementById('doorman-call-iframe');
+  modal.style.display = 'none';
+  iframe.src = 'about:blank';
+  if (doormanCallDurTimer) { clearInterval(doormanCallDurTimer); doormanCallDurTimer = 0; }
+  document.getElementById('doorman-call-duration').textContent = '00:00';
+}
+document.getElementById('ring-doorman').addEventListener('click', openDoormanCall);
+document.getElementById('doorman-call-end').addEventListener('click', closeDoormanCall);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('doorman-call').style.display === 'flex') closeDoormanCall();
+});
 </script>
 </head>
 <body>
@@ -218,6 +252,18 @@ renderHolocardBlock();
           <p style="font-size:0.7rem;color:var(--mut);margin-top:8px;line-height:1.4">Spin the wheel on any RAPP tether's Dial mode to these 7 words → resolves to this neighborhood. Hero use case: memorize 7 words, summon anywhere, no QR needed.</p>
         </div>
       </div>
+    </div>
+    <!-- ╰────────────────────────────────────────────────────────────────╯ -->
+
+    <!-- ╭─── 🛎️ Call the doorman (ring-the-doorbell pattern) ──────────╮
+         The QR / holocard / incantation are the primary summoning surfaces.
+         This button is the casual visitor's path: tap to "ring the doorbell"
+         on the neighborhood front gate — the doorman (sphere.html) answers
+         the door in an iframe right here. No tether needed; the call lives
+         on the front gate. -->
+    <div style="margin-top:14px;padding:14px;background:linear-gradient(135deg,rgba(63,185,80,0.10),rgba(88,166,255,0.06));border:1px solid rgba(63,185,80,0.35);border-radius:10px;text-align:center">
+      <div style="font-size:0.74rem;color:var(--mut);margin-bottom:8px">Or just ring the doorbell — the doorman answers right here.</div>
+      <button id="ring-doorman" style="background:#3fb950;border:none;color:#000;border-radius:8px;padding:11px 22px;font-size:0.92rem;font-weight:700;cursor:pointer;font-family:inherit">🛎️ Call the doorman</button>
     </div>
     <!-- ╰────────────────────────────────────────────────────────────────╯ -->
   </div>
@@ -277,6 +323,34 @@ movement: free-walk</pre>
     <li>❌ Asking the commons soul to author content on behalf of another operator.</li>
   </ul>
 </section>
+
+<!-- ╭─── Doorman call iframe modal (FaceTime-style) ────────────────────╮
+     Loads sphere.html as the answering doorman. Same origin →
+     rapp_settings localStorage shared → Doorman OAuth session passes
+     through silently if the visitor signed in elsewhere. -->
+<div id="doorman-call" style="position:fixed;inset:0;z-index:150;background:radial-gradient(circle at center,#0a1218,#000);display:none;flex-direction:column">
+  <div style="padding:14px 18px;background:rgba(0,0,0,0.6);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;gap:12px;z-index:2">
+    <div style="display:flex;flex-direction:column;min-width:0">
+      <div style="font-size:0.66rem;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.8px">🛎️ ringing</div>
+      <div style="font-size:0.96rem;font-weight:600;color:#fff">RAPP Commons doorman</div>
+      <div style="font-size:0.62rem;color:rgba(255,255,255,0.4);font-family:ui-monospace,monospace;margin-top:2px;word-break:break-all">rappid:v2:neighborhood:@rapp-commons/origin:3929ce90ebe97fe2a95432e9f647f3a3@github.com/kody-w/rapp-commons</div>
+    </div>
+    <div id="doorman-call-duration" style="font-family:ui-monospace,monospace;font-size:0.84rem;color:#3fb950;padding:4px 10px;background:rgba(63,185,80,0.12);border-radius:999px">00:00</div>
+  </div>
+  <div style="flex:1;position:relative;background:#000;overflow:hidden">
+    <iframe id="doorman-call-iframe"
+            allow="microphone; camera; clipboard-write; clipboard-read; autoplay"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            referrerpolicy="same-origin"
+            title="RAPP Commons doorman"
+            style="width:100%;height:100%;border:none;display:block"></iframe>
+  </div>
+  <div style="padding:18px;background:rgba(0,0,0,0.6);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:center;align-items:center;gap:16px">
+    <button id="doorman-call-end" style="background:#f85149;color:#fff;border:none;padding:12px 22px;border-radius:999px;font-size:0.92rem;font-weight:700;cursor:pointer;font-family:inherit">📴 End call</button>
+    <a href="https://kody-w.github.io/RAPP/pages/tether.html?neighborhood=https%3A%2F%2Fkody-w.github.io%2Frapp-commons%2Fneighborhood.json" style="background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.1);padding:12px 22px;border-radius:999px;font-size:0.88rem;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none">📞 Open in tPhone</a>
+  </div>
+</div>
+<!-- ╰─────────────────────────────────────────────────────────────────────╯ -->
 
 <footer>
   <p>

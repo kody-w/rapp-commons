@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RAPP tether — public payphone</title>
+<title>tPhone — RAPP public tether</title>
 <meta name="description" content="Public payphone for the RAPP network. Scan any neighborhood's QR or paste its neighborhood.json URL and your vbrainstem dials in — hot-loads the agents that neighborhood requires, runs sandboxed in the browser, leaves no trace when you hang up.">
 <meta property="og:title" content="RAPP tether — public payphone">
 <meta property="og:description" content="Universal tether. Scan a neighborhood QR; the vbrainstem hot-loads its required agents and you're in.">
@@ -188,6 +188,65 @@ header h1 .icon { font-size: 1.25em; }
 .phone-status { font-size: 0.72rem; color: var(--mut); text-align: center; min-height: 1em; padding: 6px 0; }
 .phone-err { color: var(--red); font-size: 0.76rem; margin: 8px 0; text-align: center; }
 
+/* ── FaceTime-style call view (tPhone) ─────────────────────────── */
+/* When the operator has tethered into a neighborhood, the chat
+   becomes a call. The sphere.html doorman is the remote party,
+   loaded in an iframe with full same-origin localStorage access so
+   the Doorman session passes through silently. */
+.tphone-call { position: fixed; inset: 0; z-index: 150; background: radial-gradient(circle at center, #0a1218 0%, #000 100%); display: none; flex-direction: column; }
+.tphone-call.open { display: flex; }
+.tphone-call-head {
+  padding: 14px 18px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  z-index: 2;
+}
+.tphone-call-head .who { display: flex; flex-direction: column; min-width: 0; }
+.tphone-call-head .who .label { font-size: 0.66rem; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.8px; }
+.tphone-call-head .who .name { font-size: 0.96rem; font-weight: 600; color: #fff; }
+.tphone-call-head .who .meta { font-size: 0.62rem; color: rgba(255,255,255,0.4); font-family: ui-monospace, monospace; margin-top: 2px; }
+.tphone-call-head .duration { font-family: ui-monospace, monospace; font-size: 0.84rem; color: var(--grn); padding: 4px 10px; background: rgba(63,185,80,0.12); border-radius: 999px; }
+
+.tphone-call-body { flex: 1; position: relative; background: #000; overflow: hidden; }
+.tphone-call-body iframe { width: 100%; height: 100%; border: none; display: block; }
+
+.tphone-call-pip {
+  position: absolute; top: 12px; right: 12px;
+  width: 140px; min-height: 120px;
+  background: linear-gradient(160deg, rgba(20,30,40,0.95), rgba(8,12,18,0.95));
+  border: 1px solid rgba(88,166,255,0.4); border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  z-index: 3;
+  font-size: 0.66rem; color: rgba(255,255,255,0.7);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.tphone-call-pip .pip-label { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.8px; color: rgba(255,255,255,0.4); }
+.tphone-call-pip .pip-handle { font-weight: 700; font-size: 0.78rem; color: var(--acc); }
+.tphone-call-pip .pip-rappid { font-family: ui-monospace,monospace; font-size: 0.58rem; color: rgba(255,255,255,0.5); word-break: break-all; line-height: 1.3; }
+
+.tphone-call-foot {
+  padding: 18px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  display: flex; justify-content: center; align-items: center; gap: 16px;
+  z-index: 2;
+}
+.tphone-call-btn { width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer; font-size: 1.4rem; display: flex; align-items: center; justify-content: center; transition: transform 0.1s; }
+.tphone-call-btn:active { transform: scale(0.92); }
+.tphone-call-btn.end { background: #f85149; color: #fff; }
+.tphone-call-btn.end:hover { background: #ff6b62; }
+.tphone-call-btn.icon { background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.1); }
+.tphone-call-btn.icon:hover { background: rgba(255,255,255,0.14); }
+.tphone-call-btn .label { display: none; }
+@media (min-width: 480px) {
+  .tphone-call-btn { width: auto; height: auto; padding: 12px 18px; border-radius: 999px; font-size: 0.88rem; gap: 8px; font-family: inherit; }
+  .tphone-call-btn .label { display: inline; font-weight: 600; }
+}
+
 .log { background: var(--s2); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size: 0.7rem; max-height: 140px; overflow-y: auto; color: var(--dim); }
 .log .l { margin: 2px 0; }
 .log .l.ok { color: var(--grn); }
@@ -216,7 +275,7 @@ header h1 .icon { font-size: 1.25em; }
 
       <div class="phone-screen-head">
         <span class="icon">📞</span>
-        <h1>Public tether</h1>
+        <h1>tPhone</h1>
         <div class="sub">scan a QR, dial words, or paste a URL</div>
       </div>
 
@@ -447,6 +506,43 @@ header h1 .icon { font-size: 1.25em; }
   </div>
 </aside>
 </div><!-- /.tether-layout -->
+
+<!-- ╭─── tPhone call view (FaceTime-style) ─────────────────────────────╮
+     After tethering into a neighborhood, the operator's "call" with that
+     neighborhood opens here as a full-screen modal — sphere.html (the
+     3D doorman) loaded in an iframe IS the remote-party video. Auth
+     passes through silently because sphere.html and tether.html share
+     the same origin (kody-w.github.io) and the same `rapp_settings`
+     localStorage key (DOORMAN.SETTINGS_KEY). One Doorman session,
+     two surfaces. -->
+<div class="tphone-call" id="tphone-call">
+  <div class="tphone-call-head">
+    <div class="who">
+      <div class="label">tPhone · on the line with</div>
+      <div class="name" id="tphone-call-name">…</div>
+      <div class="meta" id="tphone-call-rappid">…</div>
+    </div>
+    <div class="duration" id="tphone-call-duration">00:00</div>
+  </div>
+  <div class="tphone-call-body">
+    <iframe id="tphone-call-iframe"
+            allow="microphone; camera; clipboard-write; clipboard-read; autoplay"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            referrerpolicy="same-origin"
+            title="neighborhood doorman"></iframe>
+    <div class="tphone-call-pip">
+      <div class="pip-label">you</div>
+      <div class="pip-handle" id="tphone-call-pip-handle">anon</div>
+      <div class="pip-rappid" id="tphone-call-pip-rappid">—</div>
+    </div>
+  </div>
+  <div class="tphone-call-foot">
+    <button class="tphone-call-btn icon" id="tphone-call-stream" title="See the event stream (read-only behind the call)">📜<span class="label">Stream</span></button>
+    <button class="tphone-call-btn end" id="tphone-call-end" title="End the call">📴<span class="label">End</span></button>
+    <button class="tphone-call-btn icon" id="tphone-call-redial" title="Reload the doorman">🔄<span class="label">Redial</span></button>
+  </div>
+</div>
+<!-- ╰────────────────────────────────────────────────────────────────────╯ -->
 
 <!-- ╭─── GitHub Doorman device-code sign-in modal ─────────────────────╮
      Mirrors the flow in pages/sphere.html (RAPP.Doorman namespace).
@@ -734,6 +830,10 @@ async function loadNeighborhoodFrom(url) {
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     state.nbhd = await res.json();
+    // Resolve to an absolute URL so subsequent relative-path fetches
+    // (rar/index.json, soul.md, members.json, tether_requirements URLs)
+    // resolve against the NEIGHBORHOOD origin, not the tether's page URL.
+    state.nbhdUrl = new URL(url, location.href).href;
     document.getElementById('nbhd-rappid').textContent = state.nbhd.rappid || '(no rappid)';
     const nameEl = document.getElementById('nbhd-name');
     if (nameEl) nameEl.textContent = state.nbhd.display_name || state.nbhd.name || '(unnamed)';
@@ -783,7 +883,9 @@ async function setNeighborhoodUrl(rawUrl) {
 }
 
 // Run AFTER neighborhood is loaded (scan-mode case) — loads registry,
-// hot-loads tether-required agents, refreshes discovery + greeter.
+// hot-loads tether-required agents, refreshes discovery + greeter,
+// THEN opens the FaceTime-style call view with sphere.html as the
+// remote doorman.
 async function postNeighborhoodLoad() {
   await loadRegistry();
   await loadSoul();
@@ -792,6 +894,10 @@ async function postNeighborhoodLoad() {
     await loadTetherAgents();
     renderDiscovery();
   }
+  // Auto-place the tPhone call once the neighborhood is fully resolved.
+  // The sphere.html iframe inherits the shared rapp_settings localStorage
+  // so the Doorman session passes through silently.
+  setTimeout(() => { try { openTphoneCall(); } catch (e) { log('call auto-open failed: ' + e.message, 'warn'); } }, 350);
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -822,6 +928,18 @@ function pushEvent(ev) {
   updatePositions();
 }
 
+// Recursive canonical-JSON serializer matching Python
+// json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False).
+// Critical: must recurse into nested objects (Object.keys-as-replacer trick
+// only sorts the top level + DROPS nested keys not in the replacer list,
+// which silently mutilated event.pos = {x,y} during self-verify).
+function canonicalJson(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(canonicalJson).join(',') + ']';
+  const keys = Object.keys(v).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalJson(v[k])).join(',') + '}';
+}
+
 async function verifyEvent(ev) {
   if (!ev.sig || !ev.pub) return { valid: false, reason: 'no signature' };
   try {
@@ -829,15 +947,16 @@ async function verifyEvent(ev) {
       'jwk', ev.pub, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']
     );
     const fp = await computeFingerprint(ev.pub);
-    // Reconstruct canonical payload (event without sig + pub)
+    // Reconstruct canonical payload — recursive sort, compact, matches
+    // the Python _canonical_json in commons_post_agent.
     const { sig, pub, ...payload } = ev;
-    const canonical = JSON.stringify(payload, Object.keys(payload).sort());
+    const canonical = canonicalJson(payload);
     const sigBytes = new Uint8Array(sig.match(/.{2}/g).map(b => parseInt(b, 16)));
     const valid = await crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' }, pubKey, sigBytes,
       new TextEncoder().encode(canonical)
     );
-    return { valid, fingerprint: fp };
+    return { valid, reason: valid ? 'ok' : 'signature mismatch (canonical-JSON drift between signer and verifier)', fingerprint: fp };
   } catch (e) {
     return { valid: false, reason: e.message };
   }
@@ -1060,15 +1179,27 @@ function jsAgentFallback(args) {
 // ────────────────────────────────────────────────────────────────────────
 // Discovery panel — what THIS neighborhood ships (auto-loaded + optional)
 // ────────────────────────────────────────────────────────────────────────
+// Resolve a relative path against the loaded neighborhood manifest URL,
+// NOT the tether's page URL. Critical for the public payphone at
+// kody-w.github.io/RAPP/pages/tether.html — relative fetches there would
+// otherwise resolve against /RAPP/pages/ and 404 every neighborhood file.
+function resolveNbhdPath(relPath) {
+  if (!relPath) return relPath;
+  if (/^https?:\/\//.test(relPath)) return relPath;
+  if (state.nbhdUrl) return new URL(relPath, state.nbhdUrl).href;
+  return relPath;
+}
+
 async function loadRegistry() {
   const regPath = state.nbhd?.tether_requirements?.registry || 'rar/index.json';
+  const regUrl  = resolveNbhdPath(regPath);
   try {
-    const res = await fetch(regPath);
+    const res = await fetch(regUrl);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     state.registry = await res.json();
-    log(`registry loaded · ${(state.registry.agents||[]).length} agents · ${(state.registry.rapps||[]).length} rapps · ${(state.registry.senses||[]).length} senses · ${(state.registry.organs||[]).length} organs`, 'ok');
+    log(`registry loaded · ${(state.registry.agents||[]).length} agents · ${(state.registry.rapps||[]).length} rapps · ${(state.registry.senses||[]).length} senses · ${(state.registry.organs||[]).length} organs · ${regUrl}`, 'ok');
   } catch (e) {
-    log('rar/index.json fetch failed: ' + e.message, 'warn');
+    log(`rar/index.json fetch failed (${regUrl}): ${e.message}`, 'warn');
     state.registry = null;
   }
 }
@@ -1218,6 +1349,78 @@ function closeRapp() {
   log('rapp closed · back to full-screen chat', '');
 }
 
+// ── tPhone call view (sphere.html in iframe + auth passthrough) ──
+const tphoneCall = { startedAt: 0, durTimer: 0 };
+
+function parseNbhdCoords(rappid) {
+  // rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>
+  const m = (rappid || '').match(/@[^/]+\/([^/]+)\/(.+)$/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2] };
+}
+
+function openTphoneCall() {
+  if (!state.nbhd) { log('cannot open call — no neighborhood loaded', 'warn'); return; }
+  const coords = parseNbhdCoords(state.nbhd.rappid);
+  if (!coords) { log('cannot derive owner/repo from rappid for call', 'warn'); return; }
+
+  document.getElementById('tphone-call-name').textContent =
+    state.nbhd.display_name || state.nbhd.name || (coords.owner + '/' + coords.repo);
+  document.getElementById('tphone-call-rappid').textContent = state.nbhd.rappid || '';
+
+  // Self-view (PIP)
+  const ghJ = localStorage.getItem(GH_USER_STORAGE);
+  if (ghJ) {
+    try {
+      const u = JSON.parse(ghJ);
+      document.getElementById('tphone-call-pip-handle').textContent = '@' + u.login;
+    } catch {}
+  } else {
+    document.getElementById('tphone-call-pip-handle').textContent = 'anon';
+  }
+  document.getElementById('tphone-call-pip-rappid').textContent =
+    (state.identity?.rappid || state.identity?.fingerprint || 'unbound').slice(0, 80);
+
+  // Load sphere.html with ?seed=owner/repo so it knows which planted
+  // neighborhood to summon as the doorman persona. Same origin →
+  // shared rapp_settings localStorage → Doorman session passes through
+  // without an explicit token handoff.
+  const sphereUrl = 'https://kody-w.github.io/RAPP/pages/sphere.html?seed=' +
+                    encodeURIComponent(coords.owner + '/' + coords.repo);
+  const iframe = document.getElementById('tphone-call-iframe');
+  iframe.src = sphereUrl;
+
+  // Start call duration timer
+  tphoneCall.startedAt = Date.now();
+  if (tphoneCall.durTimer) clearInterval(tphoneCall.durTimer);
+  tphoneCall.durTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - tphoneCall.startedAt) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    document.getElementById('tphone-call-duration').textContent = mm + ':' + ss;
+  }, 1000);
+
+  document.getElementById('tphone-call').classList.add('open');
+  log(`📞 tPhone call opened · ${sphereUrl}`, 'ok');
+}
+
+function closeTphoneCall() {
+  const call = document.getElementById('tphone-call');
+  const iframe = document.getElementById('tphone-call-iframe');
+  call.classList.remove('open');
+  iframe.src = 'about:blank';  // unload sphere (frees memory + stops three.js)
+  if (tphoneCall.durTimer) { clearInterval(tphoneCall.durTimer); tphoneCall.durTimer = 0; }
+  document.getElementById('tphone-call-duration').textContent = '00:00';
+  log('📴 tPhone call ended', '');
+}
+
+function redialTphone() {
+  const iframe = document.getElementById('tphone-call-iframe');
+  const src = iframe.src;
+  iframe.src = 'about:blank';
+  setTimeout(() => { iframe.src = src; log('🔄 redialed', ''); }, 100);
+}
+
 async function installOptionalAgent(name, btn) {
   if (!state.pyodide) { banner('Pyodide not available — cannot hot-load.', 'err'); return; }
   if (!state.registry) return;
@@ -1257,13 +1460,14 @@ const greeter = {
 };
 
 async function loadSoul() {
+  const soulUrl = resolveNbhdPath('soul.md');
   try {
-    const res = await fetch('soul.md');
+    const res = await fetch(soulUrl);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     greeter.soul = await res.text();
-    log('soul.md loaded for greeter (' + greeter.soul.length + ' chars)', 'ok');
+    log(`soul.md loaded for greeter (${greeter.soul.length} chars) · ${soulUrl}`, 'ok');
   } catch (e) {
-    log('soul.md fetch failed: ' + e.message, 'warn');
+    log(`soul.md fetch failed (${soulUrl}): ${e.message}`, 'warn');
   }
 }
 
@@ -2463,6 +2667,22 @@ async function main() {
   document.getElementById('rapp-pane-close').addEventListener('click', closeRapp);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && document.getElementById('rapp-pane').classList.contains('open')) closeRapp();
+    if (e.key === 'Escape' && document.getElementById('tphone-call').classList.contains('open')) closeTphoneCall();
+  });
+
+  // tPhone call view buttons
+  const callEnd = document.getElementById('tphone-call-end');
+  if (callEnd) callEnd.addEventListener('click', closeTphoneCall);
+  const callRedial = document.getElementById('tphone-call-redial');
+  if (callRedial) callRedial.addEventListener('click', redialTphone);
+  const callStream = document.getElementById('tphone-call-stream');
+  if (callStream) callStream.addEventListener('click', () => {
+    // Toggle: close the call view to reveal the chat (event stream)
+    // behind it. The call is preserved (iframe stays loaded) — clicking
+    // 📞 again would re-open with the same call duration timer reset.
+    document.getElementById('tphone-call').classList.remove('open');
+    if (tphoneCall.durTimer) { clearInterval(tphoneCall.durTimer); tphoneCall.durTimer = 0; }
+    log('call backgrounded — viewing the event stream', '');
   });
 
   // ── 3. Pyodide bootstraps regardless of neighborhood (agents load
