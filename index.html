@@ -311,15 +311,30 @@ if (document.readyState === 'loading') {
     </div>
     <!-- ╰────────────────────────────────────────────────────────────────╯ -->
 
-    <!-- ╭─── 🛎️ Call the doorman (ring-the-doorbell pattern) ──────────╮
-         The QR / holocard / incantation are the primary summoning surfaces.
-         This button is the casual visitor's path: tap to "ring the doorbell"
-         on the neighborhood front gate — the doorman (sphere.html) answers
-         the door in an iframe right here. No tether needed; the call lives
-         on the front gate. -->
+    <!-- ╭─── Tether actions: in-browser + ring doorbell ────────────────╮
+         Two casual paths off the front gate.
+
+         (1) 📞 Tether in this browser — opens the tPhone in a new tab
+         with ?neighborhood=URL pre-loaded, so desktop visitors without
+         a phone-camera can join the commons (Lobby + chat + events
+         + greeter) without scanning the QR.
+
+         (2) 🛎️ Call the doorman — quick AV preview right on the
+         front gate. Loads sphere.html in an iframe; no tether
+         required, no Lobby join, just a synchronous chat with the
+         3D doorman persona. Ring-the-doorbell vibe. -->
     <div style="margin-top:14px;padding:14px;background:linear-gradient(135deg,rgba(63,185,80,0.10),rgba(88,166,255,0.06));border:1px solid rgba(63,185,80,0.35);border-radius:10px;text-align:center">
-      <div style="font-size:0.74rem;color:var(--mut);margin-bottom:8px">Or just ring the doorbell — the doorman answers right here.</div>
-      <button id="ring-doorman" style="background:#3fb950;border:none;color:#000;border-radius:8px;padding:11px 22px;font-size:0.92rem;font-weight:700;cursor:pointer;font-family:inherit">🛎️ Call the doorman</button>
+      <div style="font-size:0.74rem;color:var(--mut);margin-bottom:10px">Don't have a phone? Both casual paths to the neighborhood are right here.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+        <a href="https://kody-w.github.io/RAPP/pages/tether.html?neighborhood=https%3A%2F%2Fkody-w.github.io%2Frapp-commons%2Fneighborhood.json"
+           target="_blank"
+           style="background:#58a6ff;color:#000;border:none;border-radius:8px;padding:11px 18px;font-size:0.88rem;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block">📞 Tether in this browser</a>
+        <button id="ring-doorman" style="background:#3fb950;border:none;color:#000;border-radius:8px;padding:11px 18px;font-size:0.88rem;font-weight:700;cursor:pointer;font-family:inherit">🛎️ Call the doorman</button>
+      </div>
+      <div style="font-size:0.66rem;color:var(--mut);margin-top:8px;line-height:1.45">
+        <strong style="color:var(--acc)">Tether</strong> = full chat + lobby + event stream + greeter + identity (sign in, post signed events, join the live mesh of other tethered operators).<br>
+        <strong style="color:var(--grn)">Call doorman</strong> = quick AV peek at the commons persona, no sign-in needed.
+      </div>
     </div>
     <!-- ╰────────────────────────────────────────────────────────────────╯ -->
   </div>
