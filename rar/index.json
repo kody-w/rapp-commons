@@ -1,8 +1,8 @@
 {
-  "schema": "rapp-rar-index/1.0",
+  "schema": "rapp-rar-index/1.1",
   "neighborhood_rappid": "rappid:v2:neighborhood:@rapp-commons/origin:3929ce90ebe97fe2a95432e9f647f3a3@github.com/kody-w/rapp-commons",
   "updated_at": "2026-05-11T00:00:00Z",
-  "note": "Per-neighborhood registry: the commons's OWN list of agents/rapps/senses/organs that travel with the planting. Upstream kody-w/RAR carries the canonical @rapp/ namespace; this neighborhood bundles a verified copy so the tether stays in-contract when upstream is unreachable. Article XLVII (substrate-agnostic federation): tether_requirements URLs walk neighborhood-first → upstream RAR → local relative, taking the first 200.",
+  "note": "Per-neighborhood registry: the commons's OWN list of agents/rapps/senses/organs that travel with the planting. Upstream kody-w/RAR carries the canonical @rapp/ namespace; this neighborhood bundles a verified copy so the tether stays in-contract when upstream is unreachable. Article XLVII (substrate-agnostic federation): tether_requirements URLs walk neighborhood-first → upstream RAR → local relative, taking the first 200. Entries flagged required_by_tether=true are hot-loaded on tether-init; everything else is optional and surfaced in the tether's discovery panel for opt-in install.",
 
   "agents": [
     {
@@ -22,10 +22,58 @@
       "upstream_url": "https://raw.githubusercontent.com/kody-w/RAR/main/agents/%40rapp/estate_outbound_agent.py",
       "purpose":      "Stage signed events on the operator's outbound lane for federation pull.",
       "required_by_tether": true
+    },
+    {
+      "name":         "@rapp/egg_hatcher",
+      "version":      "1.1.0",
+      "class":        "EggHatcherAgent",
+      "instance_var": "_EGG_HATCHER",
+      "purpose":      "Hatch any .egg cartridge from inside the tether — useful for joining ADDITIONAL neighborhoods or accepting session/organism cartridges that arrive over QR or AirDrop while you're in the commons.",
+      "required_by_tether": false,
+      "urls": [
+        "https://raw.githubusercontent.com/kody-w/RAR/main/agents/%40rapp/egg_hatcher_agent.py"
+      ]
+    },
+    {
+      "name":         "@rapp/twin_agent",
+      "version":      "1.1.0",
+      "class":        "TwinAgent",
+      "instance_var": "_TWIN",
+      "purpose":      "Host sub-twins on this device. Optional — tethering brainstems that want to summon, hatch, boot, or list local twins while sitting in the commons should install this on demand.",
+      "required_by_tether": false,
+      "urls": [
+        "https://raw.githubusercontent.com/kody-w/RAR/main/agents/%40rapp/twin_agent.py"
+      ]
     }
   ],
 
-  "rapps":   [],
-  "senses":  [],
-  "organs":  []
+  "rapps": [
+    {
+      "name":         "@rapp-commons/commons_almanac",
+      "version":      "0.0.1-planned",
+      "purpose":      "Summarize the event stream over a rolling window — top posters, most-replied threads, density heatmap on the town-square coordinate space. Server-brainstem-only: needs an organ HTTP endpoint to render the dashboard; the browser tether can't host the rapplication shell.",
+      "status":       "planned",
+      "host_requirement": "rapp_brainstem (Tier 1 local) — not browser-runnable"
+    }
+  ],
+
+  "senses": [
+    {
+      "name":         "@rapp-commons/commons_pulse",
+      "version":      "0.0.1-planned",
+      "purpose":      "Optional background sense that emits a tiny rapp-commons-event/1.0 'walk' event on a heartbeat while the operator is online — so the federation roll-up can render presence on the town-square canvas. Disabled by default; opt-in for active members.",
+      "status":       "planned",
+      "host_requirement": "rapp_brainstem (Tier 1 local) or a long-lived browser tether"
+    }
+  ],
+
+  "organs": [
+    {
+      "name":         "@rapp-commons/feed_organ",
+      "version":      "0.0.1-planned",
+      "purpose":      "HTTP endpoint that serves a filtered view of events/ (e.g. /api/feed_organ/recent?kind=hello&limit=20). The browser tether currently fetches raw events/ from GitHub Pages; this organ exists for server brainstems that want a server-side filter.",
+      "status":       "planned",
+      "host_requirement": "rapp_brainstem (Tier 1 local)"
+    }
+  ]
 }

@@ -73,6 +73,23 @@ header h1 .icon { font-size: 1.25em; }
 
 #town-square { width: 100%; aspect-ratio: 1 / 1; max-width: 280px; margin: 8px auto; display: block; background: var(--bg); border: 1px solid var(--bd); border-radius: 8px; }
 
+.disco-cat { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.8px; color: var(--mut); margin: 6px 0 3px; }
+.disco-item { padding: 7px 9px; background: var(--s2); border: 1px solid var(--bd); border-radius: 6px; }
+.disco-item.loaded { border-color: var(--grn); }
+.disco-item.optional { border-color: var(--bd); }
+.disco-item.planned { opacity: 0.65; }
+.disco-name { font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; gap: 6px; }
+.disco-badge { font-size: 0.6rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.disco-badge.req { background: var(--grn); color: #000; }
+.disco-badge.opt { background: var(--bd); color: var(--tx); }
+.disco-badge.future { background: var(--org); color: #000; }
+.disco-purpose { font-size: 0.72rem; color: var(--dim); margin-top: 3px; line-height: 1.35; }
+.disco-meta { font-size: 0.66rem; color: var(--mut); margin-top: 4px; font-family: ui-monospace,"SF Mono",Menlo,monospace; word-break: break-all; }
+.disco-actions { margin-top: 6px; display: flex; gap: 6px; }
+.disco-btn { background: var(--bg); color: var(--tx); border: 1px solid var(--bd); padding: 3px 9px; border-radius: 4px; font-size: 0.72rem; cursor: pointer; }
+.disco-btn:hover { border-color: var(--acc); color: var(--acc); }
+.disco-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .log { background: var(--s2); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size: 0.7rem; max-height: 140px; overflow-y: auto; color: var(--dim); }
 .log .l { margin: 2px 0; }
 .log .l.ok { color: var(--grn); }
@@ -164,6 +181,14 @@ header h1 .icon { font-size: 1.25em; }
       <div class="meta-row"><span class="k">quirk</span><span class="v">event-stream-only</span></div>
       <div class="meta-row"><span class="k">rappid</span><span class="v" id="nbhd-rappid" style="font-size:0.66rem">loading…</span></div>
       <div class="meta-row"><span class="k">members</span><span class="v" id="nbhd-members">…</span></div>
+    </div>
+
+    <div class="panel">
+      <h3>What this neighborhood offers</h3>
+      <p style="font-size:0.74rem;color:var(--mut);margin-bottom:8px">From <code style="font-size:0.7rem">rar/index.json</code>. Required items hot-loaded on tether-init; optional ones install on demand.</p>
+      <div id="discovery" style="display:flex;flex-direction:column;gap:10px;font-size:0.78rem">
+        <div style="color:var(--mut);font-style:italic">loading registry…</div>
+      </div>
     </div>
 
     <div class="panel">
@@ -674,6 +699,147 @@ function jsAgentFallback(args) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Discovery panel — what THIS neighborhood ships (auto-loaded + optional)
+// ────────────────────────────────────────────────────────────────────────
+async function loadRegistry() {
+  const regPath = state.nbhd?.tether_requirements?.registry || 'rar/index.json';
+  try {
+    const res = await fetch(regPath);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    state.registry = await res.json();
+    log(`registry loaded · ${(state.registry.agents||[]).length} agents · ${(state.registry.rapps||[]).length} rapps · ${(state.registry.senses||[]).length} senses · ${(state.registry.organs||[]).length} organs`, 'ok');
+  } catch (e) {
+    log('rar/index.json fetch failed: ' + e.message, 'warn');
+    state.registry = null;
+  }
+}
+
+function renderDiscovery() {
+  const el = document.getElementById('discovery');
+  if (!el) return;
+  if (!state.registry) { el.innerHTML = '<div style="color:var(--mut);font-style:italic">no registry available</div>'; return; }
+
+  const r = state.registry;
+  const loadedNames = new Set((state.tetherAgents || []).map(a => a.name));
+  const parts = [];
+
+  // ── Agents ──────────────────────────────────────────────
+  if ((r.agents || []).length) {
+    parts.push('<div class="disco-cat">agents</div>');
+    for (const a of r.agents) {
+      const isRequired = !!a.required_by_tether;
+      const isLoaded   = loadedNames.has(a.name);
+      const badge = isRequired
+        ? '<span class="disco-badge req">auto</span>'
+        : '<span class="disco-badge opt">opt-in</span>';
+      const status = isLoaded ? '✓ loaded' : (isRequired ? 'loading…' : 'available');
+      const installBtn = (!isLoaded && !isRequired)
+        ? `<button class="disco-btn" data-install="agent" data-name="${escapeHtml(a.name)}">+ Install</button>`
+        : '';
+      parts.push(`
+        <div class="disco-item ${isLoaded ? 'loaded' : 'optional'}">
+          <div class="disco-name">${escapeHtml(a.name)} ${badge} <span style="color:var(--mut);font-size:0.66rem;margin-left:auto">${escapeHtml(status)}</span></div>
+          <div class="disco-purpose">${escapeHtml(a.purpose || '')}</div>
+          <div class="disco-meta">class=${escapeHtml(a.class || '?')} · v${escapeHtml(a.version || '?')}</div>
+          <div class="disco-actions">${installBtn}</div>
+        </div>
+      `);
+    }
+  }
+
+  // ── Rapps ───────────────────────────────────────────────
+  if ((r.rapps || []).length) {
+    parts.push('<div class="disco-cat">rapplications</div>');
+    for (const x of r.rapps) {
+      const cls = x.status === 'planned' ? 'planned' : 'optional';
+      const badge = x.status === 'planned'
+        ? '<span class="disco-badge future">planned</span>'
+        : '<span class="disco-badge opt">opt-in</span>';
+      parts.push(`
+        <div class="disco-item ${cls}">
+          <div class="disco-name">${escapeHtml(x.name)} ${badge}</div>
+          <div class="disco-purpose">${escapeHtml(x.purpose || '')}</div>
+          <div class="disco-meta">${escapeHtml(x.host_requirement || '')}</div>
+        </div>
+      `);
+    }
+  }
+
+  // ── Senses ──────────────────────────────────────────────
+  if ((r.senses || []).length) {
+    parts.push('<div class="disco-cat">senses</div>');
+    for (const x of r.senses) {
+      const cls = x.status === 'planned' ? 'planned' : 'optional';
+      const badge = x.status === 'planned' ? '<span class="disco-badge future">planned</span>' : '<span class="disco-badge opt">opt-in</span>';
+      parts.push(`
+        <div class="disco-item ${cls}">
+          <div class="disco-name">${escapeHtml(x.name)} ${badge}</div>
+          <div class="disco-purpose">${escapeHtml(x.purpose || '')}</div>
+          <div class="disco-meta">${escapeHtml(x.host_requirement || '')}</div>
+        </div>
+      `);
+    }
+  }
+
+  // ── Organs ──────────────────────────────────────────────
+  if ((r.organs || []).length) {
+    parts.push('<div class="disco-cat">organs</div>');
+    for (const x of r.organs) {
+      const cls = x.status === 'planned' ? 'planned' : 'optional';
+      const badge = x.status === 'planned' ? '<span class="disco-badge future">planned</span>' : '<span class="disco-badge opt">opt-in</span>';
+      parts.push(`
+        <div class="disco-item ${cls}">
+          <div class="disco-name">${escapeHtml(x.name)} ${badge}</div>
+          <div class="disco-purpose">${escapeHtml(x.purpose || '')}</div>
+          <div class="disco-meta">${escapeHtml(x.host_requirement || '')}</div>
+        </div>
+      `);
+    }
+  }
+
+  if (parts.length === 0) {
+    el.innerHTML = '<div style="color:var(--mut);font-style:italic">this neighborhood is intentionally minimal — no extra agents/rapps/senses/organs declared</div>';
+    return;
+  }
+
+  el.innerHTML = parts.join('');
+
+  // Wire install buttons
+  el.querySelectorAll('button[data-install="agent"]').forEach(btn => {
+    btn.addEventListener('click', () => installOptionalAgent(btn.dataset.name, btn));
+  });
+}
+
+async function installOptionalAgent(name, btn) {
+  if (!state.pyodide) { banner('Pyodide not available — cannot hot-load.', 'err'); return; }
+  if (!state.registry) return;
+  const entry = (state.registry.agents || []).find(a => a.name === name);
+  if (!entry) { log('no registry entry for ' + name, 'err'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'installing…';
+  try {
+    const src = await fetchFirstAvailable(entry.urls || [], entry.name);
+    const modName = entry.name.split('/').pop().replace(/-/g, '_') + '_agent';
+    const filename = '/agents/' + modName + '.py';
+    state.pyodide.FS.writeFile(filename, src);
+    const importCode = `from agents import ${modName}\n${entry.instance_var || ('_' + modName.toUpperCase())} = ${modName}.${entry.class}()\n`;
+    state.pyodide.runPython(importCode);
+
+    // Add to tetherAgents so it appears as ✓ loaded
+    state.tetherAgents.push({ ...entry, _module: modName });
+    log(`installed ${entry.name}`, 'ok');
+    renderDiscovery();
+    setPill('agent-status', `${state.tetherAgents.length} agent${state.tetherAgents.length === 1 ? '' : 's'} hot-loaded`, 'ok');
+  } catch (e) {
+    log('install failed: ' + e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = '+ Install';
+    banner('Install failed for ' + name + ': ' + e.message, 'err');
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Greeter — chat with the commons soul via local brainstem
 // ────────────────────────────────────────────────────────────────────────
 const greeter = {
@@ -769,10 +935,13 @@ async function main() {
   await renderEvents();
   updatePositions();
   await loadNeighborhood();
+  await loadRegistry();
   await loadSoul();
+  renderDiscovery();
 
   const pyOk = await bootPyodide();
   if (pyOk) await loadTetherAgents();
+  renderDiscovery();  // re-render now that some are loaded
 
   document.getElementById('c-post').disabled = false;
   document.getElementById('c-post').addEventListener('click', compose);
