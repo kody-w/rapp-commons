@@ -19,6 +19,10 @@
 <!-- Pyodide — Python in the browser (WebAssembly). Loads ~6MB lazily. -->
 <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
 
+<!-- PeerJS — WebRTC mesh for the lobby (real-time chat with other tethered
+     operators in the same neighborhood). Same broker vbrainstem.html uses. -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -473,6 +477,21 @@ header h1 .icon { font-size: 1.25em; }
       </div>
     </div>
 
+    <div class="panel" id="lobby-panel" style="display:none">
+      <h3 style="display:flex;justify-content:space-between;align-items:center">
+        <span>Lobby <span id="lobby-pill" style="font-size:0.6rem;padding:2px 8px;border-radius:999px;background:var(--bd);color:var(--mut);margin-left:6px">offline</span></span>
+        <span id="lobby-count" style="font-size:0.7rem;color:var(--mut);font-weight:400">0 online</span>
+      </h3>
+      <p style="font-size:0.72rem;color:var(--mut);margin-bottom:8px">Ephemeral chat with other operators currently tethered to this neighborhood. WebRTC mesh via PeerJS; not persisted — to publish, post to the event stream instead.</p>
+      <div id="lobby-peers" style="font-size:0.72rem;color:var(--dim);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px">
+        <span style="color:var(--mut);font-style:italic">(connecting…)</span>
+      </div>
+      <div id="lobby-stream" style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;max-height:240px;overflow-y:auto;font-size:0.82rem;margin-bottom:8px">
+        <div style="color:var(--mut);font-style:italic;text-align:center;padding:14px 0">No messages yet. Say hi to whoever's here.</div>
+      </div>
+      <input id="lobby-input" type="text" placeholder="message all tethered neighbors…" style="width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;color:var(--tx);font-family:inherit;font-size:0.82rem">
+    </div>
+
     <div class="panel">
       <h3>Talk to the neighborhood</h3>
       <p style="font-size:0.78rem;color:var(--mut);margin-bottom:8px">Greeter persona from <code>soul.md</code>. Calls your local brainstem at <code>localhost:7071</code>; falls back to read-only if no brainstem is reachable. For an AV call with the 3D doorman, tap below.</p>
@@ -897,6 +916,9 @@ async function postNeighborhoodLoad() {
     await loadTetherAgents();
     renderDiscovery();
   }
+  // Open the lobby — connect (or claim host) for real-time chat with
+  // any other operators currently tethered to this neighborhood.
+  initLobby().catch(e => log('lobby init failed: ' + e.message, 'warn'));
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -2668,6 +2690,293 @@ async function restoreGitHubSession() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// LOBBY — real-time PeerJS chat for everyone currently tethered to this
+// neighborhood. First in claims the host peer ID (derived from the
+// neighborhood rappid hash); subsequent operators connect to the host
+// as guests. Star topology: host relays guest→guest messages.
+//
+// Peer ID convention:
+//   host:  rapp-<rappid-hash:16>-host
+//   guest: rapp-<rappid-hash:16>-<operator-hash:8>
+// ────────────────────────────────────────────────────────────────────────
+const lobby = {
+  peer:    null,    // PeerJS instance
+  hostConn: null,    // (guest) data channel to host
+  guests:  new Map(), // (host) peer id → DataConnection
+  isHost:  false,
+  peerId:  null,
+  hostId:  null,
+  members: new Map(), // peerId → { handle, rappid }
+  messages: [],
+  greeted: false,
+};
+
+function lobbyIdsFor(nbhd) {
+  const m = (nbhd?.rappid || '').match(/:([a-f0-9]+)@/);
+  const h = m ? m[1].slice(0, 16) : 'unknown';
+  return { hostId: `rapp-${h}-host`, prefix: `rapp-${h}` };
+}
+
+function lobbyMe() {
+  const ghJ = localStorage.getItem(GH_USER_STORAGE);
+  let handle = 'anon';
+  if (ghJ) {
+    try { handle = '@' + JSON.parse(ghJ).login; } catch {}
+  }
+  const fp = state.identity?.fingerprint?.slice(0, 8) || 'unbound';
+  return { handle, fp, rappid: state.identity?.rappid || '' };
+}
+
+function setLobbyPill(text, color) {
+  const el = document.getElementById('lobby-pill');
+  if (!el) return;
+  el.textContent = text;
+  el.style.background = color === 'host' ? 'var(--org)' : color === 'guest' ? 'var(--grn)' : 'var(--bd)';
+  el.style.color = color === 'host' || color === 'guest' ? '#000' : 'var(--mut)';
+}
+
+function renderLobbyPeers() {
+  const target = document.getElementById('lobby-peers');
+  if (!target) return;
+  const me = lobbyMe();
+  const all = [{ self: true, handle: me.handle, fp: me.fp, role: lobby.isHost ? 'host' : 'guest' }];
+  for (const [pid, info] of lobby.members) {
+    all.push({ handle: info.handle || pid.slice(-8), fp: pid.slice(-8), role: 'peer' });
+  }
+  target.innerHTML = all.map(p =>
+    `<span style="background:${p.self ? 'var(--acc)' : 'var(--s2)'};color:${p.self ? '#000' : 'var(--tx)'};padding:2px 8px;border-radius:999px;font-size:0.7rem;font-weight:${p.self ? '600' : '400'}" title="${p.role}">${p.handle}${p.self ? (lobby.isHost ? ' (host)' : '') : ''}</span>`
+  ).join('');
+  document.getElementById('lobby-count').textContent = `${all.length} online`;
+}
+
+function renderLobbyMessages() {
+  const stream = document.getElementById('lobby-stream');
+  if (!stream) return;
+  if (lobby.messages.length === 0) {
+    stream.innerHTML = '<div style="color:var(--mut);font-style:italic;text-align:center;padding:14px 0">No messages yet. Say hi to whoever\'s here.</div>';
+    return;
+  }
+  stream.innerHTML = lobby.messages.map(m => {
+    const time = (m.ts || '').slice(11, 19);
+    const isMe = m.from === lobbyMe().handle;
+    return `<div style="margin-bottom:6px;padding:5px 7px;background:${isMe ? 'rgba(88,166,255,0.08)' : 'transparent'};border-radius:4px">
+              <span style="font-size:0.66rem;color:${isMe ? 'var(--acc)' : 'var(--dim)'};font-weight:600">${escapeHtml(m.from)}</span>
+              <span style="font-size:0.6rem;color:var(--mut);margin-left:4px">${time}</span>
+              <div style="font-size:0.84rem;color:var(--tx);margin-top:2px;line-height:1.35">${escapeHtml(m.text)}</div>
+            </div>`;
+  }).join('');
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function lobbyAppend(msg) {
+  lobby.messages.push(msg);
+  if (lobby.messages.length > 200) lobby.messages.shift();
+  renderLobbyMessages();
+}
+
+function lobbyBroadcast(msg, excludePeer) {
+  // Host-side: relay to all guests except the sender
+  if (!lobby.isHost) return;
+  for (const [pid, conn] of lobby.guests) {
+    if (pid === excludePeer) continue;
+    try { conn.send(msg); } catch (e) { log('broadcast send failed: ' + e.message, 'warn'); }
+  }
+}
+
+function lobbyWireConn(conn) {
+  conn.on('open', () => {
+    log(`lobby peer joined · ${conn.peer.slice(-12)}`, 'ok');
+    if (lobby.isHost) {
+      lobby.guests.set(conn.peer, conn);
+      // Send the new guest a roster + history; broadcast a join to others.
+      try {
+        conn.send({ kind: 'roster', members: Array.from(lobby.members.entries()),
+                                      history: lobby.messages.slice(-50) });
+      } catch {}
+      const me = lobbyMe();
+      lobbyBroadcast({ kind: 'system', text: 'a neighbor connected', ts: new Date().toISOString() }, conn.peer);
+    }
+    renderLobbyPeers();
+  });
+  conn.on('data', (raw) => {
+    let msg = raw;
+    try { if (typeof raw === 'string') msg = JSON.parse(raw); } catch {}
+    if (!msg || typeof msg !== 'object') return;
+    handleLobbyMessage(msg, conn);
+  });
+  conn.on('close', () => {
+    log(`lobby peer left · ${conn.peer.slice(-12)}`, '');
+    if (lobby.isHost) {
+      lobby.guests.delete(conn.peer);
+      lobby.members.delete(conn.peer);
+      lobbyBroadcast({ kind: 'leave', peer: conn.peer, ts: new Date().toISOString() });
+    }
+    renderLobbyPeers();
+  });
+  conn.on('error', (e) => log('lobby conn error: ' + e?.message || e, 'warn'));
+}
+
+function handleLobbyMessage(msg, conn) {
+  switch (msg.kind) {
+    case 'hello': {
+      // Guest announcing themselves with handle/rappid
+      if (lobby.isHost) {
+        lobby.members.set(conn.peer, { handle: msg.handle, rappid: msg.rappid });
+        renderLobbyPeers();
+        lobbyBroadcast({ kind: 'join', peer: conn.peer, handle: msg.handle, rappid: msg.rappid, ts: new Date().toISOString() }, conn.peer);
+      }
+      break;
+    }
+    case 'roster': {
+      // Guest received roster snapshot from host on connect
+      lobby.members = new Map(msg.members || []);
+      if (Array.isArray(msg.history)) {
+        lobby.messages = msg.history.slice();
+        renderLobbyMessages();
+      }
+      renderLobbyPeers();
+      break;
+    }
+    case 'join': {
+      lobby.members.set(msg.peer, { handle: msg.handle, rappid: msg.rappid });
+      renderLobbyPeers();
+      break;
+    }
+    case 'leave': {
+      lobby.members.delete(msg.peer);
+      renderLobbyPeers();
+      break;
+    }
+    case 'chat': {
+      lobbyAppend(msg);
+      if (lobby.isHost) lobbyBroadcast(msg, conn.peer);
+      break;
+    }
+    case 'system': {
+      lobbyAppend(msg);
+      break;
+    }
+  }
+}
+
+async function initLobby() {
+  if (!state.nbhd || typeof Peer === 'undefined') return;
+  // Tear down any prior session (operator changed neighborhoods)
+  destroyLobby();
+
+  const panel = document.getElementById('lobby-panel');
+  if (panel) panel.style.display = 'block';
+  setLobbyPill('connecting…', '');
+
+  const { hostId, prefix } = lobbyIdsFor(state.nbhd);
+  lobby.hostId = hostId;
+  const me = lobbyMe();
+  const guestId = `${prefix}-${me.fp}`;
+
+  // Try to claim host ID first. If unavailable, fall back to guest.
+  await tryClaimHost(hostId, guestId);
+}
+
+async function tryClaimHost(hostId, guestId) {
+  return new Promise((resolve) => {
+    const trial = new Peer(hostId, { debug: 0 });
+    let resolved = false;
+    trial.on('open', (id) => {
+      // We got the host ID — we ARE the host now.
+      resolved = true;
+      lobby.peer = trial;
+      lobby.isHost = true;
+      lobby.peerId = id;
+      lobby.guests = new Map();
+      lobby.members = new Map();
+      setLobbyPill('host', 'host');
+      log('lobby · claimed host ' + id, 'ok');
+      trial.on('connection', (conn) => lobbyWireConn(conn));
+      trial.on('error', (e) => log('host peer error: ' + (e?.type || e?.message || e), 'warn'));
+      trial.on('disconnected', () => { setLobbyPill('reconnecting…', ''); trial.reconnect(); });
+      renderLobbyPeers();
+      lobbyAppend({ kind: 'system', from: 'lobby', text: 'You\'re the host — others who tether will connect through you.', ts: new Date().toISOString() });
+      resolve();
+    });
+    trial.on('error', (err) => {
+      if (resolved) return;
+      // host ID taken → join as guest
+      if (err?.type === 'unavailable-id' || /taken|in use/i.test(err?.message || '')) {
+        trial.destroy();
+        joinAsGuest(hostId, guestId).then(resolve);
+      } else {
+        log('lobby peer error: ' + (err?.type || err?.message || err), 'warn');
+        setLobbyPill('error', '');
+        resolve();
+      }
+    });
+  });
+}
+
+async function joinAsGuest(hostId, guestId) {
+  return new Promise((resolve) => {
+    const peer = new Peer(guestId, { debug: 0 });
+    peer.on('open', () => {
+      lobby.peer = peer;
+      lobby.peerId = guestId;
+      lobby.isHost = false;
+      setLobbyPill('connecting to host…', '');
+      log('lobby · joining host ' + hostId, '');
+      const conn = peer.connect(hostId, { reliable: true });
+      lobby.hostConn = conn;
+      lobbyWireConn(conn);
+      // Once connected, send hello
+      conn.on('open', () => {
+        setLobbyPill('connected', 'guest');
+        const me = lobbyMe();
+        try { conn.send({ kind: 'hello', handle: me.handle, rappid: me.rappid }); } catch {}
+      });
+      resolve();
+    });
+    peer.on('error', (err) => {
+      log('guest peer error: ' + (err?.type || err?.message || err), 'warn');
+      setLobbyPill('error', '');
+      resolve();
+    });
+  });
+}
+
+function sendLobbyChat(text) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return;
+  const me = lobbyMe();
+  const msg = { kind: 'chat', from: me.handle, rappid: me.rappid, text: trimmed, ts: new Date().toISOString() };
+  lobbyAppend(msg);
+  if (lobby.isHost) {
+    // Host writes locally and broadcasts to all guests
+    lobbyBroadcast(msg, null);
+  } else if (lobby.hostConn) {
+    try { lobby.hostConn.send(msg); } catch (e) { log('lobby send failed: ' + e.message, 'warn'); }
+  } else {
+    log('lobby not connected — message will not propagate', 'warn');
+  }
+}
+
+function destroyLobby() {
+  try { if (lobby.peer) lobby.peer.destroy(); } catch {}
+  lobby.peer = null;
+  lobby.hostConn = null;
+  lobby.guests = new Map();
+  lobby.members = new Map();
+  lobby.isHost = false;
+  lobby.peerId = null;
+  lobby.hostId = null;
+  lobby.messages = [];
+  setLobbyPill('offline', '');
+  renderLobbyPeers();
+  renderLobbyMessages();
+  const panel = document.getElementById('lobby-panel');
+  if (panel) panel.style.display = 'none';
+}
+
+window.addEventListener('beforeunload', destroyLobby);
+
+// ────────────────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────────────────
 async function main() {
@@ -2723,6 +3032,19 @@ async function main() {
   // "Call the doorman" button in the greeter panel — opt-in FaceTime
   const callDoormanBtn = document.getElementById('call-doorman-btn');
   if (callDoormanBtn) callDoormanBtn.addEventListener('click', openTphoneCall);
+
+  // Lobby chat input — Enter sends
+  const lobbyInput = document.getElementById('lobby-input');
+  if (lobbyInput) {
+    lobbyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const text = lobbyInput.value;
+        lobbyInput.value = '';
+        sendLobbyChat(text);
+      }
+    });
+  }
 
   // ── 3. Pyodide bootstraps regardless of neighborhood (agents load
   //      after neighborhood is resolved, since requirements come from
