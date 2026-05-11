@@ -180,17 +180,59 @@ async function renderHolocardBlock() {
 }
 renderHolocardBlock();
 
-// ── 🛎️ Ring the doorbell — loads sphere.html (3D doorman) in an iframe
-//    on the front gate itself. Auth (rapp_settings.ghuToken) passes
-//    through silently because same-origin localStorage is shared with
-//    the tether and the sphere. ──
+// ── 🛎️ Ring the doorbell — fetches sphere.html from raw.githubusercontent
+//    and INJECTS it into the iframe via srcdoc with a <base href> so all
+//    of sphere's relative URLs resolve back to its origin. This bypasses
+//    the cross-document load that was tripping tracking-prevention storage
+//    blocks in some browsers (Edge). Auth still passes through because
+//    srcdoc iframes inherit the parent origin (kody-w.github.io) → same
+//    rapp_settings localStorage shared with the sphere/tether/tPhone. ──
+const SPHERE_RAW = 'https://raw.githubusercontent.com/kody-w/RAPP/main/pages/sphere.html';
+const SPHERE_BASE = 'https://kody-w.github.io/RAPP/pages/';
+
 let doormanCallDurTimer = 0;
-function openDoormanCall() {
+let sphereHtmlCache = null;
+
+async function fetchSphereHtml() {
+  if (sphereHtmlCache) return sphereHtmlCache;
+  const res = await fetch(SPHERE_RAW + '?t=' + Date.now());
+  if (!res.ok) throw new Error('sphere fetch ' + res.status);
+  let html = await res.text();
+  // Inject <base href> right after <head> so relative URLs inside sphere
+  // (script src, link href, fetch paths) resolve to sphere's true origin.
+  // The ?seed=… query has to be set via JS inside the doc since base
+  // doesn't affect location.search.
+  if (!/<base\b/i.test(html)) {
+    html = html.replace(/<head([^>]*)>/i, '<head$1><base href="' + SPHERE_BASE + '">');
+  }
+  sphereHtmlCache = html;
+  return html;
+}
+
+async function openDoormanCall() {
   const modal = document.getElementById('doorman-call');
   const iframe = document.getElementById('doorman-call-iframe');
-  const sphereUrl = 'https://kody-w.github.io/RAPP/pages/sphere.html?seed=kody-w/rapp-commons';
-  iframe.src = sphereUrl;
   modal.style.display = 'flex';
+  document.getElementById('doorman-call-duration').textContent = 'dialing…';
+  try {
+    const html = await fetchSphereHtml();
+    // Inject a tiny pre-script that synthesizes ?seed=kody-w/rapp-commons
+    // into the inlined doc's URL handling. sphere.html reads location.search
+    // via URLSearchParams(location.search); when run via srcdoc, location is
+    // about:srcdoc — so we override.
+    const seedShim =
+      '<script>(function(){try{' +
+        'var _seed="kody-w/rapp-commons";' +
+        'Object.defineProperty(window,"_RAPP_SEED",{value:_seed});' +
+        'var _origSearch=Object.getOwnPropertyDescriptor(Location.prototype,"search");' +
+        'try{Object.defineProperty(Location.prototype,"search",{get:function(){return "?seed="+encodeURIComponent(_seed);},configurable:true});}catch(e){}' +
+      '}catch(e){console.warn("seed shim:",e)}})();<\/script>';
+    const injected = html.replace(/<head([^>]*)>/i, '<head$1>' + seedShim);
+    iframe.srcdoc = injected;
+  } catch (e) {
+    console.warn('doorman srcdoc inject failed, falling back to iframe.src:', e);
+    iframe.src = 'https://kody-w.github.io/RAPP/pages/sphere.html?seed=kody-w/rapp-commons';
+  }
   const startedAt = Date.now();
   if (doormanCallDurTimer) clearInterval(doormanCallDurTimer);
   doormanCallDurTimer = setInterval(() => {
@@ -200,19 +242,33 @@ function openDoormanCall() {
     document.getElementById('doorman-call-duration').textContent = mm + ':' + ss;
   }, 1000);
 }
+
 function closeDoormanCall() {
   const modal = document.getElementById('doorman-call');
   const iframe = document.getElementById('doorman-call-iframe');
   modal.style.display = 'none';
+  iframe.srcdoc = '';
   iframe.src = 'about:blank';
   if (doormanCallDurTimer) { clearInterval(doormanCallDurTimer); doormanCallDurTimer = 0; }
   document.getElementById('doorman-call-duration').textContent = '00:00';
 }
-document.getElementById('ring-doorman').addEventListener('click', openDoormanCall);
-document.getElementById('doorman-call-end').addEventListener('click', closeDoormanCall);
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.getElementById('doorman-call').style.display === 'flex') closeDoormanCall();
-});
+
+// Wire on DOMContentLoaded — this script lives in <head> so the buttons
+// in <body> don't exist yet at parse time.
+function wireDoorman() {
+  const ring = document.getElementById('ring-doorman');
+  const end  = document.getElementById('doorman-call-end');
+  if (ring) ring.addEventListener('click', openDoormanCall);
+  if (end)  end.addEventListener('click', closeDoormanCall);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('doorman-call')?.style.display === 'flex') closeDoormanCall();
+  });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wireDoorman);
+} else {
+  wireDoorman();
+}
 </script>
 </head>
 <body>

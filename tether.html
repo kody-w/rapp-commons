@@ -1359,7 +1359,27 @@ function parseNbhdCoords(rappid) {
   return { owner: m[1], repo: m[2] };
 }
 
-function openTphoneCall() {
+// Fetch + inject sphere.html via srcdoc — see commons index.html for the
+// reason (Edge tracking-prevention storage blocks on cross-document loads;
+// srcdoc inlines the doc into the parent, sidesteps the issue, AND keeps
+// same-origin parent localStorage sharing for the Doorman auth session).
+const TPHONE_SPHERE_RAW  = 'https://raw.githubusercontent.com/kody-w/RAPP/main/pages/sphere.html';
+const TPHONE_SPHERE_BASE = 'https://kody-w.github.io/RAPP/pages/';
+let _sphereHtmlCache = null;
+
+async function fetchSphereHtmlForTphone() {
+  if (_sphereHtmlCache) return _sphereHtmlCache;
+  const res = await fetch(TPHONE_SPHERE_RAW + '?t=' + Date.now());
+  if (!res.ok) throw new Error('sphere fetch ' + res.status);
+  let html = await res.text();
+  if (!/<base\b/i.test(html)) {
+    html = html.replace(/<head([^>]*)>/i, '<head$1><base href="' + TPHONE_SPHERE_BASE + '">');
+  }
+  _sphereHtmlCache = html;
+  return html;
+}
+
+async function openTphoneCall() {
   if (!state.nbhd) { log('cannot open call — no neighborhood loaded', 'warn'); return; }
   const coords = parseNbhdCoords(state.nbhd.rappid);
   if (!coords) { log('cannot derive owner/repo from rappid for call', 'warn'); return; }
@@ -1381,14 +1401,28 @@ function openTphoneCall() {
   document.getElementById('tphone-call-pip-rappid').textContent =
     (state.identity?.rappid || state.identity?.fingerprint || 'unbound').slice(0, 80);
 
-  // Load sphere.html with ?seed=owner/repo so it knows which planted
-  // neighborhood to summon as the doorman persona. Same origin →
-  // shared rapp_settings localStorage → Doorman session passes through
-  // without an explicit token handoff.
-  const sphereUrl = 'https://kody-w.github.io/RAPP/pages/sphere.html?seed=' +
-                    encodeURIComponent(coords.owner + '/' + coords.repo);
   const iframe = document.getElementById('tphone-call-iframe');
-  iframe.src = sphereUrl;
+  const seed   = coords.owner + '/' + coords.repo;
+
+  // Inject sphere.html into the iframe via srcdoc — bytes pulled
+  // from githubraw, base href set, seed shim prepended.
+  try {
+    const html = await fetchSphereHtmlForTphone();
+    const seedShim =
+      '<script>(function(){try{' +
+        'var _seed=' + JSON.stringify(seed) + ';' +
+        'Object.defineProperty(window,"_RAPP_SEED",{value:_seed});' +
+        'try{Object.defineProperty(Location.prototype,"search",{get:function(){return "?seed="+encodeURIComponent(_seed);},configurable:true});}catch(e){}' +
+      '}catch(e){console.warn("seed shim:",e)}})();<\/script>';
+    const injected = html.replace(/<head([^>]*)>/i, '<head$1>' + seedShim);
+    iframe.srcdoc = injected;
+    log(`📞 tPhone call opened · srcdoc-injected · seed=${seed}`, 'ok');
+  } catch (e) {
+    // Fallback: cross-document iframe.src
+    const fallbackUrl = 'https://kody-w.github.io/RAPP/pages/sphere.html?seed=' + encodeURIComponent(seed);
+    iframe.src = fallbackUrl;
+    log(`📞 tPhone call opened (srcdoc failed, fell back to src) · ${fallbackUrl} · ${e.message}`, 'warn');
+  }
 
   // Start call duration timer
   tphoneCall.startedAt = Date.now();
@@ -1401,24 +1435,45 @@ function openTphoneCall() {
   }, 1000);
 
   document.getElementById('tphone-call').classList.add('open');
-  log(`📞 tPhone call opened · ${sphereUrl}`, 'ok');
 }
 
 function closeTphoneCall() {
+  // 📴 End call = hang up = back to the dial pad. Tear down the call
+  // iframe AND release the tether to this neighborhood (state.nbhd,
+  // registry, hot-loaded agents) so the operator returns to a clean
+  // tPhone home screen, ready to dial another neighborhood.
   const call = document.getElementById('tphone-call');
   const iframe = document.getElementById('tphone-call-iframe');
   call.classList.remove('open');
-  iframe.src = 'about:blank';  // unload sphere (frees memory + stops three.js)
+  iframe.srcdoc = '';
+  iframe.src = 'about:blank';
   if (tphoneCall.durTimer) { clearInterval(tphoneCall.durTimer); tphoneCall.durTimer = 0; }
   document.getElementById('tphone-call-duration').textContent = '00:00';
-  log('📴 tPhone call ended', '');
+
+  // Release neighborhood-side state (operator identity stays bound)
+  state.nbhd = null;
+  state.nbhdUrl = null;
+  state.registry = null;
+  state.tetherAgents = [];
+  const nameEl = document.getElementById('nbhd-name');   if (nameEl)   nameEl.textContent = '(dialing…)';
+  const quirkEl = document.getElementById('nbhd-quirk'); if (quirkEl)  quirkEl.textContent = '—';
+  const ridEl = document.getElementById('nbhd-rappid');  if (ridEl)    ridEl.textContent = '—';
+  const memEl = document.getElementById('nbhd-members'); if (memEl)    memEl.textContent = '—';
+  setPill('net-status', 'Network unknown', 'warn');
+  setPill('agent-status', 'Agent unloaded', 'warn');
+  const disco = document.getElementById('discovery');
+  if (disco) disco.innerHTML = '<div style="color:var(--mut);font-style:italic">no neighborhood tethered</div>';
+
+  // Back to the tPhone home — reopen the phone overlay on Scan tab
+  // so the operator can immediately dial another neighborhood.
+  switchPhoneMode('scan');
+  showPhone();
+  log('📴 tPhone call ended — back to the dial pad', 'ok');
 }
 
 function redialTphone() {
-  const iframe = document.getElementById('tphone-call-iframe');
-  const src = iframe.src;
-  iframe.src = 'about:blank';
-  setTimeout(() => { iframe.src = src; log('🔄 redialed', ''); }, 100);
+  log('🔄 redialing…', '');
+  openTphoneCall();   // re-fetches + re-injects same neighborhood
 }
 
 async function installOptionalAgent(name, btn) {
