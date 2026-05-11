@@ -1,0 +1,46 @@
+name: federate
+
+# Federation roll-up — pulls each commons member's public-estate outbound
+# lane, verifies signatures, unions into events/, commits + pushes.
+# Article XLVIII outbound-lane model. Member URLs derived from rappid per
+# Article XLVI (rappid IS the global address).
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 minutes
+  workflow_dispatch:           # manual trigger from Actions tab
+  push:
+    paths:
+      - 'members.json'         # re-run when membership changes
+
+permissions:
+  contents: write              # to commit + push the unioned events/
+
+jobs:
+  rollup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run federation roll-up
+        run: python3 tools/federate.py
+
+      - name: Commit + push new events
+        run: |
+          if [[ -z "$(git status --porcelain events/)" ]]; then
+            echo "No new events to commit."
+            exit 0
+          fi
+          git config user.name  "commons-federation"
+          git config user.email "actions@github.com"
+          git add events/
+          git commit -m "federate: $(git diff --cached --name-only events/ | wc -l | tr -d ' ') new event(s) [skip ci]"
+          git push

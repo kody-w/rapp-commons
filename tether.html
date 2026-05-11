@@ -167,6 +167,16 @@ header h1 .icon { font-size: 1.25em; }
     </div>
 
     <div class="panel">
+      <h3>Talk to the commons</h3>
+      <p style="font-size:0.78rem;color:var(--mut);margin-bottom:8px">Greeter persona from <code>soul.md</code>. Calls your local brainstem at <code>localhost:7071</code>; falls back to read-only if no brainstem is reachable.</p>
+      <div id="greeter-stream" style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;font-size:0.82rem;margin-bottom:8px">
+        <div style="color:var(--mut);font-style:italic">Type below to chat with the commons greeter.</div>
+      </div>
+      <textarea id="greeter-input" rows="2" placeholder="what is this place?" style="width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;color:var(--tx);font-family:inherit;font-size:0.82rem;resize:vertical;margin-bottom:6px"></textarea>
+      <button id="greeter-send" style="width:100%;background:var(--s2);color:var(--tx);border:1px solid var(--bd);padding:6px;border-radius:6px;font-size:0.8rem;cursor:pointer">Ask</button>
+    </div>
+
+    <div class="panel">
       <h3>Activity log</h3>
       <div class="log" id="log"></div>
     </div>
@@ -298,29 +308,36 @@ async function bootPyodide() {
 async function loadCommonsAgent() {
   if (!state.pyodide) return false;
   try {
-    // Fetch the agent source — relative to this page, so works on GH Pages
+    // Fetch the agent sources — relative to this page, so works on GH Pages
     // and from file:// when the user clones the repo.
-    const res = await fetch('agents/commons_post_agent.py');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const src = await res.text();
+    const [postRes, outboundRes] = await Promise.all([
+      fetch('agents/commons_post_agent.py'),
+      fetch('agents/estate_outbound_agent.py'),
+    ]);
+    if (!postRes.ok) throw new Error('commons_post fetch HTTP ' + postRes.status);
+    if (!outboundRes.ok) throw new Error('estate_outbound fetch HTTP ' + outboundRes.status);
+    const postSrc = await postRes.text();
+    const outboundSrc = await outboundRes.text();
 
-    // Mount basic_agent stub + the agent into Pyodide's virtual fs.
+    // Mount basic_agent stub + the agents into Pyodide's virtual fs.
     state.pyodide.FS.mkdirTree('/agents');
     state.pyodide.FS.writeFile('/agents/__init__.py', '');
     state.pyodide.FS.writeFile('/agents/basic_agent.py',
       'class BasicAgent:\n    def __init__(self, name, metadata):\n        self.name = name\n        self.metadata = metadata\n');
-    state.pyodide.FS.writeFile('/agents/commons_post_agent.py', src);
+    state.pyodide.FS.writeFile('/agents/commons_post_agent.py', postSrc);
+    state.pyodide.FS.writeFile('/agents/estate_outbound_agent.py', outboundSrc);
 
-    // Add /agents to sys.path and import.
+    // Add /agents to sys.path and import both.
     state.pyodide.runPython(`
 import sys
 if '/' not in sys.path: sys.path.insert(0, '/')
-from agents import commons_post_agent
-_AGENT = commons_post_agent.CommonsPostAgent()
+from agents import commons_post_agent, estate_outbound_agent
+_POST_AGENT = commons_post_agent.CommonsPostAgent()
+_OUTBOUND_AGENT = estate_outbound_agent.EstateOutboundAgent()
 `);
-    setPill('agent-status', '@rapp/commons_post v1', 'ok');
+    setPill('agent-status', '@rapp/commons_post + @rapp/estate_outbound', 'ok');
     state.agentLoaded = true;
-    log('commons_post_agent loaded into Pyodide', 'ok');
+    log('commons_post + estate_outbound loaded into Pyodide', 'ok');
     return true;
   } catch (e) {
     setPill('agent-status', 'Agent FAIL', 'err');
@@ -329,13 +346,13 @@ _AGENT = commons_post_agent.CommonsPostAgent()
   }
 }
 
-function pyAgentPerform(args) {
+function pyAgentPerform(agentVar, args) {
   if (!state.agentLoaded) throw new Error('agent not loaded');
   const argsJson = JSON.stringify(args);
   const result = state.pyodide.runPython(`
 import json
 _kwargs = json.loads(r'''${argsJson.replace(/'/g, "\\'")}''')
-_AGENT.perform(**_kwargs)
+${agentVar}.perform(**_kwargs)
 `);
   return JSON.parse(result);
 }
@@ -522,7 +539,7 @@ async function compose() {
   let intent;
   if (state.agentLoaded) {
     try {
-      intent = pyAgentPerform(args);
+      intent = pyAgentPerform('_POST_AGENT', args);
     } catch (e) {
       log('agent.perform threw: ' + e.message, 'err');
       return;
@@ -554,8 +571,46 @@ async function compose() {
   pushEvent(signed);
   log('event appended to local store · ' + state.events.length + ' total', 'ok');
 
-  // ── (6) Hint at the outbound-lane step ───────────────────────────────
-  banner('Posted locally. To publish to the live commons, push this event to your <a href="https://github.com/kody-w/RAPP/blob/main/pages/docs/PUBLIC_PRIVATE_BOUNDARY.md" target="_blank">public-estate outbound lane</a> — the commons federation roll-up pulls it on its beat.', 'info');
+  // ── (6) Stage to outbound lane via estate_outbound_agent ─────────────
+  // In Pyodide, this writes to a virtual /home/.brainstem/outbound/ — for
+  // the host brainstem path (real disk), the operator runs the same agent
+  // server-side. We surface the outbound JSON to the user via download +
+  // banner so they can git-push it from anywhere.
+  let outboundResult = null;
+  if (state.agentLoaded && state.nbhd) {
+    try {
+      outboundResult = pyAgentPerform('_OUTBOUND_AGENT', {
+        neighborhood_rappid: state.nbhd.rappid,
+        event: signed,
+      });
+      if (outboundResult.ok) {
+        log('staged outbound · ' + outboundResult.staged_at, 'ok');
+        // Provide a downloadable copy of the signed event so the operator
+        // can drop it into their server-side outbound dir if Pyodide's
+        // virtual FS isn't reachable from their git tree.
+        const blob = new Blob([JSON.stringify(signed, null, 2)], {type: 'application/json'});
+        const url  = URL.createObjectURL(blob);
+        const filename = outboundResult.filename;
+        banner(
+          `Signed & staged. <a href="${url}" download="${filename}" style="color:inherit;text-decoration:underline">Download <code>${filename}</code></a> and drop it into ` +
+          `<code>~/.brainstem/outbound/${escapeHtml(outboundResult.neighborhood.replace(/[^A-Za-z0-9._-]/g, '_').slice(0,60))}/</code> on your host machine. ` +
+          'The commons federation roll-up pulls outbound lanes on a beat (commons default: every 10 min via the repo\'s <code>.github/workflows/federate.yml</code>).',
+          'info'
+        );
+      } else if (outboundResult.error) {
+        log('outbound staging failed: ' + outboundResult.error, 'warn');
+        banner('Posted locally but outbound staging warned: ' + outboundResult.error, 'warn');
+      }
+    } catch (e) {
+      log('estate_outbound threw: ' + e.message, 'warn');
+    }
+  } else {
+    // No Pyodide / no neighborhood manifest — surface the signed event
+    // for manual handling.
+    const blob = new Blob([JSON.stringify(signed, null, 2)], {type: 'application/json'});
+    const url  = URL.createObjectURL(blob);
+    banner('Signed locally. Pyodide unavailable; <a href="' + url + '" download="event.json" style="color:inherit;text-decoration:underline">download the event JSON</a> and drop into your outbound lane manually.', 'warn');
+  }
 
   // Clear compose
   document.getElementById('c-body').value = '';
@@ -590,6 +645,92 @@ function jsAgentFallback(args) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Greeter — chat with the commons soul via local brainstem
+// ────────────────────────────────────────────────────────────────────────
+const greeter = {
+  soul:    null,
+  history: [],
+  endpoint: 'http://localhost:7071/chat',
+};
+
+async function loadSoul() {
+  try {
+    const res = await fetch('soul.md');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    greeter.soul = await res.text();
+    log('soul.md loaded for greeter (' + greeter.soul.length + ' chars)', 'ok');
+  } catch (e) {
+    log('soul.md fetch failed: ' + e.message, 'warn');
+  }
+}
+
+function appendGreeterMsg(role, text) {
+  const stream = document.getElementById('greeter-stream');
+  // First message — clear placeholder
+  if (stream.children.length === 1 && stream.children[0].style.fontStyle === 'italic') {
+    stream.innerHTML = '';
+  }
+  const msg = document.createElement('div');
+  msg.style.cssText = 'margin:4px 0;padding:6px 8px;border-radius:4px;line-height:1.4;' +
+    (role === 'user' ? 'background:rgba(88,166,255,0.08);color:var(--tx)' :
+     role === 'assistant' ? 'background:var(--bg);color:var(--tx);border-left:2px solid var(--acc);padding-left:8px' :
+     'color:var(--mut);font-style:italic');
+  msg.textContent = text;
+  stream.appendChild(msg);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+async function greeterAsk() {
+  const input = document.getElementById('greeter-input');
+  const text = input.value.trim();
+  if (!text) return;
+  appendGreeterMsg('user', text);
+  input.value = '';
+  greeter.history.push({ role: 'user', content: text });
+
+  if (!greeter.soul) {
+    appendGreeterMsg('system', '(soul.md never loaded — greeter has no persona, refusing to reply blindly)');
+    return;
+  }
+
+  const messages = [
+    { role: 'system', content: greeter.soul },
+    ...greeter.history,
+  ];
+
+  appendGreeterMsg('system', '…thinking');
+  try {
+    const res = await fetch(greeter.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+      signal: AbortSignal.timeout(20000),
+    });
+    // Remove the placeholder
+    const stream = document.getElementById('greeter-stream');
+    if (stream.lastChild && stream.lastChild.textContent === '…thinking') stream.removeChild(stream.lastChild);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    // Best-effort: brainstem.py returns { response: "...", agent_logs: [...] }.
+    // Strip |||VOICE||| / |||TWIN||| slot delimiters for the visible reply.
+    let reply = data.response || data.content || data.text || JSON.stringify(data);
+    if (typeof reply === 'string') {
+      reply = reply.split('|||VOICE|||')[0].split('|||TWIN|||')[0].trim();
+    }
+    appendGreeterMsg('assistant', reply);
+    greeter.history.push({ role: 'assistant', content: reply });
+    log('greeter replied · ' + reply.length + ' chars', 'ok');
+  } catch (e) {
+    const stream = document.getElementById('greeter-stream');
+    if (stream.lastChild && stream.lastChild.textContent === '…thinking') stream.removeChild(stream.lastChild);
+    appendGreeterMsg('system',
+      'No local brainstem reachable at ' + greeter.endpoint + ' (' + e.message + '). ' +
+      'Start one with `./start.sh` in your rapp_brainstem directory and reload, or use the visit-only mode (read the event stream above).');
+    log('greeter unreachable: ' + e.message, 'warn');
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────────────────
 async function main() {
@@ -599,12 +740,17 @@ async function main() {
   await renderEvents();
   updatePositions();
   await loadNeighborhood();
+  await loadSoul();
 
   const pyOk = await bootPyodide();
   if (pyOk) await loadCommonsAgent();
 
   document.getElementById('c-post').disabled = false;
   document.getElementById('c-post').addEventListener('click', compose);
+  document.getElementById('greeter-send').addEventListener('click', greeterAsk);
+  document.getElementById('greeter-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); greeterAsk(); }
+  });
 
   if (state.events.length === 0) {
     banner('Welcome to the Commons. <strong>Generate a key, compose a hello, sign & post.</strong> Your post lives in this browser until you publish it to your public-estate outbound lane (Article XLVIII). Two clones can mutate offline indefinitely and reconcile losslessly — the merge key is <code>(rappid, ts)</code>.', 'info');
