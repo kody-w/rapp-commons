@@ -50,10 +50,13 @@
   "rapps": [
     {
       "name":         "@rapp-commons/commons_almanac",
-      "version":      "0.0.1-planned",
-      "purpose":      "Summarize the event stream over a rolling window — top posters, most-replied threads, density heatmap on the town-square coordinate space. Server-brainstem-only: needs an organ HTTP endpoint to render the dashboard; the browser tether can't host the rapplication shell.",
-      "status":       "planned",
-      "host_requirement": "rapp_brainstem (Tier 1 local) — not browser-runnable"
+      "version":      "0.1.0",
+      "purpose":      "Live dashboard of the event stream — counts, top posters, recent timeline, density heatmap on the town-square coordinate space. Pure client-side; fetches events/ via GitHub contents API.",
+      "status":       "shipped",
+      "host":         "browser-iframe",
+      "ui_url":       "rapps/commons_almanac/index.html",
+      "sandbox":      "allow-scripts allow-same-origin",
+      "opens_in":     "tether-iframe-modal"
     }
   ],
 

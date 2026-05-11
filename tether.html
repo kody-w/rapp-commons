@@ -24,8 +24,12 @@
 @media (prefers-color-scheme: light) {
   :root { --bg:#fafbfc; --s1:#fff; --s2:#f6f8fa; --bd:#d0d7de; --tx:#1f2328; --dim:#656d76; }
 }
-body { background: var(--bg); color: var(--tx); font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; line-height: 1.5; min-height: 100vh; }
-.shell { max-width: 1100px; margin: 0 auto; padding: 22px; }
+body { background: var(--bg); color: var(--tx); font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; line-height: 1.5; min-height: 100vh; overflow-x: hidden; }
+.tether-layout { display: flex; min-height: 100vh; align-items: stretch; }
+.tether-layout > .shell { flex: 1; min-width: 0; }
+.shell { max-width: 1100px; margin: 0 auto; padding: 22px; transition: max-width 0.2s; }
+.tether-layout.split > .shell { max-width: none; padding: 22px; }
+@media (max-width: 900px) { .tether-layout { flex-direction: column; } }
 
 header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--bd); }
 header h1 { font-size: 1.3rem; display: flex; align-items: center; gap: 10px; }
@@ -90,6 +94,21 @@ header h1 .icon { font-size: 1.25em; }
 .disco-btn:hover { border-color: var(--acc); color: var(--acc); }
 .disco-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Rapp side-pane (side-by-side with chat; close to go back to full-screen chat) */
+.rapp-pane { width: 0; overflow: hidden; transition: width 0.18s ease, border-left-width 0.18s; border-left: 0 solid var(--bd); background: var(--bg); display: flex; flex-direction: column; flex-shrink: 0; }
+.rapp-pane.open { width: 50%; border-left-width: 1px; }
+@media (max-width: 900px) {
+  .rapp-pane { width: 100%; height: 0; border-left: none; border-top: 0 solid var(--bd); transition: height 0.18s ease, border-top-width 0.18s; }
+  .rapp-pane.open { width: 100%; height: 70vh; border-top-width: 1px; }
+}
+.rapp-pane-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--s1); border-bottom: 1px solid var(--bd); }
+.rapp-pane-head h2 { font-size: 0.92rem; }
+.rapp-pane-head .meta { font-size: 0.7rem; color: var(--mut); font-family: ui-monospace,monospace; margin-top: 2px; }
+.rapp-pane-close { background: var(--s2); color: var(--tx); border: 1px solid var(--bd); padding: 5px 12px; border-radius: 5px; font-size: 0.82rem; cursor: pointer; }
+.rapp-pane-close:hover { border-color: var(--red); color: var(--red); }
+.rapp-pane-body { flex: 1; min-height: 0; background: var(--bg); }
+.rapp-pane-body iframe { width: 100%; height: 100%; border: none; display: block; }
+
 .log { background: var(--s2); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size: 0.7rem; max-height: 140px; overflow-y: auto; color: var(--dim); }
 .log .l { margin: 2px 0; }
 .log .l.ok { color: var(--grn); }
@@ -104,6 +123,7 @@ header h1 .icon { font-size: 1.25em; }
 </style>
 </head>
 <body>
+<div class="tether-layout" id="tether-layout">
 <div class="shell">
 
 <header>
@@ -209,6 +229,21 @@ header h1 .icon { font-size: 1.25em; }
 
 </div>
 </div>
+
+<!-- Rapp side-pane (sibling of .shell; opens side-by-side, closes to restore full chat) -->
+<aside class="rapp-pane" id="rapp-pane" role="complementary" aria-labelledby="rapp-pane-title">
+  <div class="rapp-pane-head">
+    <div>
+      <h2 id="rapp-pane-title">rapp</h2>
+      <div class="meta" id="rapp-pane-meta">…</div>
+    </div>
+    <button class="rapp-pane-close" id="rapp-pane-close">Close ×</button>
+  </div>
+  <div class="rapp-pane-body" id="rapp-pane-body">
+    <!-- iframe inserted dynamically with sandbox + src from the registry -->
+  </div>
+</aside>
+</div><!-- /.tether-layout -->
 
 <script type="module">
 // ────────────────────────────────────────────────────────────────────────
@@ -751,15 +786,20 @@ function renderDiscovery() {
   if ((r.rapps || []).length) {
     parts.push('<div class="disco-cat">rapplications</div>');
     for (const x of r.rapps) {
-      const cls = x.status === 'planned' ? 'planned' : 'optional';
+      const isBrowser = x.host === 'browser-iframe' && x.status !== 'planned' && x.ui_url;
+      const cls = x.status === 'planned' ? 'planned' : (isBrowser ? 'loaded' : 'optional');
       const badge = x.status === 'planned'
         ? '<span class="disco-badge future">planned</span>'
-        : '<span class="disco-badge opt">opt-in</span>';
+        : (isBrowser ? '<span class="disco-badge req">browser</span>' : '<span class="disco-badge opt">server</span>');
+      const openBtn = isBrowser
+        ? `<button class="disco-btn" data-open-rapp="${escapeHtml(x.name)}">▶ Open</button>`
+        : '';
       parts.push(`
         <div class="disco-item ${cls}">
           <div class="disco-name">${escapeHtml(x.name)} ${badge}</div>
           <div class="disco-purpose">${escapeHtml(x.purpose || '')}</div>
-          <div class="disco-meta">${escapeHtml(x.host_requirement || '')}</div>
+          <div class="disco-meta">${escapeHtml(isBrowser ? ('opens in iframe · ' + (x.ui_url || '')) : (x.host_requirement || x.host || ''))}</div>
+          <div class="disco-actions">${openBtn}</div>
         </div>
       `);
     }
@@ -808,6 +848,50 @@ function renderDiscovery() {
   el.querySelectorAll('button[data-install="agent"]').forEach(btn => {
     btn.addEventListener('click', () => installOptionalAgent(btn.dataset.name, btn));
   });
+  // Wire open-rapp buttons
+  el.querySelectorAll('button[data-open-rapp]').forEach(btn => {
+    btn.addEventListener('click', () => openRapp(btn.dataset.openRapp));
+  });
+}
+
+function openRapp(name) {
+  const entry = (state.registry?.rapps || []).find(r => r.name === name);
+  if (!entry) { log('rapp not in registry: ' + name, 'err'); return; }
+  if (entry.host !== 'browser-iframe' || !entry.ui_url) {
+    banner(name + ' is not a browser-runnable rapp.', 'warn');
+    return;
+  }
+  const layout = document.getElementById('tether-layout');
+  const pane   = document.getElementById('rapp-pane');
+  const title  = document.getElementById('rapp-pane-title');
+  const meta   = document.getElementById('rapp-pane-meta');
+  const body   = document.getElementById('rapp-pane-body');
+  title.textContent = entry.name + (entry.version ? '  v' + entry.version : '');
+  meta.textContent  = entry.purpose || '';
+  body.innerHTML = '';   // remove any previous iframe
+  const iframe = document.createElement('iframe');
+  iframe.src = entry.ui_url;
+  // Sandbox the rapp. allow-scripts + allow-same-origin lets it fetch
+  // the neighborhood's events/ directory directly (same origin as the
+  // tether). Cross-origin rapps would drop allow-same-origin and use
+  // a postMessage bridge instead — future work.
+  if (entry.sandbox) iframe.setAttribute('sandbox', entry.sandbox);
+  iframe.setAttribute('referrerpolicy', 'same-origin');
+  iframe.setAttribute('title', entry.name);
+  body.appendChild(iframe);
+  layout.classList.add('split');
+  pane.classList.add('open');
+  log('opened rapp side-by-side · ' + entry.name + ' · ' + entry.ui_url, 'ok');
+}
+
+function closeRapp() {
+  const layout = document.getElementById('tether-layout');
+  const pane   = document.getElementById('rapp-pane');
+  const body   = document.getElementById('rapp-pane-body');
+  pane.classList.remove('open');
+  layout.classList.remove('split');
+  body.innerHTML = '';  // unload iframe (kills any scripts + frees memory)
+  log('rapp closed · back to full-screen chat', '');
 }
 
 async function installOptionalAgent(name, btn) {
@@ -948,6 +1032,11 @@ async function main() {
   document.getElementById('greeter-send').addEventListener('click', greeterAsk);
   document.getElementById('greeter-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); greeterAsk(); }
+  });
+
+  document.getElementById('rapp-pane-close').addEventListener('click', closeRapp);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('rapp-pane').classList.contains('open')) closeRapp();
   });
 
   if (state.events.length === 0) {

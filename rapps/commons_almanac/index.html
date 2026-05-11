@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Commons Almanac</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --s1: #161b22; --s2: #21262d; --bd: #30363d;
+  --tx: #e6edf3; --dim: #8b949e; --mut: #6e7681;
+  --acc: #58a6ff; --grn: #3fb950; --org: #d29922; --pur: #d2a8ff;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg:#fafbfc; --s1:#fff; --s2:#f6f8fa; --bd:#d0d7de; --tx:#1f2328; --dim:#656d76; }
+}
+body { background: var(--bg); color: var(--tx); font-family: -apple-system,BlinkMacSystemFont,system-ui,sans-serif; line-height: 1.45; padding: 18px; }
+header { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--bd); }
+header h1 { font-size: 1.1rem; }
+header .sub { font-size: 0.78rem; color: var(--dim); margin-top: 2px; }
+.grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+.panel { background: var(--s1); border: 1px solid var(--bd); border-radius: 10px; padding: 14px; }
+.panel h2 { font-size: 0.84rem; color: var(--dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.8px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.stat { background: var(--s2); border: 1px solid var(--bd); border-radius: 6px; padding: 10px; text-align: center; }
+.stat .v { font-size: 1.4rem; font-weight: 700; color: var(--acc); }
+.stat .k { font-size: 0.7rem; color: var(--dim); margin-top: 2px; }
+.posters { font-size: 0.82rem; }
+.poster { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--bd); }
+.poster:last-child { border-bottom: none; }
+.poster .fp { font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size: 0.72rem; color: var(--acc); }
+.poster .ct { color: var(--mut); font-size: 0.74rem; }
+.timeline { font-size: 0.78rem; color: var(--dim); max-height: 220px; overflow-y: auto; }
+.timeline-row { padding: 4px 0; border-bottom: 1px solid var(--bd); }
+.timeline-row:last-child { border-bottom: none; }
+.timeline-row .ts { font-family: ui-monospace,monospace; font-size: 0.7rem; color: var(--mut); }
+.timeline-row .kind { color: var(--pur); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; margin-left: 6px; }
+.timeline-row .body { color: var(--tx); font-size: 0.8rem; margin-top: 2px; }
+canvas#density { width: 100%; aspect-ratio: 1/1; max-width: 360px; display: block; margin: 0 auto; background: var(--bg); border: 1px solid var(--bd); border-radius: 6px; }
+.empty { color: var(--mut); font-style: italic; font-size: 0.82rem; padding: 12px 0; text-align: center; }
+.err { color: var(--org); font-size: 0.78rem; padding: 8px; background: rgba(210,153,34,0.08); border: 1px solid var(--org); border-radius: 6px; }
+.fineprint { color: var(--mut); font-size: 0.7rem; margin-top: 14px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📖 Commons Almanac</h1>
+  <div class="sub" id="sub">Live view of the RAPP Commons event stream — loading…</div>
+</header>
+
+<div class="grid">
+
+  <div class="panel">
+    <h2>At a glance</h2>
+    <div class="stats">
+      <div class="stat"><div class="v" id="s-events">—</div><div class="k">events</div></div>
+      <div class="stat"><div class="v" id="s-posters">—</div><div class="k">unique posters</div></div>
+      <div class="stat"><div class="v" id="s-since">—</div><div class="k">since (UTC)</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Top posters</h2>
+    <div class="posters" id="posters"><div class="empty">scanning…</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Density on the town square</h2>
+    <canvas id="density" width="360" height="360"></canvas>
+  </div>
+
+  <div class="panel">
+    <h2>Recent activity</h2>
+    <div class="timeline" id="timeline"><div class="empty">scanning…</div></div>
+  </div>
+
+</div>
+
+<div class="fineprint" id="fineprint">commons_almanac/0.1.0 · pure client-side · reads <code>events/</code> via GitHub contents API</div>
+
+<script>
+// ── Discover the host neighborhood ──
+// When loaded inside the tether iframe, the rapp resolves its own
+// origin to figure out which repo it's running in. Works for any
+// neighborhood that drops commons_almanac in their rapps/.
+function detectRepo() {
+  // GitHub Pages URL format: https://<owner>.github.io/<repo>/...
+  const m = location.host.match(/^([^.]+)\.github\.io$/);
+  if (m) {
+    const path = location.pathname.split('/').filter(Boolean);
+    return { owner: m[1], repo: path[0] || '', api: `https://api.github.com/repos/${m[1]}/${path[0]}` };
+  }
+  // file:// or localhost — fall back to a hardcoded commons.
+  return { owner: 'kody-w', repo: 'rapp-commons',
+           api: 'https://api.github.com/repos/kody-w/rapp-commons',
+           note: 'detected non-Pages host; using kody-w/rapp-commons as fallback' };
+}
+
+const repo = detectRepo();
+document.getElementById('sub').textContent =
+  `Live view · ${repo.owner}/${repo.repo}${repo.note ? ' · ' + repo.note : ''}`;
+
+// ── Fetch events ──
+async function fetchEvents() {
+  try {
+    const listing = await (await fetch(`${repo.api}/contents/events`)).json();
+    if (!Array.isArray(listing)) {
+      throw new Error(listing.message || 'unexpected response');
+    }
+    const files = listing.filter(f => f.type === 'file' && f.name.endsWith('.json'));
+    // Fetch up to 50 events in parallel
+    const subset = files.slice(0, 50);
+    const events = await Promise.all(subset.map(async f => {
+      try {
+        const r = await fetch(f.download_url);
+        if (!r.ok) return null;
+        return await r.json();
+      } catch { return null; }
+    }));
+    return events.filter(Boolean);
+  } catch (e) {
+    document.getElementById('fineprint').innerHTML =
+      `<span class="err">Could not load events/: ${e.message}. (Probably no events yet, or GitHub API rate-limited.)</span>`;
+    return [];
+  }
+}
+
+// ── Render ──
+function fp(rappid) {
+  // Friendly display: last 12 chars of the rappid hash.
+  const m = (rappid || '').match(/:([a-f0-9]{8,})@/);
+  return m ? m[1].slice(0, 12) : (rappid || '?').slice(-12);
+}
+
+function render(events) {
+  const totalE = events.length;
+  const byFrom = {};
+  let earliest = null;
+  for (const ev of events) {
+    if (!ev.from) continue;
+    byFrom[ev.from] = (byFrom[ev.from] || 0) + 1;
+    if (!earliest || (ev.ts && ev.ts < earliest)) earliest = ev.ts;
+  }
+  document.getElementById('s-events').textContent = totalE;
+  document.getElementById('s-posters').textContent = Object.keys(byFrom).length;
+  document.getElementById('s-since').textContent = earliest ? earliest.slice(0, 10) : '—';
+
+  // Top posters
+  const top = Object.entries(byFrom).sort((a,b) => b[1]-a[1]).slice(0, 10);
+  document.getElementById('posters').innerHTML = top.length
+    ? top.map(([rid, ct]) => `<div class="poster"><span class="fp">${fp(rid)}…</span><span class="ct">${ct} event${ct===1?'':'s'}</span></div>`).join('')
+    : '<div class="empty">no events yet</div>';
+
+  // Timeline
+  const recent = events.slice().sort((a,b) => (b.ts||'').localeCompare(a.ts||'')).slice(0, 20);
+  document.getElementById('timeline').innerHTML = recent.length
+    ? recent.map(ev => `<div class="timeline-row"><span class="ts">${ev.ts||'?'}</span><span class="kind">${ev.kind||'?'}</span><div class="body">${escapeHtml(ev.body||'')}</div></div>`).join('')
+    : '<div class="empty">no events yet</div>';
+
+  // Density on town-square
+  const canvas = document.getElementById('density');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#0d1117';
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+  for (let v = -100; v <= 100; v += 25) {
+    const x = ((v + 100) / 200) * W;
+    const y = ((v + 100) / 200) * H;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  // Spawn marker
+  ctx.strokeStyle = 'rgba(88,166,255,0.4)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(W/2 - 10, H/2); ctx.lineTo(W/2 + 10, H/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W/2, H/2 - 10); ctx.lineTo(W/2, H/2 + 10); ctx.stroke();
+  // Each operator's last-known position with heat
+  const lastByFrom = {};
+  const countAt = {};
+  for (const ev of events) {
+    if (!ev.from) continue;
+    if (ev.pos) lastByFrom[ev.from] = ev.pos;
+    else if (!lastByFrom[ev.from]) lastByFrom[ev.from] = { x: 0, y: 0 };
+  }
+  for (const [from, pos] of Object.entries(lastByFrom)) {
+    const key = `${pos.x},${pos.y}`;
+    countAt[key] = (countAt[key] || 0) + 1;
+    const x = ((pos.x + 100) / 200) * W;
+    const y = ((pos.y + 100) / 200) * H;
+    const radius = 4 + Math.min(countAt[key] * 2, 14);
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grad.addColorStop(0, 'rgba(88,166,255,0.85)');
+    grad.addColorStop(1, 'rgba(88,166,255,0.05)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML;
+}
+
+// ── Boot ──
+fetchEvents().then(render).catch(e => {
+  document.getElementById('fineprint').innerHTML = `<span class="err">Boot failed: ${e.message}</span>`;
+});
+</script>
+</body>
+</html>
