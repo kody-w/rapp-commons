@@ -366,9 +366,9 @@ header h1 .icon { font-size: 1.25em; }
     <div class="panel" id="identity-panel">
       <h3>Identity</h3>
       <div id="identity-state-anon" style="font-size:0.78rem;color:var(--dim);line-height:1.4">
-        <p style="margin-bottom:8px">You're anonymous — a fresh ECDSA keypair, no GitHub binding. You can read the stream, but to <strong>post</strong> with a verifiable identity you need a rappid bound to your GitHub handle.</p>
-        <button id="identity-auth-btn" style="width:100%;background:var(--acc);color:#000;border:none;padding:8px;border-radius:5px;font-size:0.8rem;font-weight:600;cursor:pointer">Sign in with GitHub (PAT)</button>
-        <p style="margin-top:6px;font-size:0.7rem;color:var(--mut)">Browser-only PAT flow for v1. Device-flow OAuth coming.</p>
+        <p style="margin-bottom:8px">You're anonymous — a fresh ECDSA keypair, no GitHub binding. To <strong>post</strong> with a verifiable identity, sign in below. Your twin at <code style="font-size:0.7rem">&lt;handle&gt;/twin</code> auto-resolves; you're then ready to scan a neighborhood QR.</p>
+        <button id="identity-auth-btn" style="width:100%;background:var(--acc);color:#000;border:none;padding:8px;border-radius:5px;font-size:0.8rem;font-weight:600;cursor:pointer">Sign in with GitHub →</button>
+        <p style="margin-top:6px;font-size:0.7rem;color:var(--mut)">Same one-tap device-code flow as the doorman sphere. No PAT to paste. <a href="#" id="identity-auth-pat-link" style="color:var(--mut);text-decoration:underline">use PAT instead</a></p>
       </div>
       <div id="identity-state-authed" style="display:none">
         <div class="meta-row"><span class="k">github</span><span class="v" id="id-gh">—</span></div>
@@ -428,6 +428,49 @@ header h1 .icon { font-size: 1.25em; }
   </div>
 </aside>
 </div><!-- /.tether-layout -->
+
+<!-- ╭─── GitHub Doorman device-code sign-in modal ─────────────────────╮
+     Mirrors the flow in pages/sphere.html (RAPP.Doorman namespace).
+     Auth bounces through the Cloudflare worker at
+     rapp-auth.kwildfeuer.workers.dev (CORS-friendly proxy for the
+     GitHub device endpoint). On success we auto-resolve the user's
+     twin at <handle>/twin, bind identity, close + switch to Scan. -->
+<div id="gh-signin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:200;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--bg);border:1px solid var(--bd);border-radius:14px;max-width:420px;width:100%;overflow:hidden">
+    <header style="padding:12px 18px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center">
+      <strong style="font-size:0.9rem">Sign in with GitHub</strong>
+      <button id="gh-signin-close" style="background:transparent;border:none;color:var(--mut);font-size:22px;line-height:1;cursor:pointer;padding:0 4px">×</button>
+    </header>
+    <div style="padding:20px">
+      <div id="gh-signin-error" style="display:none;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:var(--red);padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:0.78rem"></div>
+
+      <!-- Step 1: starting auth -->
+      <div id="gh-signin-step1">
+        <p style="font-size:0.82rem;color:var(--dim);margin-bottom:14px;line-height:1.55">Same device-code flow the doorman sphere uses. One tap, ~30 seconds. After auth we automatically resolve your twin at <code style="font-size:0.74rem">&lt;handle&gt;/twin</code> and switch to Scan so you can dial a neighborhood.</p>
+        <button id="gh-signin-start" style="background:var(--acc);border:none;color:#000;border-radius:8px;padding:12px;width:100%;font-size:0.88rem;font-weight:700;cursor:pointer">Start sign-in →</button>
+      </div>
+
+      <!-- Step 2: show the device code + verification URI -->
+      <div id="gh-signin-step2" style="display:none">
+        <p style="font-size:0.82rem;color:var(--dim);margin-bottom:10px">Open GitHub on any device and enter this code:</p>
+        <div id="gh-signin-code-box" title="Tap to copy" style="background:#000;border:1.5px solid var(--acc);border-radius:8px;padding:18px 14px;text-align:center;margin-bottom:10px;cursor:pointer;user-select:all">
+          <div id="gh-signin-code" style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:1.8rem;letter-spacing:0.4rem;color:var(--acc);font-weight:700">XXXX-XXXX</div>
+        </div>
+        <button id="gh-signin-copy" style="display:block;width:100%;background:var(--s2);border:1px solid var(--bd);color:var(--tx);border-radius:8px;padding:9px;font-size:0.78rem;font-weight:600;cursor:pointer;margin-bottom:12px">📋 Copy code</button>
+        <a href="#" id="gh-signin-link" target="_blank" rel="noopener" style="display:block;text-align:center;background:var(--acc);color:#000;border-radius:8px;padding:11px;text-decoration:none;font-size:0.84rem;font-weight:700;margin-bottom:12px">Open github.com/login/device →</a>
+        <p style="font-size:0.74rem;color:var(--mut);text-align:center">⏳ waiting for you to authorize…</p>
+      </div>
+
+      <!-- Step 3: success — auto-resolving twin -->
+      <div id="gh-signin-step3" style="display:none;text-align:center;padding:18px 0">
+        <div style="font-size:42px;margin-bottom:8px">✨</div>
+        <div style="font-size:0.96rem;color:var(--grn);font-weight:700">Signed in</div>
+        <div id="gh-signin-substep" style="font-size:0.78rem;color:var(--mut);margin-top:6px">resolving your twin…</div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ╰────────────────────────────────────────────────────────────────────╯ -->
 
 <script type="module">
 // ────────────────────────────────────────────────────────────────────────
@@ -1697,6 +1740,65 @@ const startScanner    = async () => { /* no-op: camera is now on-demand via the 
 const GH_PAT_STORAGE = 'rapp.tether.gh_pat.v1';
 const GH_USER_STORAGE = 'rapp.tether.gh_user.v1';
 
+// ── Doorman (mirrors pages/sphere.html RAPP.Doorman namespace) ──
+// Device-code GitHub OAuth via the rapp-auth Cloudflare worker. The worker
+// is the CORS-friendly proxy for github.com/login/device/* endpoints; the
+// browser can't hit them directly. Token persists in `rapp_settings`
+// (same storage key sphere.html uses, so a sign-in here works for the
+// sphere too — single doorman session across all RAPP surfaces).
+const DOORMAN = {
+  WORKER:     'https://rapp-auth.kwildfeuer.workers.dev',
+  CLIENT_ID:  'Iv1.b507a08c87ecfe98',
+  SETTINGS_KEY: 'rapp_settings',
+  _pending:   null,
+  _pollTimer: 0,
+};
+
+function doormanLoadSettings() {
+  try { return JSON.parse(localStorage.getItem(DOORMAN.SETTINGS_KEY) || '{}'); } catch { return {}; }
+}
+function doormanSaveSettings(patch) {
+  const s = Object.assign(doormanLoadSettings(), patch);
+  try { localStorage.setItem(DOORMAN.SETTINGS_KEY, JSON.stringify(s)); } catch {}
+  return s;
+}
+function doormanGetToken() { return doormanLoadSettings().ghuToken || null; }
+function doormanClear() {
+  doormanSaveSettings({ ghuToken: '', copilotToken: '', copilotEndpoint: '', copilotExpiresAt: 0, ghUser: null });
+}
+
+async function doormanStartDevice() {
+  const r = await fetch(DOORMAN.WORKER + '/api/auth/device', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: DOORMAN.CLIENT_ID, scope: 'read:user' }),
+  });
+  if (!r.ok) throw new Error('device start ' + r.status);
+  const d = await r.json();
+  DOORMAN._pending = {
+    device_code: d.device_code,
+    interval:    d.interval || 5,
+    expires_at:  Date.now() + (d.expires_in || 900) * 1000,
+  };
+  return { user_code: d.user_code, verification_uri: d.verification_uri };
+}
+
+async function doormanPollDevice() {
+  if (!DOORMAN._pending) return null;
+  const r = await fetch(DOORMAN.WORKER + '/api/auth/device/poll', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_code: DOORMAN._pending.device_code, client_id: DOORMAN.CLIENT_ID }),
+  });
+  const d = await r.json();
+  if (d.access_token) {
+    doormanSaveSettings({ ghuToken: d.access_token });
+    DOORMAN._pending = null;
+    return d.access_token;
+  }
+  if (d.error === 'authorization_pending' || d.error === 'slow_down') return null;
+  if (d.error) { DOORMAN._pending = null; throw new Error(d.error_description || d.error); }
+  return null;
+}
+
 function ghHeaders(pat, extra={}) {
   return Object.assign({
     'Authorization': 'Bearer ' + pat,
@@ -1707,7 +1809,7 @@ function ghHeaders(pat, extra={}) {
 
 async function ghMe(pat) {
   const r = await fetch('https://api.github.com/user', { headers: ghHeaders(pat) });
-  if (!r.ok) throw new Error('GitHub /user returned ' + r.status + ' (PAT invalid or scope missing?)');
+  if (!r.ok) throw new Error('GitHub /user returned ' + r.status + ' (token invalid or scope missing?)');
   return r.json();
 }
 
@@ -1782,31 +1884,163 @@ function showAnon() {
   document.getElementById('identity-state-authed').style.display = 'none';
 }
 
-async function authWithGitHub() {
+// ── Device-code flow (mirror of sphere.html's RAPP.Doorman.signIn) ──
+// Opens the modal, calls /api/auth/device, displays the user_code +
+// verification URL, polls every `interval` seconds. On success: stores
+// the token, fetches /user, auto-resolves the operator's twin at
+// <handle>/twin, binds identity to the existing ECDSA keypair, closes
+// the modal, and switches to the Scan tab so the operator can
+// immediately point at a neighborhood QR.
+async function authWithGitHubDeviceFlow() {
+  const modal = document.getElementById('gh-signin-modal');
+  const err   = document.getElementById('gh-signin-error');
+  const s1    = document.getElementById('gh-signin-step1');
+  const s2    = document.getElementById('gh-signin-step2');
+  const s3    = document.getElementById('gh-signin-step3');
+  err.style.display = 'none';
+  s1.style.display = 'block';
+  s2.style.display = 'none';
+  s3.style.display = 'none';
+  modal.style.display = 'flex';
+
+  // Wire start button (idempotent — clears prior handler)
+  const startBtn = document.getElementById('gh-signin-start');
+  const newStart = startBtn.cloneNode(true);
+  startBtn.parentNode.replaceChild(newStart, startBtn);
+  newStart.addEventListener('click', async () => {
+    err.style.display = 'none';
+    try {
+      const { user_code, verification_uri } = await doormanStartDevice();
+      document.getElementById('gh-signin-code').textContent = user_code;
+      const link = document.getElementById('gh-signin-link');
+      link.href = verification_uri || 'https://github.com/login/device';
+      // Auto-copy to clipboard for the user's convenience
+      try { await navigator.clipboard.writeText(user_code); log('device code copied to clipboard', 'ok'); } catch {}
+      s1.style.display = 'none';
+      s2.style.display = 'block';
+      // Begin polling
+      startDoormanPoll();
+    } catch (e) {
+      err.textContent = 'Could not start sign-in: ' + e.message;
+      err.style.display = 'block';
+      log('doorman start failed: ' + e.message, 'err');
+    }
+  });
+
+  // Manual-copy button
+  document.getElementById('gh-signin-copy').onclick = async () => {
+    const code = document.getElementById('gh-signin-code').textContent;
+    try { await navigator.clipboard.writeText(code); log('device code copied', 'ok'); } catch {}
+  };
+  // Tap the code box to copy too
+  document.getElementById('gh-signin-code-box').onclick = async () => {
+    const code = document.getElementById('gh-signin-code').textContent;
+    try { await navigator.clipboard.writeText(code); } catch {}
+  };
+}
+
+function startDoormanPoll() {
+  if (DOORMAN._pollTimer) clearInterval(DOORMAN._pollTimer);
+  const interval = (DOORMAN._pending?.interval || 5) * 1000;
+  DOORMAN._pollTimer = setInterval(async () => {
+    try {
+      const token = await doormanPollDevice();
+      if (token) {
+        clearInterval(DOORMAN._pollTimer);
+        DOORMAN._pollTimer = 0;
+        await onDoormanAuthSuccess(token);
+      }
+    } catch (e) {
+      clearInterval(DOORMAN._pollTimer);
+      DOORMAN._pollTimer = 0;
+      const err = document.getElementById('gh-signin-error');
+      err.textContent = 'Sign-in failed: ' + e.message;
+      err.style.display = 'block';
+      log('doorman poll failed: ' + e.message, 'err');
+    }
+  }, interval);
+}
+
+async function onDoormanAuthSuccess(token) {
+  const s2 = document.getElementById('gh-signin-step2');
+  const s3 = document.getElementById('gh-signin-step3');
+  s2.style.display = 'none';
+  s3.style.display = 'block';
+
+  try {
+    // Fetch user info via the OAuth token
+    const user = await ghMe(token);
+    doormanSaveSettings({ ghUser: { login: user.login, avatar_url: user.avatar_url, name: user.name } });
+    localStorage.setItem(GH_USER_STORAGE, JSON.stringify({ login: user.login, avatar: user.avatar_url, name: user.name }));
+    log('doorman OAuth complete · @' + user.login, 'ok');
+
+    // Auto-resolve the user's twin (front door is canonical)
+    document.getElementById('gh-signin-substep').textContent = `looking up @${user.login}/twin/rappid.json…`;
+    const { rappid, source } = await lookupOrMintRappid(user.login);
+    bindIdentityToRappid(rappid);
+    log(`twin resolved (${source}) · rappid=${rappid.slice(0, 60)}…`, 'ok');
+
+    // Detect existing front door
+    const fdUrl = await detectFrontDoor(token, user.login);
+    showAuthed(user, rappid, fdUrl);
+    renderIdentity();
+
+    if (source === 'front-door') {
+      document.getElementById('gh-signin-substep').innerHTML = `✓ Bound as <code>@${user.login}/twin</code>. Opening Scan…`;
+    } else {
+      document.getElementById('gh-signin-substep').innerHTML = `✓ Signed in. No twin planted yet — click "🌱 Plant my front door" later. Opening Scan…`;
+    }
+
+    // After a brief beat, close modal + switch to Scan tab so the
+    // operator can immediately scan a neighborhood QR.
+    setTimeout(() => {
+      document.getElementById('gh-signin-modal').style.display = 'none';
+      switchPhoneMode('scan');
+      // Auto-open the camera for them — the next QR they scan tethers
+      // them into that neighborhood as their just-resolved twin.
+      if (!phone.scan.active) startCamera();
+      banner(
+        `Signed in as <strong>@${user.login}</strong>` +
+        (source === 'front-door' ? ` · bound to twin at <a href="https://${user.login}.github.io/twin/" target="_blank" style="color:inherit">${user.login}.github.io/twin/</a>` : ' · no twin planted yet — plant one from the Identity panel') +
+        '. Camera is open — point it at a neighborhood QR to dial in.',
+        'info'
+      );
+    }, 1400);
+  } catch (e) {
+    document.getElementById('gh-signin-substep').innerHTML = `<span style="color:var(--red)">post-auth resolve failed: ${e.message}</span>`;
+    log('post-auth resolve failed: ' + e.message, 'err');
+  }
+}
+
+// PAT fallback (kept for advanced users / CI / offline-PAT scenarios)
+async function authWithGitHubPAT() {
   const pat = prompt(
-    'Paste a GitHub Personal Access Token with `repo` scope (for planting your front door) ' +
-    'and `read:user` scope (for fetching your handle).\n\n' +
-    'Create one: https://github.com/settings/tokens/new?scopes=repo,read:user&description=RAPP+tether\n\n' +
-    "PATs stay in your browser's localStorage — never sent to our servers (we don't have any)."
+    'Advanced fallback: paste a GitHub PAT with `repo` + `read:user` scopes.\n\n' +
+    'Create: https://github.com/settings/tokens/new?scopes=repo,read:user&description=RAPP+tether\n\n' +
+    "Most operators should use the device-code flow instead (one tap, no token to manage)."
   );
   if (!pat || !pat.trim()) return;
   const token = pat.trim();
   try {
     const user = await ghMe(token);
-    const rappid = await mintOperatorRappid(user.login);
+    const { rappid } = await lookupOrMintRappid(user.login);
     localStorage.setItem(GH_PAT_STORAGE,  token);
     localStorage.setItem(GH_USER_STORAGE, JSON.stringify({ login: user.login, avatar: user.avatar_url, name: user.name }));
-    bindIdentityToRappid(rappid);   // existing function — binds the ECDSA keypair to a rappid
-    log('signed in as @' + user.login + ' · rappid=' + rappid.slice(0, 60) + '…', 'ok');
-    // Check whether their front-door repo already exists
+    bindIdentityToRappid(rappid);
+    log('signed in via PAT as @' + user.login + ' · rappid=' + rappid.slice(0, 60) + '…', 'ok');
     const fdUrl = await detectFrontDoor(token, user.login);
     showAuthed(user, rappid, fdUrl);
     renderIdentity();
+    switchPhoneMode('scan');
+    if (!phone.scan.active) startCamera();
   } catch (e) {
-    log('GitHub auth failed: ' + e.message, 'err');
+    log('PAT auth failed: ' + e.message, 'err');
     alert('Auth failed: ' + e.message);
   }
 }
+
+// Compatibility shim — the old name still kicks off the device flow.
+const authWithGitHub = authWithGitHubDeviceFlow;
 
 async function detectFrontDoor(pat, handle) {
   // Convention: <handle>/twin (namespace and repo name match so global
@@ -1824,6 +2058,7 @@ async function detectFrontDoor(pat, handle) {
 }
 
 function signOutGitHub() {
+  doormanClear();
   localStorage.removeItem(GH_PAT_STORAGE);
   localStorage.removeItem(GH_USER_STORAGE);
   // Don't clear the ECDSA keypair — it can be re-bound to a different rappid later.
@@ -2110,18 +2345,35 @@ function operatorFrontGateHtml(handle, rappid) {
 }
 
 // ── Restore session on load ──────────────────────────────────────────
+// Honors both auth paths: Doorman OAuth token (rapp_settings.ghuToken,
+// shared with sphere.html) OR the legacy PAT path (rapp.tether.gh_pat.v1).
+// Whichever is present wins; both binding paths converge on the same
+// lookupOrMintRappid flow.
 async function restoreGitHubSession() {
-  const pat   = localStorage.getItem(GH_PAT_STORAGE);
-  const userJ = localStorage.getItem(GH_USER_STORAGE);
-  if (!pat || !userJ) return;
+  const doormanToken = doormanGetToken();
+  const patToken     = localStorage.getItem(GH_PAT_STORAGE);
+  const token = doormanToken || patToken;
+  if (!token) return;
+  let userJ = localStorage.getItem(GH_USER_STORAGE);
+  let user;
+  if (userJ) {
+    try { user = JSON.parse(userJ); } catch {}
+  }
+  if (!user) {
+    try { user = await ghMe(token); localStorage.setItem(GH_USER_STORAGE, JSON.stringify({ login: user.login, avatar: user.avatar_url, name: user.name })); } catch (e) {
+      log('session restore: token invalid, clearing', 'warn');
+      doormanClear();
+      localStorage.removeItem(GH_PAT_STORAGE);
+      return;
+    }
+  }
   try {
-    const user   = JSON.parse(userJ);
-    const rappid = await mintOperatorRappid(user.login);
+    const { rappid } = await lookupOrMintRappid(user.login);
     bindIdentityToRappid(rappid);
-    const fdUrl  = await detectFrontDoor(pat, user.login);
+    const fdUrl = await detectFrontDoor(token, user.login);
     showAuthed(user, rappid, fdUrl);
     renderIdentity();
-    log('restored GitHub session: @' + user.login, 'ok');
+    log('restored session: @' + user.login + ' (via ' + (doormanToken ? 'doorman' : 'PAT') + ')', 'ok');
   } catch (e) {
     log('session restore failed: ' + e.message, 'warn');
   }
@@ -2143,9 +2395,15 @@ async function main() {
   loadMnemonicWords();   // kicks off background fetch; populates wheel when done
 
   // GitHub identity buttons
-  document.getElementById('identity-auth-btn').addEventListener('click', authWithGitHub);
+  document.getElementById('identity-auth-btn').addEventListener('click', authWithGitHubDeviceFlow);
+  document.getElementById('identity-auth-pat-link').addEventListener('click', (e) => { e.preventDefault(); authWithGitHubPAT(); });
   document.getElementById('identity-plant-btn').addEventListener('click', plantFrontDoor);
   document.getElementById('identity-signout-btn').addEventListener('click', signOutGitHub);
+  // Doorman sign-in modal close
+  document.getElementById('gh-signin-close').addEventListener('click', () => {
+    document.getElementById('gh-signin-modal').style.display = 'none';
+    if (DOORMAN._pollTimer) { clearInterval(DOORMAN._pollTimer); DOORMAN._pollTimer = 0; }
+  });
   // Try to restore a previous GitHub session in the background
   restoreGitHubSession();
   document.getElementById('c-post').disabled = false;
