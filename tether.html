@@ -474,10 +474,11 @@ header h1 .icon { font-size: 1.25em; }
     </div>
 
     <div class="panel">
-      <h3>Talk to the commons</h3>
-      <p style="font-size:0.78rem;color:var(--mut);margin-bottom:8px">Greeter persona from <code>soul.md</code>. Calls your local brainstem at <code>localhost:7071</code>; falls back to read-only if no brainstem is reachable.</p>
+      <h3>Talk to the neighborhood</h3>
+      <p style="font-size:0.78rem;color:var(--mut);margin-bottom:8px">Greeter persona from <code>soul.md</code>. Calls your local brainstem at <code>localhost:7071</code>; falls back to read-only if no brainstem is reachable. For an AV call with the 3D doorman, tap below.</p>
+      <button id="call-doorman-btn" style="width:100%;background:#3fb950;color:#000;border:none;padding:8px;border-radius:5px;font-size:0.82rem;font-weight:700;cursor:pointer;margin-bottom:10px">📞 Call the doorman (FaceTime)</button>
       <div id="greeter-stream" style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;max-height:180px;overflow-y:auto;font-size:0.82rem;margin-bottom:8px">
-        <div style="color:var(--mut);font-style:italic">Type below to chat with the commons greeter.</div>
+        <div style="color:var(--mut);font-style:italic">Type below to chat with the greeter via your local brainstem.</div>
       </div>
       <textarea id="greeter-input" rows="2" placeholder="what is this place?" style="width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px;color:var(--tx);font-family:inherit;font-size:0.82rem;resize:vertical;margin-bottom:6px"></textarea>
       <button id="greeter-send" style="width:100%;background:var(--s2);color:var(--tx);border:1px solid var(--bd);padding:6px;border-radius:6px;font-size:0.8rem;cursor:pointer">Ask</button>
@@ -883,9 +884,11 @@ async function setNeighborhoodUrl(rawUrl) {
 }
 
 // Run AFTER neighborhood is loaded (scan-mode case) — loads registry,
-// hot-loads tether-required agents, refreshes discovery + greeter,
-// THEN opens the FaceTime-style call view with sphere.html as the
-// remote doorman.
+// hot-loads tether-required agents, refreshes discovery + greeter.
+// The chat / collaboration screen (event stream, compose, town square,
+// greeter, discovery) is the landing surface after a tether. The
+// FaceTime-style call view is OPT-IN via the "📞 Call doorman" button
+// in the greeter panel.
 async function postNeighborhoodLoad() {
   await loadRegistry();
   await loadSoul();
@@ -894,10 +897,6 @@ async function postNeighborhoodLoad() {
     await loadTetherAgents();
     renderDiscovery();
   }
-  // Auto-place the tPhone call once the neighborhood is fully resolved.
-  // The sphere.html iframe inherits the shared rapp_settings localStorage
-  // so the Doorman session passes through silently.
-  setTimeout(() => { try { openTphoneCall(); } catch (e) { log('call auto-open failed: ' + e.message, 'warn'); } }, 350);
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1438,10 +1437,11 @@ async function openTphoneCall() {
 }
 
 function closeTphoneCall() {
-  // 📴 End call = hang up = back to the dial pad. Tear down the call
-  // iframe AND release the tether to this neighborhood (state.nbhd,
-  // registry, hot-loaded agents) so the operator returns to a clean
-  // tPhone home screen, ready to dial another neighborhood.
+  // 📴 End call = hang up the AV call, return to the chat / collab view
+  // (event stream, compose, town square, greeter, discovery). The tether
+  // to this neighborhood stays intact — you're still IN the neighborhood,
+  // just not on the call. To leave the neighborhood entirely, use the
+  // 🔚 Hang up tether button (which fully resets back to the dial pad).
   const call = document.getElementById('tphone-call');
   const iframe = document.getElementById('tphone-call-iframe');
   call.classList.remove('open');
@@ -1449,26 +1449,7 @@ function closeTphoneCall() {
   iframe.src = 'about:blank';
   if (tphoneCall.durTimer) { clearInterval(tphoneCall.durTimer); tphoneCall.durTimer = 0; }
   document.getElementById('tphone-call-duration').textContent = '00:00';
-
-  // Release neighborhood-side state (operator identity stays bound)
-  state.nbhd = null;
-  state.nbhdUrl = null;
-  state.registry = null;
-  state.tetherAgents = [];
-  const nameEl = document.getElementById('nbhd-name');   if (nameEl)   nameEl.textContent = '(dialing…)';
-  const quirkEl = document.getElementById('nbhd-quirk'); if (quirkEl)  quirkEl.textContent = '—';
-  const ridEl = document.getElementById('nbhd-rappid');  if (ridEl)    ridEl.textContent = '—';
-  const memEl = document.getElementById('nbhd-members'); if (memEl)    memEl.textContent = '—';
-  setPill('net-status', 'Network unknown', 'warn');
-  setPill('agent-status', 'Agent unloaded', 'warn');
-  const disco = document.getElementById('discovery');
-  if (disco) disco.innerHTML = '<div style="color:var(--mut);font-style:italic">no neighborhood tethered</div>';
-
-  // Back to the tPhone home — reopen the phone overlay on Scan tab
-  // so the operator can immediately dial another neighborhood.
-  switchPhoneMode('scan');
-  showPhone();
-  log('📴 tPhone call ended — back to the dial pad', 'ok');
+  log('📴 call ended — back to chat (still tethered to ' + (state.nbhd?.display_name || 'neighborhood') + ')', 'ok');
 }
 
 function redialTphone() {
@@ -2739,6 +2720,9 @@ async function main() {
     if (tphoneCall.durTimer) { clearInterval(tphoneCall.durTimer); tphoneCall.durTimer = 0; }
     log('call backgrounded — viewing the event stream', '');
   });
+  // "Call the doorman" button in the greeter panel — opt-in FaceTime
+  const callDoormanBtn = document.getElementById('call-doorman-btn');
+  if (callDoormanBtn) callDoormanBtn.addEventListener('click', openTphoneCall);
 
   // ── 3. Pyodide bootstraps regardless of neighborhood (agents load
   //      after neighborhood is resolved, since requirements come from
