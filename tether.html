@@ -274,6 +274,16 @@ header h1 .icon { font-size: 1.25em; }
           </div>
           <div class="phone-err" id="phone-paste-err" style="display:none"></div>
           <button class="phone-action" id="phone-paste-go" style="margin-top:14px">Dial</button>
+
+          <div style="margin-top:18px;padding-top:14px;border-top:1px dashed #1a1f2a">
+            <div class="phone-paste-row">
+              <label>Or summon an operator's twin by GitHub handle</label>
+              <input id="phone-summon-handle" placeholder="kody-w" style="text-transform:lowercase">
+            </div>
+            <div class="phone-status" id="phone-summon-result"></div>
+            <button class="phone-action secondary" id="phone-summon-go" style="margin-top:8px">🧬 Look up @handle/twin</button>
+            <p style="font-size:0.66rem;color:var(--mut);margin-top:8px;text-align:center;line-height:1.4">Convention: every operator's twin lives at <code style="font-size:0.62rem">github.com/&lt;handle&gt;/twin</code>. Type a handle → tether resolves their rappid.json → use as identity or open their twin's URL.</p>
+          </div>
         </div>
 
       </div>
@@ -1591,6 +1601,15 @@ function wirePhone() {
     setNeighborhoodUrl('https://kody-w.github.io/rapp-commons/neighborhood.json');
   });
 
+  // Summon by GitHub handle — uses the <handle>/twin convention to
+  // resolve a stranger's twin without auth. Fetches their rappid.json
+  // and surfaces the result. Either bind it as identity (if it's your
+  // own handle) or just see who's there.
+  document.getElementById('phone-summon-go').addEventListener('click', summonByHandle);
+  document.getElementById('phone-summon-handle').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); summonByHandle(); }
+  });
+
   // Keyboard shortcuts while phone is open
   document.addEventListener('keydown', (e) => {
     if (!document.getElementById('phone-overlay').classList.contains('open')) return;
@@ -1599,6 +1618,48 @@ function wirePhone() {
     if (e.key === 'ArrowDown') { wheelStep(1); e.preventDefault(); }
     if (e.key === 'Enter')     { pressWheel(); e.preventDefault(); }
   });
+}
+
+async function summonByHandle() {
+  const input = document.getElementById('phone-summon-handle');
+  const status = document.getElementById('phone-summon-result');
+  const raw = (input.value || '').trim().replace(/^@/, '').toLowerCase();
+  if (!raw) { status.textContent = 'enter a GitHub handle'; return; }
+  if (!/^[a-z0-9-]{1,39}$/.test(raw)) { status.textContent = 'invalid handle format'; return; }
+  status.textContent = `resolving @${raw}/twin/rappid.json…`;
+  try {
+    const r = await fetch(`https://raw.githubusercontent.com/${raw}/twin/main/rappid.json`, { cache: 'no-cache' });
+    if (!r.ok) {
+      status.innerHTML =
+        `<div style="text-align:left;background:rgba(210,153,34,0.1);padding:10px;border-radius:6px;margin-top:8px;border:1px solid rgba(210,153,34,0.4)">
+           <div style="font-size:0.86rem;color:var(--org);margin-bottom:4px">This user hasn't set up their twin yet.</div>
+           <div style="font-size:0.72rem;color:var(--mut);line-height:1.4">No <code style="font-size:0.66rem">${raw}/twin/rappid.json</code> on GitHub. If you're @${raw}, sign in with GitHub above and tap "🌱 Plant my front door" to set it up — takes ~30 seconds.</div>
+         </div>`;
+      return;
+    }
+    const data = await r.json();
+    if (!data.rappid) { status.textContent = 'twin found but rappid.json malformed'; return; }
+    const twinUrl = `https://${raw}.github.io/twin/`;
+    status.innerHTML =
+      `<div style="text-align:left;background:rgba(0,0,0,0.3);padding:10px;border-radius:6px;margin-top:8px">
+         <div style="color:var(--grn);font-weight:600;font-size:0.82rem;margin-bottom:4px">✓ Found @${raw}'s twin</div>
+         <div style="font-family:monospace;font-size:0.66rem;color:var(--acc);word-break:break-all;margin-bottom:8px">${data.rappid}</div>
+         <a href="${twinUrl}" target="_blank" style="color:var(--acc);text-decoration:none;font-size:0.78rem">→ Open ${raw}.github.io/twin/</a>
+       </div>`;
+    log(`summoned @${raw}'s twin · ${data.rappid}`, 'ok');
+    // If this matches the logged-in user's handle, bind it as their identity.
+    const ghUserJ = localStorage.getItem(GH_USER_STORAGE);
+    if (ghUserJ) {
+      const ghUser = JSON.parse(ghUserJ);
+      if (ghUser.login.toLowerCase() === raw) {
+        bindIdentityToRappid(data.rappid);
+        renderIdentity();
+        status.innerHTML += `<div style="margin-top:6px;font-size:0.7rem;color:var(--grn)">↳ Bound as your operator identity.</div>`;
+      }
+    }
+  } catch (e) {
+    status.textContent = 'fetch failed: ' + e.message;
+  }
 }
 
 // Legacy names used elsewhere in main() — alias to phone equivalents
@@ -1957,7 +2018,9 @@ function operatorFrontGateHtml(handle, rappid) {
   <div class="rappid">${rappid}</div>
 
   <div class="qr-section">
-    <h2>Address this twin</h2>
+    <h2>Address this twin — three ways</h2>
+    <p style="font-size:0.74rem;color:#6e7681;margin-bottom:14px">Scan the QR, paste the URL, or speak the 7-word incantation into any tether's Dial wheel. All three summon the same twin.</p>
+
     <!-- ╭─── rapp-front-gate-qr/1.0 (Article LI) ───╮ -->
     <canvas id="rapp-front-gate-qr"
             style="background:#fff;padding:8px;border-radius:8px;display:inline-block"
@@ -1972,10 +2035,64 @@ function operatorFrontGateHtml(handle, rappid) {
                     : '');
       var url = (base ? base : '.') + '/.well-known/twin.egg';
       if (typeof QRious === 'undefined') {
-        el.outerHTML = '<div style="background:#fff;color:#000;padding:12px;border-radius:8px;font-family:monospace;font-size:0.72rem;text-align:center;word-break:break-all">Paste this into any tether:<br><b>' + url + '</b></div>';
+        el.outerHTML = '<div style="background:#fff;color:#000;padding:12px;border-radius:8px;font-family:monospace;font-size:0.72rem;text-align:center;word-break:break-all">Paste into any tether:<br><b>' + url + '</b></div>';
         return;
       }
       new QRious({ element: el, value: url, size: 256, background: '#ffffff', foreground: '#000000', level: 'M' });
+    })();
+    <\/script>
+    <!-- ╰────────────────────────────────────────────╯ -->
+
+    <!-- ╭─── Holocard + 7-word incantation ───╮ -->
+    <div id="rapp-holocard-block" style="margin-top:16px;padding:14px;background:rgba(0,0,0,0.25);border:1px solid #30363d;border-radius:10px;display:none;text-align:left">
+      <div id="rapp-holocard" style="margin-bottom:12px"></div>
+      <div style="font-size:0.62rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Incantation (7 words · summon via tether Dial)</div>
+      <div id="rapp-incantation" style="font-family:ui-monospace,monospace;font-size:0.92rem;color:#58a6ff;letter-spacing:0.4px;line-height:1.5;background:rgba(0,0,0,0.4);padding:10px 12px;border-radius:6px;border:1px dashed #58a6ff;text-align:center">…</div>
+      <p style="font-size:0.7rem;color:#6e7681;margin-top:8px;line-height:1.4">Memorize these 7 words → spin them on any RAPP tether's Dial wheel → summon this twin. Per the hero use case: no QR, no URL, no network for the resolution itself — 7 memorable words.</p>
+    </div>
+    <script>
+    (async function() {
+      const block = document.getElementById('rapp-holocard-block');
+      if (!block) return;
+      async function fetchMnemonic() {
+        const KEY = 'rapp.mnemonic.words.v1';
+        try { const c = localStorage.getItem(KEY); if (c) { const a = JSON.parse(c); if (a.length === 1024) return a; } } catch (e) {}
+        try {
+          const src = await (await fetch('https://raw.githubusercontent.com/kody-w/RAR/main/rapp_sdk.py')).text();
+          const m = src.match(/MNEMONIC_WORDS\\s*=\\s*"""([\\s\\S]*?)"""/);
+          if (!m) return null;
+          const w = m[1].split(/\\s+/).filter(Boolean).map(s => s.toUpperCase());
+          try { localStorage.setItem(KEY, JSON.stringify(w)); } catch (e) {}
+          return w;
+        } catch (e) { return null; }
+      }
+      function toIncantation(rappid, words) {
+        const m = rappid.match(/:([a-f0-9]+)@/);
+        if (!m || !words || words.length !== 1024) return null;
+        let seed = BigInt('0x' + m[1].slice(0, 16).padEnd(16, '0'));
+        const o = [];
+        for (let i = 0; i < 7; i++) { o.push(words[Number(seed & 1023n)]); seed >>= 10n; }
+        return o.join(' ');
+      }
+      function renderCard(card) {
+        const tier = card.quality_tier || card.rarity_tier || 'community';
+        const tierColor = tier === 'official' ? '#d29922' : tier === 'verified' ? '#3fb950' : '#8b949e';
+        const ab = (card.abilities || []).slice(0, 3).map(a =>
+          '<div style="border-top:1px solid #30363d;padding-top:6px;margin-top:6px"><div style="font-weight:600;font-size:0.8rem;color:#58a6ff">' + (a.name||'') + '</div><div style="font-size:0.72rem;color:#8b949e;margin-top:2px;line-height:1.35">' + (a.text||'') + '</div></div>').join('');
+        return '<div style="background:linear-gradient(180deg,#161b22,#0d1117);border:2px solid ' + tierColor + ';border-radius:10px;padding:12px;font-size:0.78rem"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px"><strong style="font-size:0.92rem">' + (card.display_name||card.name||'?') + '</strong><span style="font-size:0.62rem;color:' + tierColor + ';font-weight:700;text-transform:uppercase;letter-spacing:0.5px">' + tier + '</span></div><div style="font-size:0.66rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">' + (card.type_line||card.category||'') + '</div>' + (card.flavor ? '<div style="font-style:italic;font-size:0.74rem;color:#8b949e;margin:6px 0;padding:6px 0;border-top:1px dashed #30363d;border-bottom:1px dashed #30363d">"' + card.flavor + '"</div>' : '') + ab + '<div style="margin-top:8px;font-size:0.62rem;color:#6e7681;font-family:ui-monospace,monospace">v' + (card.version||'?') + '</div></div>';
+      }
+      try {
+        const [rd, card, words] = await Promise.all([
+          fetch('rappid.json').then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch('card.json').then(r => r.ok ? r.json() : null).catch(() => null),
+          fetchMnemonic()
+        ]);
+        if (!rd?.rappid) return;
+        if (card) document.getElementById('rapp-holocard').innerHTML = renderCard(card);
+        const inc = toIncantation(rd.rappid, words);
+        document.getElementById('rapp-incantation').textContent = inc || '(mnemonic dictionary unreachable)';
+        block.style.display = 'block';
+      } catch (e) { console.warn('holocard render failed', e); }
     })();
     <\/script>
     <!-- ╰────────────────────────────────────────────╯ -->

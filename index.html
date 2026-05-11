@@ -87,29 +87,98 @@ footer a { color: inherit; }
 window.addEventListener('DOMContentLoaded', function(){
   const target = document.getElementById('qr-target');
   if (!target) return;
-  // Canonical URL: scanning this fetches the neighborhood-invite egg.
-  // egg_hatcher routes it (manifest.schema === 'brainstem-egg/2.3-neighborhood')
-  // and appends {rappid, added_at, via} to the operator's two-tier estate.
   const url = (location.origin && location.origin !== 'null'
                  ? location.origin + location.pathname.replace(/\/[^/]*$/, '')
                  : 'https://kody-w.github.io/rapp-commons')
               + '/.well-known/neighborhood.egg';
   if (typeof QRious === 'undefined') {
-    // CDN unreachable (offline / file://). Show URL plainly so it can be copied.
     target.innerHTML = '<div style="width:144px;height:144px;background:#fff;color:#000;display:flex;align-items:center;justify-content:center;font-size:0.62rem;text-align:center;padding:8px;border-radius:6px;font-family:monospace">QRious unavailable<br>(offline / no CDN).<br><br>Open URL directly:<br>'+url+'</div>';
     return;
   }
   const canvas = document.createElement('canvas');
   target.appendChild(canvas);
-  new QRious({
-    element:    canvas,
-    value:      url,
-    size:       144,
-    background: '#ffffff',
-    foreground: '#000000',
-    level:      'M'
-  });
+  new QRious({ element: canvas, value: url, size: 144, background: '#ffffff', foreground: '#000000', level: 'M' });
 });
+
+// ── Holocard + Incantation ──
+// Reads rappid.json + card.json from same-origin and renders the
+// rapp-card/1.1.2 holocard alongside the 7-word incantation derived
+// from the rappid's hash. Mnemonic dictionary fetched from RAR.
+const MNEMONIC_URL = 'https://raw.githubusercontent.com/kody-w/RAR/main/rapp_sdk.py';
+const MNEMONIC_CACHE = 'rapp.mnemonic.words.v1';
+
+async function fetchMnemonic() {
+  try {
+    const cached = localStorage.getItem(MNEMONIC_CACHE);
+    if (cached) { const a = JSON.parse(cached); if (a.length === 1024) return a; }
+  } catch (e) {}
+  try {
+    const src = await (await fetch(MNEMONIC_URL)).text();
+    const m = src.match(/MNEMONIC_WORDS\s*=\s*"""([\s\S]*?)"""/);
+    if (!m) throw new Error('MNEMONIC_WORDS not found');
+    const words = m[1].split(/\s+/).filter(Boolean).map(w => w.toUpperCase());
+    try { localStorage.setItem(MNEMONIC_CACHE, JSON.stringify(words)); } catch (e) {}
+    return words;
+  } catch (e) { console.warn('mnemonic fetch failed:', e.message); return null; }
+}
+
+function rappidToIncantation(rappid, words) {
+  // Take first 16 hex chars of the rappid hash → 64-bit seed → 7 words
+  // (matches rapp_sdk.seed_to_words: 10 bits/word, low bits first).
+  const m = rappid.match(/:([a-f0-9]+)@/);
+  if (!m || !words || words.length !== 1024) return null;
+  const hashHex = m[1].slice(0, 16).padEnd(16, '0');
+  let seed = BigInt('0x' + hashHex);
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    out.push(words[Number(seed & 1023n)]);
+    seed >>= 10n;
+  }
+  return out.join(' ');
+}
+
+function renderHolocard(card) {
+  const tier = (card.quality_tier || card.rarity_tier || 'community');
+  const tierColor = tier === 'official' ? '#d29922' : tier === 'verified' ? '#3fb950' : '#8b949e';
+  const abilities = (card.abilities || []).slice(0, 3).map(a =>
+    `<div style="border-top:1px solid var(--bd);padding-top:6px;margin-top:6px">
+       <div style="font-weight:600;font-size:0.8rem;color:var(--accent)">${a.name||''}</div>
+       <div style="font-size:0.72rem;color:var(--text-dim);margin-top:2px;line-height:1.35">${a.text||''}</div>
+     </div>`).join('');
+  return `<div style="background:linear-gradient(180deg,#161b22,#0d1117);border:2px solid ${tierColor};border-radius:10px;padding:12px;font-size:0.78rem">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+      <strong style="font-size:0.92rem">${card.display_name||card.name||'?'}</strong>
+      <span style="font-size:0.62rem;color:${tierColor};font-weight:700;text-transform:uppercase;letter-spacing:0.5px">${tier}</span>
+    </div>
+    <div style="font-size:0.66rem;color:var(--mut);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">${card.type_line||card.category||''}</div>
+    ${card.flavor ? `<div style="font-style:italic;font-size:0.74rem;color:var(--dim);margin:6px 0;padding:6px 0;border-top:1px dashed var(--bd);border-bottom:1px dashed var(--bd)">"${card.flavor}"</div>` : ''}
+    ${abilities}
+    <div style="margin-top:8px;font-size:0.62rem;color:var(--mut);font-family:ui-monospace,monospace">v${card.version||'?'}</div>
+  </div>`;
+}
+
+async function renderHolocardBlock() {
+  const block = document.getElementById('rapp-holocard-block');
+  if (!block) return;
+  try {
+    const [rappidData, card, words] = await Promise.all([
+      fetch('rappid.json').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('card.json').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetchMnemonic(),
+    ]);
+    const rappid = rappidData?.rappid;
+    if (!rappid || !card) { block.style.display = 'none'; return; }
+    document.getElementById('rapp-holocard').innerHTML = renderHolocard(card);
+    const incantation = rappidToIncantation(rappid, words);
+    document.getElementById('rapp-incantation').textContent =
+      incantation || '(mnemonic dictionary unreachable — try again with network)';
+    block.style.display = 'block';
+  } catch (e) {
+    console.warn('holocard render failed:', e);
+    block.style.display = 'none';
+  }
+}
+renderHolocardBlock();
 </script>
 </head>
 <body>
@@ -129,15 +198,28 @@ window.addEventListener('DOMContentLoaded', function(){
 <section class="cols">
 
   <div class="card">
-    <h2><span class="num">1</span> Scan the QR</h2>
-    <p>Open this with the camera on a device running a brainstem, or paste the URL into the chat. The QR encodes a fetch to <code>/.well-known/neighborhood.egg</code> — a tiny invite cartridge.</p>
+    <h2><span class="num">1</span> Three ways to dial this neighborhood</h2>
+    <p style="font-size:0.86rem;color:var(--mut);margin-bottom:14px">Scan the QR with any tether's camera, paste the URL into a tether's Paste mode, OR spin the Dial wheel to the 7-word incantation below. All three resolve to the same rappid.</p>
     <div class="qr-block">
       <div id="qr-target" class="qr-svg"></div>
-      <div>
+      <div style="flex:1;min-width:160px">
         <a class="btn" href=".well-known/neighborhood.egg" download>⬇ Download invite egg</a>
-        <p style="margin-top:8px;font-size:0.78rem;color:var(--mut)">URL the QR encodes:<br><code style="font-size:0.72rem">https://kody-w.github.io/rapp-commons/.well-known/neighborhood.egg</code></p>
+        <p style="margin-top:8px;font-size:0.72rem;color:var(--mut)">URL the QR encodes:<br><code style="font-size:0.68rem;word-break:break-all">https://kody-w.github.io/rapp-commons/.well-known/neighborhood.egg</code></p>
       </div>
     </div>
+
+    <!-- ╭─── Holocard (rapp-card/1.1.2) + Incantation (7-word mnemonic) ───╮ -->
+    <div id="rapp-holocard-block" style="margin-top:16px;padding:14px;background:rgba(0,0,0,0.25);border:1px solid var(--bd);border-radius:10px;display:none">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+        <div id="rapp-holocard" style="flex:1;min-width:200px"></div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:0.66rem;color:var(--mut);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Incantation (7 words · summon via tether Dial)</div>
+          <div id="rapp-incantation" style="font-family:ui-monospace,monospace;font-size:0.92rem;color:var(--accent);letter-spacing:0.4px;line-height:1.5;background:rgba(0,0,0,0.4);padding:10px 12px;border-radius:6px;border:1px dashed var(--accent);min-height:24px">…</div>
+          <p style="font-size:0.7rem;color:var(--mut);margin-top:8px;line-height:1.4">Spin the wheel on any RAPP tether's Dial mode to these 7 words → resolves to this neighborhood. Hero use case: memorize 7 words, summon anywhere, no QR needed.</p>
+        </div>
+      </div>
+    </div>
+    <!-- ╰────────────────────────────────────────────────────────────────╯ -->
   </div>
 
   <div class="card">
