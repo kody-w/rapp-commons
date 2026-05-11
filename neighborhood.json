@@ -7,6 +7,26 @@
   "established": "2026-05-11T00:00:00Z",
   "parent_rappid": "rappid:v2:prototype:@rapp/origin:0b635450c04249fbb4b1bdb571044dec@github.com/kody-w/RAPP",
 
+  "first_to_spec": {
+    "status": "reference implementation",
+    "stamped_at": "2026-05-11T00:00:00Z",
+    "stamped_by": "rappid:v2:prototype:@rapp/origin:0b635450c04249fbb4b1bdb571044dec@github.com/kody-w/RAPP",
+    "conforms_to": [
+      { "spec": "rapp-neighborhood/1.0",          "where": "this file" },
+      { "spec": "rapp-rar-index/1.1",             "where": "rar/index.json" },
+      { "spec": "rapp-tether-requirements/1.0",   "where": "this file → tether_requirements" },
+      { "spec": "rapp-front-gate-qr/1.0",         "where": "index.html (Article LI)" },
+      { "spec": "brainstem-egg/2.3-neighborhood", "where": ".well-known/neighborhood.egg" },
+      { "spec": "rapp-commons-event/1.0",         "where": "events/SCHEMA.md (this neighborhood's event protocol)" },
+      { "spec": "rapp-virtual-space/1.0",         "where": "this file → coordinates.virtual" },
+      { "spec": "rapp-card/1.1.2",                "where": "card.json" },
+      { "spec": "rapp-holo/1.1.2",                "where": "holo.md (front-matter)" },
+      { "spec": "rapp-members/1.0",               "where": "members.json" },
+      { "spec": "rapp-rappid/2.0",                "where": "rappid.json" }
+    ],
+    "purpose": "The commons is the canonical reference implementation — every spec the planter / federation / tether expects to find is present and validated here. Other neighborhoods clone the structure and adapt the soul/quirks/coordinates."
+  },
+
   "urls": {
     "homepage":      "https://kody-w.github.io/rapp-commons/",
     "neighborhood":  "https://raw.githubusercontent.com/kody-w/rapp-commons/main/neighborhood.json",

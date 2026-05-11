@@ -353,6 +353,22 @@ header h1 .icon { font-size: 1.25em; }
       </div>
     </div>
 
+    <div class="panel" id="identity-panel">
+      <h3>Identity</h3>
+      <div id="identity-state-anon" style="font-size:0.78rem;color:var(--dim);line-height:1.4">
+        <p style="margin-bottom:8px">You're anonymous — a fresh ECDSA keypair, no GitHub binding. You can read the stream, but to <strong>post</strong> with a verifiable identity you need a rappid bound to your GitHub handle.</p>
+        <button id="identity-auth-btn" style="width:100%;background:var(--acc);color:#000;border:none;padding:8px;border-radius:5px;font-size:0.8rem;font-weight:600;cursor:pointer">Sign in with GitHub (PAT)</button>
+        <p style="margin-top:6px;font-size:0.7rem;color:var(--mut)">Browser-only PAT flow for v1. Device-flow OAuth coming.</p>
+      </div>
+      <div id="identity-state-authed" style="display:none">
+        <div class="meta-row"><span class="k">github</span><span class="v" id="id-gh">—</span></div>
+        <div class="meta-row"><span class="k">rappid</span><span class="v" id="id-rappid" style="font-size:0.66rem">—</span></div>
+        <div class="meta-row"><span class="k">front door</span><span class="v" id="id-frontdoor">(not planted)</span></div>
+        <button id="identity-plant-btn" style="width:100%;background:var(--acc);color:#000;border:none;padding:8px;border-radius:5px;font-size:0.8rem;font-weight:600;cursor:pointer;margin-top:8px">🌱 Plant my front door</button>
+        <button id="identity-signout-btn" style="width:100%;background:transparent;color:var(--mut);border:1px solid var(--bd);padding:6px;border-radius:5px;font-size:0.74rem;cursor:pointer;margin-top:6px">Sign out</button>
+      </div>
+    </div>
+
     <div class="panel">
       <h3>Neighborhood</h3>
       <div class="meta-row"><span class="k">name</span><span class="v" id="nbhd-name">(dialing…)</span></div>
@@ -1384,9 +1400,20 @@ async function loadMnemonicWords() {
 }
 
 function applyMnemonicWords(words) {
+  // CANONICAL order (preserved from rapp_sdk.MNEMONIC_WORDS — never reorder
+  // this; the position in `words[]` IS the 10-bit identity used by
+  // words_to_seed). Storage = canonical index. Display = alphabetical.
   phone.summon.words = words;
   phone.summon.wordToIdx = {};
   words.forEach((w, i) => { phone.summon.wordToIdx[w] = i; });
+
+  // sortedIndices: alphabetical permutation of canonical positions.
+  // Wheel cursor is an index INTO sortedIndices; pressing maps back to
+  // canonical via sortedIndices[cursor], which is what we store in slots.
+  phone.summon.sortedIndices = words
+    .map((w, i) => i)
+    .sort((a, b) => words[a].localeCompare(words[b]));
+
   phone.summon.slots = [null, null, null, null, null, null, null];
   phone.summon.cursor = 0;
   renderSummonSlots();
@@ -1416,13 +1443,15 @@ function renderSummonSlots() {
 function renderSummonWheel() {
   const strip = document.getElementById('summon-wheel-strip');
   if (!strip || !phone.summon.words.length) return;
-  const N = phone.summon.words.length;
+  const sorted = phone.summon.sortedIndices;
+  const N = sorted.length;
   const visible = 5;  // (active + 2 above + 2 below)
   let html = '';
   for (let off = -visible; off <= visible; off++) {
-    const idx = ((phone.summon.cursor + off) % N + N) % N;
+    const cursorPos = ((phone.summon.cursor + off) % N + N) % N;
+    const canonIdx  = sorted[cursorPos];
     const active = off === 0 ? ' active' : '';
-    html += `<div class="summon-wheel-item${active}">${phone.summon.words[idx]}</div>`;
+    html += `<div class="summon-wheel-item${active}">${phone.summon.words[canonIdx]}</div>`;
   }
   strip.innerHTML = html;
   // Center the active row (it's at the visible-th position; each row 40px)
@@ -1431,22 +1460,25 @@ function renderSummonWheel() {
 }
 
 function wheelStep(delta) {
-  if (!phone.summon.words.length) return;
-  const N = phone.summon.words.length;
+  if (!phone.summon.sortedIndices?.length) return;
+  const N = phone.summon.sortedIndices.length;
   phone.summon.cursor = ((phone.summon.cursor + delta) % N + N) % N;
   renderSummonWheel();
 }
 
 function pressWheel() {
-  if (!phone.summon.words.length) return;
+  if (!phone.summon.sortedIndices?.length) return;
   const nextIdx = phone.summon.slots.findIndex(s => s === null);
   if (nextIdx === -1) {
     setPhoneStatus('summon-status', '7 words already chosen — clear a slot to add another.');
     return;
   }
-  phone.summon.slots[nextIdx] = phone.summon.cursor;
+  // Store the CANONICAL index (rapp_sdk position) — even though the wheel
+  // shows alphabetical, encoding has to match rapp_sdk.words_to_seed.
+  const canonIdx = phone.summon.sortedIndices[phone.summon.cursor];
+  phone.summon.slots[nextIdx] = canonIdx;
   renderSummonSlots();
-  setPhoneStatus('summon-status', `slot ${nextIdx + 1}: ${phone.summon.words[phone.summon.cursor]}`);
+  setPhoneStatus('summon-status', `slot ${nextIdx + 1}: ${phone.summon.words[canonIdx]}`);
 }
 
 function updateSummonButton() {
@@ -1576,6 +1608,409 @@ const showScanError   = (msg) => showPhoneError('phone-paste-err', msg);
 const startScanner    = async () => { /* no-op: camera is now on-demand via the Open camera button */ };
 
 // ────────────────────────────────────────────────────────────────────────
+// GitHub identity — PAT-based auth + operator rappid mint + front-door plant
+// ────────────────────────────────────────────────────────────────────────
+// Why PAT not OAuth: device-flow OAuth requires a client_id registered to
+// a deployed app; PAT works fully browser-only with no server. Trade: the
+// user has to copy a token. Acceptable for v1; OAuth comes later (with
+// a Cloudflare-Worker doorman akin to the vbrainstem ?copilot=1 pattern).
+//
+// What we mint:
+//   - Operator rappid: rappid:v2:twin:@<handle>/twin:<hash>@github.com/<handle>/twin
+//   - Convention: every operator's twin lives at <handle>/twin globally —
+//     namespace (@<handle>/twin) and repo name (twin) match so the lookup
+//     is uniform and tethers can dial @<handle>'s twin without ambiguity.
+//   - hash: SHA-256-truncated of "<handle>:twin:genesis" for fresh mints;
+//     existing twins use whatever hash is in their rappid.json (see
+//     lookupOrMintRappid — the front door is canonical, the tether respects
+//     it).
+//   - Their existing ECDSA P-256 keypair (already in localStorage) gets
+//     BOUND to the rappid — same keypair, now with a github-identity claim
+//     attached.
+//
+// Front door = a planted <handle>/twin repo with the front-door grail
+// emission (rappid.json, soul.md, members.json, .nojekyll, index.html with
+// the Article-LI QR snippet, .well-known/twin.egg for the operator's own
+// invite egg).
+
+const GH_PAT_STORAGE = 'rapp.tether.gh_pat.v1';
+const GH_USER_STORAGE = 'rapp.tether.gh_user.v1';
+
+function ghHeaders(pat, extra={}) {
+  return Object.assign({
+    'Authorization': 'Bearer ' + pat,
+    'Accept':        'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  }, extra);
+}
+
+async function ghMe(pat) {
+  const r = await fetch('https://api.github.com/user', { headers: ghHeaders(pat) });
+  if (!r.ok) throw new Error('GitHub /user returned ' + r.status + ' (PAT invalid or scope missing?)');
+  return r.json();
+}
+
+// JS BLAKE2b is non-trivial without a library. We use Web Crypto SHA-256
+// truncated to 32 hex chars as the deterministic operator-hash for the
+// initial mint when no front door exists yet. Not canonical (the SDK uses
+// BLAKE2b); we'll align via noble-hashes CDN in a follow-up. EXISTING
+// twins already-planted use whatever hash is in their rappid.json, which
+// the tether respects via lookupOrMintRappid below.
+async function operatorHash(handle) {
+  const seed = handle.toLowerCase() + ':twin:genesis';
+  const buf  = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(seed));
+  return Array.from(new Uint8Array(buf))
+    .slice(0, 16)
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Default-mint (used only when no front door exists yet). Convention:
+// every operator's twin lives at <handle>/twin globally — namespace and
+// repo name match so the lookup is uniform.
+async function defaultMintRappid(handle) {
+  const hash = await operatorHash(handle);
+  return `rappid:v2:twin:@${handle}/twin:${hash}@github.com/${handle}/twin`;
+}
+
+// CANONICAL resolution: always try the front door first.
+// rappid.json at <handle>/twin/main is the source of truth — historic
+// twins (planted before this tether) keep their canonical rappid;
+// only fresh operators with no front door get a default-minted one.
+async function lookupOrMintRappid(handle) {
+  const url = `https://raw.githubusercontent.com/${handle}/twin/main/rappid.json`;
+  try {
+    const r = await fetch(url, { cache: 'no-cache' });
+    if (r.ok) {
+      const data = await r.json();
+      if (data.rappid && /^rappid:v2:/.test(data.rappid)) {
+        log(`rappid resolved from front door · ${url}`, 'ok');
+        return { rappid: data.rappid, source: 'front-door', frontDoorRappid: data };
+      }
+    }
+  } catch (e) {}
+  // No front door — mint client-side. The user can plant it later via
+  // "🌱 Plant my front door"; the planted rappid will MATCH this minted one
+  // (deterministic hash) so re-lookup from front door post-plant is stable.
+  const rappid = await defaultMintRappid(handle);
+  log(`no front door at ${handle}/twin — minted default rappid client-side`, 'warn');
+  return { rappid, source: 'default-mint', frontDoorRappid: null };
+}
+
+// Kept as an alias for callers that just want the string.
+async function mintOperatorRappid(handle) {
+  return (await lookupOrMintRappid(handle)).rappid;
+}
+
+function showAuthed(user, rappid, frontDoorUrl) {
+  document.getElementById('identity-state-anon').style.display = 'none';
+  document.getElementById('identity-state-authed').style.display = 'block';
+  document.getElementById('id-gh').innerHTML = `<a href="https://github.com/${user.login}" target="_blank" style="color:var(--acc);text-decoration:none">@${user.login}</a>`;
+  document.getElementById('id-rappid').textContent = rappid;
+  const fd = document.getElementById('id-frontdoor');
+  if (frontDoorUrl) {
+    fd.innerHTML = `<a href="${frontDoorUrl}" target="_blank" style="color:var(--grn);text-decoration:none">${frontDoorUrl.replace(/^https?:\/\//, '')}</a>`;
+    document.getElementById('identity-plant-btn').textContent = '✓ Front door planted';
+    document.getElementById('identity-plant-btn').disabled = true;
+  } else {
+    fd.textContent = '(not planted yet)';
+  }
+}
+
+function showAnon() {
+  document.getElementById('identity-state-anon').style.display = 'block';
+  document.getElementById('identity-state-authed').style.display = 'none';
+}
+
+async function authWithGitHub() {
+  const pat = prompt(
+    'Paste a GitHub Personal Access Token with `repo` scope (for planting your front door) ' +
+    'and `read:user` scope (for fetching your handle).\n\n' +
+    'Create one: https://github.com/settings/tokens/new?scopes=repo,read:user&description=RAPP+tether\n\n' +
+    "PATs stay in your browser's localStorage — never sent to our servers (we don't have any)."
+  );
+  if (!pat || !pat.trim()) return;
+  const token = pat.trim();
+  try {
+    const user = await ghMe(token);
+    const rappid = await mintOperatorRappid(user.login);
+    localStorage.setItem(GH_PAT_STORAGE,  token);
+    localStorage.setItem(GH_USER_STORAGE, JSON.stringify({ login: user.login, avatar: user.avatar_url, name: user.name }));
+    bindIdentityToRappid(rappid);   // existing function — binds the ECDSA keypair to a rappid
+    log('signed in as @' + user.login + ' · rappid=' + rappid.slice(0, 60) + '…', 'ok');
+    // Check whether their front-door repo already exists
+    const fdUrl = await detectFrontDoor(token, user.login);
+    showAuthed(user, rappid, fdUrl);
+    renderIdentity();
+  } catch (e) {
+    log('GitHub auth failed: ' + e.message, 'err');
+    alert('Auth failed: ' + e.message);
+  }
+}
+
+async function detectFrontDoor(pat, handle) {
+  // Convention: <handle>/twin (namespace and repo name match so global
+  // lookup is uniform). Probe for existence.
+  try {
+    const r = await fetch(`https://api.github.com/repos/${handle}/twin`, { headers: ghHeaders(pat) });
+    if (r.ok) {
+      const repo = await r.json();
+      return repo.has_pages
+        ? `https://${handle}.github.io/twin/`
+        : repo.html_url;
+    }
+  } catch (e) {}
+  return null;
+}
+
+function signOutGitHub() {
+  localStorage.removeItem(GH_PAT_STORAGE);
+  localStorage.removeItem(GH_USER_STORAGE);
+  // Don't clear the ECDSA keypair — it can be re-bound to a different rappid later.
+  state.identity.rappid = null;
+  showAnon();
+  renderIdentity();
+  log('signed out of GitHub (ECDSA keypair preserved)', '');
+}
+
+// ── PLANT — create the operator's front door via GitHub REST API ──────
+async function plantFrontDoor() {
+  const pat  = localStorage.getItem(GH_PAT_STORAGE);
+  const user = JSON.parse(localStorage.getItem(GH_USER_STORAGE) || 'null');
+  if (!pat || !user) { alert('Sign in with GitHub first.'); return; }
+  const handle = user.login;
+  const repoName = 'twin';   // global convention: <handle>/twin
+  const rappid = state.identity.rappid || await mintOperatorRappid(handle);
+
+  if (!confirm(
+    `Plant your front door?\n\n` +
+    `• Creates public repo: ${handle}/${repoName}\n` +
+    `• Seeds it with: rappid.json, soul.md, members.json, index.html (with Article-LI QR), README, .nojekyll\n` +
+    `• Enables GitHub Pages → live at https://${handle}.github.io/${repoName}/\n` +
+    `• Your operator rappid: ${rappid}\n\n` +
+    `Requires PAT with \`repo\` scope. Proceed?`
+  )) return;
+
+  const btn = document.getElementById('identity-plant-btn');
+  btn.disabled = true;
+  btn.textContent = '🌱 Planting…';
+
+  try {
+    // 1. Create the repo
+    log('planting · POST /user/repos · ' + repoName, '');
+    const createRes = await fetch('https://api.github.com/user/repos', {
+      method: 'POST',
+      headers: ghHeaders(pat, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        name: repoName,
+        description: `${handle}'s digital twin front door — rappid: ${rappid.slice(0, 80)}…`,
+        homepage: `https://${handle}.github.io/${repoName}/`,
+        private: false,
+        auto_init: true,   // creates initial commit so we have a tree to write to
+      }),
+    });
+    if (!createRes.ok) {
+      // If 422, it already exists — fine, just seed the files
+      if (createRes.status !== 422) throw new Error('repo create returned ' + createRes.status);
+      log('repo already exists — proceeding with file seeding', 'warn');
+    }
+
+    // 2. Seed the grail files. Each one is a Contents API PUT.
+    const grail = buildGrailFor(handle, rappid);
+    for (const [path, content] of Object.entries(grail)) {
+      await ghPutFile(pat, handle, repoName, path, content, `plant: seed ${path}`);
+      log('  ✓ wrote ' + path, 'ok');
+    }
+
+    // 3. Enable Pages (idempotent — 409 means already enabled)
+    log('enabling GitHub Pages…', '');
+    const pagesRes = await fetch(`https://api.github.com/repos/${handle}/${repoName}/pages`, {
+      method: 'POST',
+      headers: ghHeaders(pat, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ source: { branch: 'main', path: '/' } }),
+    });
+    if (!pagesRes.ok && pagesRes.status !== 409) {
+      log('  Pages enable returned ' + pagesRes.status + ' (may already be enabled)', 'warn');
+    }
+
+    const liveUrl = `https://${handle}.github.io/${repoName}/`;
+    log('front door planted · ' + liveUrl, 'ok');
+    document.getElementById('id-frontdoor').innerHTML =
+      `<a href="${liveUrl}" target="_blank" style="color:var(--grn);text-decoration:none">${liveUrl.replace(/^https?:\/\//, '')}</a>`;
+    btn.textContent = '✓ Front door planted';
+    banner(
+      `🌱 Planted <a href="${liveUrl}" target="_blank" style="color:inherit">${liveUrl}</a>. ` +
+      `Pages takes ~30-60s to build. Your operator rappid (<code>${rappid}</code>) is now anchored ` +
+      `at <code>github.com/${handle}/${repoName}</code> per Article XLVI.`,
+      'info'
+    );
+  } catch (e) {
+    log('plant failed: ' + e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = '🌱 Plant my front door';
+    alert('Plant failed: ' + e.message);
+  }
+}
+
+async function ghPutFile(pat, owner, repo, path, content, msg) {
+  // Check if file exists (to get sha for update)
+  let sha = null;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+      headers: ghHeaders(pat),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      sha = data.sha;
+    }
+  } catch (e) {}
+  const body = {
+    message: msg,
+    content: btoa(unescape(encodeURIComponent(content))),  // UTF-8 → base64
+    branch:  'main',
+  };
+  if (sha) body.sha = sha;
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+    method:  'PUT',
+    headers: ghHeaders(pat, { 'Content-Type': 'application/json' }),
+    body:    JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('contents PUT ' + path + ' returned ' + res.status);
+}
+
+function buildGrailFor(handle, rappid) {
+  const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const hash = rappid.match(/:([a-f0-9]+)@/)?.[1] || '';
+  return {
+    'rappid.json': JSON.stringify({
+      schema:    'rapp-rappid/2.0',
+      rappid,
+      kind:      'twin',
+      namespace: `@${handle}/twin`,
+      hash,
+      host:      'github.com',
+      owner:     handle,
+      repo:      'twin',
+      parent_rappid: 'rappid:v2:prototype:@rapp/origin:0b635450c04249fbb4b1bdb571044dec@github.com/kody-w/RAPP',
+      minted_at: now,
+      notes:     `Twin for @${handle}. Convention: every operator's twin lives at <handle>/twin (namespace and repo name match for uniform global lookup). Planted via the RAPP public tether — the operator's permanent global address per Article XLVI, travels across every neighborhood they join.`,
+    }, null, 2),
+    'soul.md': `# ${handle}'s twin\n\n` +
+      `This is the soul of @${handle}'s digital twin. The default greeting is "I'm @${handle}'s twin." ` +
+      `Customize this file with the persona you want your twin to embody — voice, expertise, tone, ` +
+      `what to say, what NOT to say. The brainstem reads this as its system prompt every turn.\n\n` +
+      `## Role\n\nYou are @${handle}'s twin. When asked questions, answer as them within reason; ` +
+      `when uncertain, defer ("@${handle} would need to weigh in on that"). You don't impersonate; ` +
+      `you represent.\n\n## Voice\n\n(replace this section with the operator's preferred voice — terse / warm / formal / playful / etc.)\n`,
+    'members.json': JSON.stringify({
+      schema: 'rapp-members/1.0',
+      neighborhood_rappid: rappid,
+      updated_at: now,
+      note: `This is @${handle}'s personal twin — membership = just them. Other operators join NEIGHBORHOODS, not personal twins.`,
+      members: [
+        { rappid, added_at: now, via: 'genesis' },
+      ],
+    }, null, 2),
+    'index.html': operatorFrontGateHtml(handle, rappid),
+    '.nojekyll': '',
+    'README.md': `# @${handle}'s twin\n\n` +
+      `Front door for @${handle}'s digital twin. Planted via the RAPP public tether on ${now.split('T')[0]}.\n\n` +
+      `- **Rappid:** \`${rappid}\`\n` +
+      `- **Live:** https://${handle}.github.io/twin/\n` +
+      `- **Parent species:** [kody-w/RAPP](https://github.com/kody-w/RAPP)\n\n` +
+      `## The convention\n\n` +
+      `Every operator's twin lives at **\`<handle>/twin\`** — globally consistent so the lookup ` +
+      `works uniformly from any tether. Drop a handle into any RAPP tether, it knows where to find your twin.\n\n` +
+      `## What this repo is\n\n` +
+      `Per CONSTITUTION Article XLVI, every operator's rappid IS their global address — and the rappid resolves to a ` +
+      `GitHub-hosted front door. This repo is that door for @${handle}. Other operators who want to address ` +
+      `@${handle} dial this address from any tether.\n\n` +
+      `Conforms to Article LI (front-gate QR mandatory): \`index.html\` includes the canonical ` +
+      `\`rapp-front-gate-qr/1.0\` snippet (QRious + jsdelivr, graceful degrade).\n`,
+  };
+}
+
+function operatorFrontGateHtml(handle, rappid) {
+  // The Article-LI conforming snippet, wrapped in a minimum-viable
+  // operator front-gate page.
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>@${handle}'s twin</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; line-height: 1.5; }
+  .shell { max-width: 640px; margin: 0 auto; padding: 48px 22px; }
+  h1 { font-size: 1.6rem; margin-bottom: 8px; }
+  .tag { color: #8b949e; margin-bottom: 24px; }
+  .rappid { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.74rem; color: #58a6ff; word-break: break-all; background: #161b22; padding: 10px 14px; border-radius: 8px; border: 1px solid #30363d; }
+  .qr-section { margin: 32px 0; text-align: center; }
+  .qr-section h2 { font-size: 0.95rem; color: #8b949e; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
+  .footer { font-size: 0.78rem; color: #6e7681; margin-top: 32px; text-align: center; }
+  .footer a { color: #58a6ff; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <h1>@${handle}'s twin</h1>
+  <p class="tag">Digital twin front door · planted via the RAPP public tether.</p>
+  <div class="rappid">${rappid}</div>
+
+  <div class="qr-section">
+    <h2>Address this twin</h2>
+    <!-- ╭─── rapp-front-gate-qr/1.0 (Article LI) ───╮ -->
+    <canvas id="rapp-front-gate-qr"
+            style="background:#fff;padding:8px;border-radius:8px;display:inline-block"
+            aria-label="Tether QR for this twin"></canvas>
+    <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"><\/script>
+    <script>
+    (function() {
+      var el = document.getElementById('rapp-front-gate-qr');
+      if (!el) return;
+      var base = (location.origin && location.origin !== 'null'
+                    ? location.origin + location.pathname.replace(/\\/[^/]*$/, '')
+                    : '');
+      var url = (base ? base : '.') + '/.well-known/twin.egg';
+      if (typeof QRious === 'undefined') {
+        el.outerHTML = '<div style="background:#fff;color:#000;padding:12px;border-radius:8px;font-family:monospace;font-size:0.72rem;text-align:center;word-break:break-all">Paste this into any tether:<br><b>' + url + '</b></div>';
+        return;
+      }
+      new QRious({ element: el, value: url, size: 256, background: '#ffffff', foreground: '#000000', level: 'M' });
+    })();
+    <\/script>
+    <!-- ╰────────────────────────────────────────────╯ -->
+  </div>
+
+  <p class="footer">
+    <a href="https://github.com/${handle}/twin">repo</a> ·
+    <a href="https://kody-w.github.io/RAPP/pages/tether.html">public tether</a> ·
+    <a href="https://github.com/kody-w/RAPP">parent species</a>
+  </p>
+</div>
+</body>
+</html>
+`;
+}
+
+// ── Restore session on load ──────────────────────────────────────────
+async function restoreGitHubSession() {
+  const pat   = localStorage.getItem(GH_PAT_STORAGE);
+  const userJ = localStorage.getItem(GH_USER_STORAGE);
+  if (!pat || !userJ) return;
+  try {
+    const user   = JSON.parse(userJ);
+    const rappid = await mintOperatorRappid(user.login);
+    bindIdentityToRappid(rappid);
+    const fdUrl  = await detectFrontDoor(pat, user.login);
+    showAuthed(user, rappid, fdUrl);
+    renderIdentity();
+    log('restored GitHub session: @' + user.login, 'ok');
+  } catch (e) {
+    log('session restore failed: ' + e.message, 'warn');
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────────────────
 async function main() {
@@ -1589,6 +2024,13 @@ async function main() {
   // ── 2. Wire all the UI handlers up-front so phone modes work ─────────
   wirePhone();
   loadMnemonicWords();   // kicks off background fetch; populates wheel when done
+
+  // GitHub identity buttons
+  document.getElementById('identity-auth-btn').addEventListener('click', authWithGitHub);
+  document.getElementById('identity-plant-btn').addEventListener('click', plantFrontDoor);
+  document.getElementById('identity-signout-btn').addEventListener('click', signOutGitHub);
+  // Try to restore a previous GitHub session in the background
+  restoreGitHubSession();
   document.getElementById('c-post').disabled = false;
   document.getElementById('c-post').addEventListener('click', compose);
   document.getElementById('greeter-send').addEventListener('click', greeterAsk);
