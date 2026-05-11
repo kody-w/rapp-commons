@@ -2382,6 +2382,12 @@ async function detectFrontDoor(pat, handle) {
   // lookup is uniform). Probe for existence.
   try {
     const r = await fetch(`https://api.github.com/repos/${handle}/twin`, { headers: ghHeaders(pat) });
+    if (r.status === 401) {
+      // Stale token — force clear so the operator re-auths
+      log('twin probe returned 401 — clearing stale auth session', 'warn');
+      handleStaleAuth();
+      return null;
+    }
     if (r.ok) {
       const repo = await r.json();
       return repo.has_pages
@@ -2390,6 +2396,21 @@ async function detectFrontDoor(pat, handle) {
     }
   } catch (e) {}
   return null;
+}
+
+// Called when any GitHub API call returns 401 — the stored token is
+// expired/revoked. Clear it so the operator re-auths cleanly instead
+// of seeing zombie "signed in" state with everything failing.
+function handleStaleAuth() {
+  doormanClear();
+  localStorage.removeItem(GH_PAT_STORAGE);
+  localStorage.removeItem(GH_USER_STORAGE);
+  if (state.identity) state.identity.rappid = null;
+  showAnon();
+  renderIdentity();
+  hidePrivateEstatePanel();
+  PE.handle = null; PE.planted = false; PE.agents = [];
+  banner('Your GitHub session expired — sign in again to re-bind your twin.', 'warn');
 }
 
 function signOutGitHub() {
@@ -2691,18 +2712,21 @@ async function restoreGitHubSession() {
   const patToken     = localStorage.getItem(GH_PAT_STORAGE);
   const token = doormanToken || patToken;
   if (!token) return;
-  let userJ = localStorage.getItem(GH_USER_STORAGE);
+
+  // ALWAYS revalidate the token via /user before trusting cached state.
+  // The previous path skipped this when GH_USER_STORAGE was cached, so a
+  // dead token + cached user → cascading 401s on every API call. Hit
+  // /user once; if it 401s, clear the session cleanly.
   let user;
-  if (userJ) {
-    try { user = JSON.parse(userJ); } catch {}
-  }
-  if (!user) {
-    try { user = await ghMe(token); localStorage.setItem(GH_USER_STORAGE, JSON.stringify({ login: user.login, avatar: user.avatar_url, name: user.name })); } catch (e) {
-      log('session restore: token invalid, clearing', 'warn');
-      doormanClear();
-      localStorage.removeItem(GH_PAT_STORAGE);
-      return;
-    }
+  try {
+    user = await ghMe(token);
+    localStorage.setItem(GH_USER_STORAGE, JSON.stringify({ login: user.login, avatar: user.avatar_url, name: user.name }));
+  } catch (e) {
+    log('session restore: token invalid (' + e.message + ') — clearing', 'warn');
+    doormanClear();
+    localStorage.removeItem(GH_PAT_STORAGE);
+    localStorage.removeItem(GH_USER_STORAGE);
+    return;
   }
   try {
     const { rappid } = await lookupOrMintRappid(user.login);
@@ -2760,6 +2784,12 @@ async function checkPrivateEstate() {
 
   try {
     const res = await fetch(`https://api.github.com/repos/${handle}/twin-private`, { headers: ghHeaders(token) });
+    if (res.status === 401) {
+      // Stale token — clear and stop
+      log('private estate check 401 — clearing stale auth session', 'warn');
+      handleStaleAuth();
+      return;
+    }
     if (res.status === 404) {
       PE.planted = false;
       pill.textContent = 'not planted'; pill.style.background = 'var(--org)'; pill.style.color = '#000';
@@ -3096,11 +3126,30 @@ async function initLobby() {
 
 async function tryClaimHost(hostId, guestId) {
   return new Promise((resolve) => {
-    const trial = new Peer(hostId, { debug: 0 });
+    let trial;
+    try {
+      trial = new Peer(hostId, { debug: 0 });
+    } catch (e) {
+      lobbyUnavailable('PeerJS init failed: ' + e.message);
+      resolve();
+      return;
+    }
     let resolved = false;
-    trial.on('open', (id) => {
-      // We got the host ID — we ARE the host now.
+    // Hard timeout: if broker is unreachable (tracking prevention, blocked
+    // network, broker down), bail out cleanly instead of leaving the panel
+    // stuck on "connecting…" forever.
+    const watchdog = setTimeout(() => {
+      if (resolved) return;
       resolved = true;
+      try { trial.destroy(); } catch {}
+      lobbyUnavailable('broker unreachable (wss://0.peerjs.com timeout)');
+      resolve();
+    }, 8000);
+
+    trial.on('open', (id) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(watchdog);
       lobby.peer = trial;
       lobby.isHost = true;
       lobby.peerId = id;
@@ -3110,7 +3159,7 @@ async function tryClaimHost(hostId, guestId) {
       log('lobby · claimed host ' + id, 'ok');
       trial.on('connection', (conn) => lobbyWireConn(conn));
       trial.on('error', (e) => log('host peer error: ' + (e?.type || e?.message || e), 'warn'));
-      trial.on('disconnected', () => { setLobbyPill('reconnecting…', ''); trial.reconnect(); });
+      trial.on('disconnected', () => { setLobbyPill('reconnecting…', ''); try { trial.reconnect(); } catch {} });
       renderLobbyPeers();
       lobbyAppend({ kind: 'system', from: 'lobby', text: 'You\'re the host — others who tether will connect through you.', ts: new Date().toISOString() });
       resolve();
@@ -3119,21 +3168,69 @@ async function tryClaimHost(hostId, guestId) {
       if (resolved) return;
       // host ID taken → join as guest
       if (err?.type === 'unavailable-id' || /taken|in use/i.test(err?.message || '')) {
-        trial.destroy();
+        resolved = true;
+        clearTimeout(watchdog);
+        try { trial.destroy(); } catch {}
         joinAsGuest(hostId, guestId).then(resolve);
-      } else {
-        log('lobby peer error: ' + (err?.type || err?.message || err), 'warn');
-        setLobbyPill('error', '');
+      } else if (err?.type === 'network' || err?.type === 'socket-error' || err?.type === 'socket-closed' || err?.type === 'server-error') {
+        // Broker network problem — fail gracefully
+        resolved = true;
+        clearTimeout(watchdog);
+        try { trial.destroy(); } catch {}
+        lobbyUnavailable('broker unreachable (' + err.type + ')');
         resolve();
+      } else {
+        log('lobby peer error (continuing): ' + (err?.type || err?.message || err), 'warn');
+        // Don't resolve here — let watchdog handle the timeout
       }
     });
   });
 }
 
+function lobbyUnavailable(reason) {
+  log('lobby unavailable · ' + reason, 'warn');
+  setLobbyPill('unavailable', '');
+  // Replace the empty stream with a clear explanation so visitors know
+  // the rest of the tether still works.
+  const stream = document.getElementById('lobby-stream');
+  if (stream) {
+    stream.innerHTML =
+      `<div style="color:var(--mut);font-style:italic;text-align:center;padding:14px 8px;line-height:1.5">
+         Real-time lobby unavailable on this network.<br>
+         <span style="font-size:0.7rem">${escapeHtml(reason)}</span><br><br>
+         The rest of the tether still works — you can post signed events
+         (federation roll-up unions them into the commons every ~10 min)
+         and chat with the doorman.
+       </div>`;
+  }
+  // Disable input so visitors don't type into a dead channel
+  const input = document.getElementById('lobby-input');
+  if (input) { input.disabled = true; input.placeholder = 'lobby offline — events/ post still works'; }
+}
+
 async function joinAsGuest(hostId, guestId) {
   return new Promise((resolve) => {
-    const peer = new Peer(guestId, { debug: 0 });
+    let peer;
+    try {
+      peer = new Peer(guestId, { debug: 0 });
+    } catch (e) {
+      lobbyUnavailable('PeerJS init failed: ' + e.message);
+      resolve();
+      return;
+    }
+    let resolved = false;
+    const watchdog = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      try { peer.destroy(); } catch {}
+      lobbyUnavailable('broker unreachable (guest join timeout)');
+      resolve();
+    }, 8000);
+
     peer.on('open', () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(watchdog);
       lobby.peer = peer;
       lobby.peerId = guestId;
       lobby.isHost = false;
@@ -3142,7 +3239,6 @@ async function joinAsGuest(hostId, guestId) {
       const conn = peer.connect(hostId, { reliable: true });
       lobby.hostConn = conn;
       lobbyWireConn(conn);
-      // Once connected, send hello
       conn.on('open', () => {
         setLobbyPill('connected', 'guest');
         const me = lobbyMe();
@@ -3151,9 +3247,16 @@ async function joinAsGuest(hostId, guestId) {
       resolve();
     });
     peer.on('error', (err) => {
-      log('guest peer error: ' + (err?.type || err?.message || err), 'warn');
-      setLobbyPill('error', '');
-      resolve();
+      if (resolved) return;
+      if (err?.type === 'network' || err?.type === 'socket-error' || err?.type === 'socket-closed' || err?.type === 'server-error') {
+        resolved = true;
+        clearTimeout(watchdog);
+        try { peer.destroy(); } catch {}
+        lobbyUnavailable('broker unreachable (' + err.type + ')');
+        resolve();
+      } else {
+        log('guest peer error (continuing): ' + (err?.type || err?.message || err), 'warn');
+      }
     });
   });
 }
