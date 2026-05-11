@@ -220,6 +220,25 @@ header h1 .icon { font-size: 1.25em; }
         <div class="sub">scan a QR, dial words, or paste a URL</div>
       </div>
 
+      <!-- ╭─── Sign-in banner (always visible above tabs) ───╮
+           Anon state: "Sign in with GitHub →" — kicks off device-code OAuth.
+           After auth + auto-twin-resolve, this swaps to a small identity chip
+           showing @handle so the operator knows they're bound before they scan. -->
+      <div id="phone-signin-banner" style="background:linear-gradient(135deg,rgba(88,166,255,0.12),rgba(210,168,255,0.08));border:1px solid rgba(88,166,255,0.35);border-radius:10px;padding:10px 12px;margin-bottom:12px;text-align:center">
+        <div id="phone-signin-anon">
+          <div style="font-size:0.74rem;color:var(--mut);margin-bottom:6px">Identify yourself so you can dial in as your twin</div>
+          <button id="phone-signin-go" style="background:var(--acc);color:#000;border:none;padding:9px 14px;border-radius:6px;font-size:0.84rem;font-weight:700;cursor:pointer;font-family:inherit">🐙 Sign in with GitHub →</button>
+          <div style="font-size:0.66rem;color:var(--mut);margin-top:6px">device-code flow · same as the doorman sphere · auto-resolves your twin</div>
+        </div>
+        <div id="phone-signin-authed" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:0.78rem">🧬 Bound as <strong id="phone-signin-handle">@?</strong>'s twin</span>
+            <button id="phone-signin-out" style="background:transparent;color:var(--mut);border:1px solid var(--bd);padding:3px 10px;border-radius:999px;font-size:0.66rem;cursor:pointer;font-family:inherit">sign out</button>
+          </div>
+          <div id="phone-signin-rappid" style="font-size:0.6rem;color:var(--mut);font-family:ui-monospace,monospace;word-break:break-all;margin-top:4px">—</div>
+        </div>
+      </div>
+
       <div class="phone-tabs">
         <button class="phone-tab active" data-mode="scan">📷 Scan</button>
         <button class="phone-tab" data-mode="summon">🔮 Dial</button>
@@ -1661,6 +1680,12 @@ function wirePhone() {
     if (e.key === 'ArrowDown') { wheelStep(1); e.preventDefault(); }
     if (e.key === 'Enter')     { pressWheel(); e.preventDefault(); }
   });
+
+  // Sign-in banner buttons (always visible on the phone)
+  const signinGo = document.getElementById('phone-signin-go');
+  if (signinGo) signinGo.addEventListener('click', authWithGitHubDeviceFlow);
+  const signinOut = document.getElementById('phone-signin-out');
+  if (signinOut) signinOut.addEventListener('click', signOutGitHub);
 }
 
 async function summonByHandle() {
@@ -1865,23 +1890,46 @@ async function mintOperatorRappid(handle) {
 }
 
 function showAuthed(user, rappid, frontDoorUrl) {
-  document.getElementById('identity-state-anon').style.display = 'none';
-  document.getElementById('identity-state-authed').style.display = 'block';
-  document.getElementById('id-gh').innerHTML = `<a href="https://github.com/${user.login}" target="_blank" style="color:var(--acc);text-decoration:none">@${user.login}</a>`;
-  document.getElementById('id-rappid').textContent = rappid;
+  // Post-tether identity panel (chat side-rail)
+  const ip1 = document.getElementById('identity-state-anon');
+  const ip2 = document.getElementById('identity-state-authed');
+  if (ip1) ip1.style.display = 'none';
+  if (ip2) ip2.style.display = 'block';
+  const idGh = document.getElementById('id-gh');
+  if (idGh) idGh.innerHTML = `<a href="https://github.com/${user.login}" target="_blank" style="color:var(--acc);text-decoration:none">@${user.login}</a>`;
+  const idRappid = document.getElementById('id-rappid');
+  if (idRappid) idRappid.textContent = rappid;
   const fd = document.getElementById('id-frontdoor');
-  if (frontDoorUrl) {
-    fd.innerHTML = `<a href="${frontDoorUrl}" target="_blank" style="color:var(--grn);text-decoration:none">${frontDoorUrl.replace(/^https?:\/\//, '')}</a>`;
-    document.getElementById('identity-plant-btn').textContent = '✓ Front door planted';
-    document.getElementById('identity-plant-btn').disabled = true;
-  } else {
-    fd.textContent = '(not planted yet)';
+  if (fd) {
+    if (frontDoorUrl) {
+      fd.innerHTML = `<a href="${frontDoorUrl}" target="_blank" style="color:var(--grn);text-decoration:none">${frontDoorUrl.replace(/^https?:\/\//, '')}</a>`;
+      const pb = document.getElementById('identity-plant-btn');
+      if (pb) { pb.textContent = '✓ Front door planted'; pb.disabled = true; }
+    } else {
+      fd.textContent = '(not planted yet)';
+    }
   }
+
+  // In-phone banner (visible before any neighborhood is tethered)
+  const anon = document.getElementById('phone-signin-anon');
+  const authed = document.getElementById('phone-signin-authed');
+  if (anon)   anon.style.display = 'none';
+  if (authed) authed.style.display = 'block';
+  const h = document.getElementById('phone-signin-handle');
+  if (h) h.textContent = '@' + user.login;
+  const pr = document.getElementById('phone-signin-rappid');
+  if (pr) pr.textContent = rappid;
 }
 
 function showAnon() {
-  document.getElementById('identity-state-anon').style.display = 'block';
-  document.getElementById('identity-state-authed').style.display = 'none';
+  const ip1 = document.getElementById('identity-state-anon');
+  const ip2 = document.getElementById('identity-state-authed');
+  if (ip1) ip1.style.display = 'block';
+  if (ip2) ip2.style.display = 'none';
+  const anon = document.getElementById('phone-signin-anon');
+  const authed = document.getElementById('phone-signin-authed');
+  if (anon)   anon.style.display = 'block';
+  if (authed) authed.style.display = 'none';
 }
 
 // ── Device-code flow (mirror of sphere.html's RAPP.Doorman.signIn) ──
