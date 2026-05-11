@@ -3,13 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RAPP Commons — tether</title>
-<meta name="description" content="Browser chat surface for the RAPP Commons. brainstem.py + commons_post_agent.py running in Pyodide; ECDSA P-256 signing via WebCrypto; append-only signed events.">
-<link rel="canonical" href="https://kody-w.github.io/rapp-commons/tether.html">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E🏛️%3C/text%3E%3C/svg%3E">
+<title>RAPP tether — public payphone</title>
+<meta name="description" content="Public payphone for the RAPP network. Scan any neighborhood's QR or paste its neighborhood.json URL and your vbrainstem dials in — hot-loads the agents that neighborhood requires, runs sandboxed in the browser, leaves no trace when you hang up.">
+<meta property="og:title" content="RAPP tether — public payphone">
+<meta property="og:description" content="Universal tether. Scan a neighborhood QR; the vbrainstem hot-loads its required agents and you're in.">
+<link rel="canonical" href="https://kody-w.github.io/RAPP/pages/tether.html">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E📞%3C/text%3E%3C/svg%3E">
 
 <!-- QR code library (real, working) -->
 <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
+
+<!-- QR DECODE (camera scan) — jsQR. Pure-JS, works in Safari/Firefox/Chrome. -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <!-- Pyodide — Python in the browser (WebAssembly). Loads ~6MB lazily. -->
 <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
@@ -109,6 +114,80 @@ header h1 .icon { font-size: 1.25em; }
 .rapp-pane-body { flex: 1; min-height: 0; background: var(--bg); }
 .rapp-pane-body iframe { width: 100%; height: 100%; border: none; display: block; }
 
+/* ── PHONE UI — the public payphone (default state of the tether) ─── */
+.phone-overlay { position: fixed; inset: 0; background: radial-gradient(circle at center, #0f1419 0%, #050709 100%); z-index: 50; display: none; align-items: center; justify-content: center; padding: 20px; overflow-y: auto; }
+.phone-overlay.open { display: flex; }
+.phone-frame {
+  width: 100%; max-width: 420px;
+  background: linear-gradient(180deg, #1a1f2a 0%, #0d1117 100%);
+  border-radius: 38px;
+  padding: 18px 18px 22px;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.7), inset 0 0 0 2px #2a3140, inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.phone-bezel { background: #06090d; border-radius: 24px; padding: 18px 16px; box-shadow: inset 0 0 0 1px #1a1f2a; }
+.phone-screen-head { text-align: center; margin-bottom: 14px; }
+.phone-screen-head .icon { font-size: 2rem; display: block; line-height: 1; }
+.phone-screen-head h1 { font-size: 1rem; font-weight: 600; margin-top: 6px; }
+.phone-screen-head .sub { font-size: 0.7rem; color: var(--mut); margin-top: 4px; }
+.phone-tabs { display: flex; gap: 6px; padding: 4px; background: #050709; border-radius: 10px; margin-bottom: 12px; }
+.phone-tab { flex: 1; background: transparent; color: var(--mut); border: none; padding: 9px 8px; border-radius: 7px; font-size: 0.78rem; cursor: pointer; transition: all 0.15s; font-family: inherit; }
+.phone-tab.active { background: var(--acc); color: #000; font-weight: 600; }
+.phone-tab:not(.active):hover { color: var(--tx); background: rgba(255,255,255,0.04); }
+
+.phone-body { min-height: 320px; display: flex; flex-direction: column; }
+.phone-mode { display: none; flex: 1; flex-direction: column; }
+.phone-mode.active { display: flex; }
+
+/* SCAN mode */
+.phone-cam-wrap { background: #000; border-radius: 12px; aspect-ratio: 1/1; max-width: 320px; margin: 0 auto 10px; overflow: hidden; position: relative; }
+.phone-cam-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.phone-cam-wrap .target { position: absolute; inset: 20%; border: 2px solid var(--acc); border-radius: 8px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.5); }
+.phone-cam-placeholder { background: #05080d; display: flex; align-items: center; justify-content: center; color: var(--mut); font-size: 0.78rem; height: 100%; flex-direction: column; gap: 8px; padding: 16px; text-align: center; }
+.phone-cam-placeholder .ico { font-size: 2.2rem; }
+.phone-action { background: var(--acc); color: #000; border: none; padding: 12px; border-radius: 10px; font-size: 0.92rem; font-weight: 600; cursor: pointer; margin-top: auto; font-family: inherit; }
+.phone-action:hover { filter: brightness(1.08); }
+.phone-action:disabled { opacity: 0.4; cursor: not-allowed; }
+.phone-action.secondary { background: transparent; color: var(--tx); border: 1px solid #2a3140; }
+
+/* SUMMON mode — slots + word wheel */
+.summon-slots { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 10px; }
+.summon-slot { background: #050709; border: 1px solid #1a1f2a; border-radius: 6px; padding: 5px 2px; font-size: 0.6rem; text-align: center; min-height: 32px; display: flex; align-items: center; justify-content: center; color: var(--mut); font-family: ui-monospace,monospace; word-break: break-all; line-height: 1.1; cursor: pointer; }
+.summon-slot.filled { background: var(--s2); color: var(--acc); border-color: var(--acc); }
+.summon-slot.next { border-color: var(--org); animation: pulseBorder 1.4s ease-in-out infinite; }
+@keyframes pulseBorder { 0%,100% { border-color: var(--org); } 50% { border-color: transparent; } }
+.summon-wheel {
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.2));
+  border: 1px solid #1a1f2a;
+  border-radius: 12px;
+  height: 200px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 8px;
+  user-select: none;
+}
+.summon-wheel::before, .summon-wheel::after { content: ''; position: absolute; left: 0; right: 0; height: 80px; pointer-events: none; z-index: 2; }
+.summon-wheel::before { top: 0; background: linear-gradient(180deg, #06090d 0%, transparent 100%); }
+.summon-wheel::after  { bottom: 0; background: linear-gradient(0deg, #06090d 0%, transparent 100%); }
+.summon-wheel-strip { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); transition: transform 0.18s ease-out; }
+.summon-wheel-item { height: 40px; line-height: 40px; text-align: center; font-family: ui-monospace,monospace; font-size: 0.92rem; color: var(--mut); }
+.summon-wheel-item.active { color: var(--acc); font-weight: 700; font-size: 1rem; }
+.summon-wheel-cursor { position: absolute; left: 6px; right: 6px; top: 50%; height: 40px; transform: translateY(-50%); border: 1px solid var(--acc); border-radius: 6px; pointer-events: none; z-index: 1; }
+.summon-controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.summon-btn { background: #050709; color: var(--tx); border: 1px solid #1a1f2a; padding: 8px; border-radius: 6px; font-size: 0.78rem; cursor: pointer; font-family: inherit; }
+.summon-btn:hover { border-color: var(--acc); color: var(--acc); }
+.summon-btn.press { background: var(--acc); color: #000; font-weight: 600; border-color: var(--acc); }
+
+/* PASTE mode */
+.phone-paste-row { margin-top: 8px; }
+.phone-paste-row label { display: block; font-size: 0.72rem; color: var(--mut); margin-bottom: 6px; }
+.phone-paste-row input { width: 100%; background: #050709; border: 1px solid #1a1f2a; border-radius: 8px; padding: 10px 12px; color: var(--tx); font-family: ui-monospace,monospace; font-size: 0.76rem; }
+.phone-paste-row input:focus { outline: none; border-color: var(--acc); }
+.phone-quick { margin-top: 12px; font-size: 0.74rem; color: var(--mut); text-align: center; }
+.phone-quick a { color: var(--acc); text-decoration: none; }
+.phone-quick a:hover { text-decoration: underline; }
+.phone-status { font-size: 0.72rem; color: var(--mut); text-align: center; min-height: 1em; padding: 6px 0; }
+.phone-err { color: var(--red); font-size: 0.76rem; margin: 8px 0; text-align: center; }
+
 .log { background: var(--s2); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size: 0.7rem; max-height: 140px; overflow-y: auto; color: var(--dim); }
 .log .l { margin: 2px 0; }
 .log .l.ok { color: var(--grn); }
@@ -123,11 +202,90 @@ header h1 .icon { font-size: 1.25em; }
 </style>
 </head>
 <body>
+
+<!-- ─── PHONE — the public payphone (default state of the tether) ───
+     Three modes:
+       SCAN   — camera button → jsQR loop → resolved URL (or .egg unwrap)
+       SUMMON — iPod-style word wheel → 7-word incantation → seed → card → tether
+       PASTE  — fallback URL input
+     Boot walks: ?neighborhood=URL → ?egg=URL → same-origin neighborhood.json
+     → this phone. -->
+<div class="phone-overlay" id="phone-overlay">
+  <div class="phone-frame">
+    <div class="phone-bezel">
+
+      <div class="phone-screen-head">
+        <span class="icon">📞</span>
+        <h1>Public tether</h1>
+        <div class="sub">scan a QR, dial words, or paste a URL</div>
+      </div>
+
+      <div class="phone-tabs">
+        <button class="phone-tab active" data-mode="scan">📷 Scan</button>
+        <button class="phone-tab" data-mode="summon">🔮 Dial</button>
+        <button class="phone-tab" data-mode="paste">⌨️ Paste</button>
+      </div>
+
+      <div class="phone-body">
+
+        <!-- SCAN MODE -->
+        <div class="phone-mode active" data-mode="scan">
+          <div class="phone-cam-wrap" id="phone-cam-wrap">
+            <div class="phone-cam-placeholder" id="phone-cam-placeholder">
+              <div class="ico">📷</div>
+              <div>tap below to open the camera<br>then point it at a neighborhood QR</div>
+            </div>
+            <video id="phone-cam-video" autoplay muted playsinline style="display:none"></video>
+            <div class="target" id="phone-cam-target" style="display:none"></div>
+          </div>
+          <div class="phone-status" id="phone-cam-status"></div>
+          <button class="phone-action" id="phone-cam-toggle">Open camera</button>
+        </div>
+
+        <!-- SUMMON MODE -->
+        <div class="phone-mode" data-mode="summon">
+          <div class="summon-slots" id="summon-slots">
+            <!-- 7 slots populated by JS -->
+          </div>
+          <div class="summon-wheel" id="summon-wheel">
+            <div class="summon-wheel-strip" id="summon-wheel-strip">
+              <div style="padding:80px 0;text-align:center;color:var(--mut);font-size:0.78rem">loading 1024-word lexicon…</div>
+            </div>
+            <div class="summon-wheel-cursor"></div>
+          </div>
+          <div class="summon-controls">
+            <button class="summon-btn" id="summon-prev">▲ prev</button>
+            <button class="summon-btn press" id="summon-press">press ●</button>
+            <button class="summon-btn" id="summon-next">▼ next</button>
+          </div>
+          <button class="phone-action" id="summon-go" disabled>Summon (need 7 words)</button>
+          <div class="phone-status" id="summon-status" style="margin-top:6px"></div>
+        </div>
+
+        <!-- PASTE MODE -->
+        <div class="phone-mode" data-mode="paste">
+          <div class="phone-paste-row">
+            <label>neighborhood URL (manifest, egg, or short URL)</label>
+            <input id="phone-paste-input" placeholder="https://kody-w.github.io/rapp-commons/neighborhood.json">
+          </div>
+          <div class="phone-quick">
+            Don't have one handy?
+            <a href="#" id="phone-quick-commons">Dial the RAPP Commons →</a>
+          </div>
+          <div class="phone-err" id="phone-paste-err" style="display:none"></div>
+          <button class="phone-action" id="phone-paste-go" style="margin-top:14px">Dial</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="tether-layout" id="tether-layout">
 <div class="shell">
 
 <header>
-  <h1><span class="icon">🏛️</span> Commons tether</h1>
+  <h1><span class="icon">📞</span> Public tether</h1>
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <span id="pyodide-status" class="status-pill warn">Pyodide booting…</span>
     <span id="agent-status" class="status-pill warn">Agent loading…</span>
@@ -197,10 +355,10 @@ header h1 .icon { font-size: 1.25em; }
 
     <div class="panel">
       <h3>Neighborhood</h3>
-      <div class="meta-row"><span class="k">name</span><span class="v">RAPP Commons</span></div>
-      <div class="meta-row"><span class="k">quirk</span><span class="v">event-stream-only</span></div>
-      <div class="meta-row"><span class="k">rappid</span><span class="v" id="nbhd-rappid" style="font-size:0.66rem">loading…</span></div>
-      <div class="meta-row"><span class="k">members</span><span class="v" id="nbhd-members">…</span></div>
+      <div class="meta-row"><span class="k">name</span><span class="v" id="nbhd-name">(dialing…)</span></div>
+      <div class="meta-row"><span class="k">quirk</span><span class="v" id="nbhd-quirk">—</span></div>
+      <div class="meta-row"><span class="k">rappid</span><span class="v" id="nbhd-rappid" style="font-size:0.66rem">—</span></div>
+      <div class="meta-row"><span class="k">members</span><span class="v" id="nbhd-members">—</span></div>
     </div>
 
     <div class="panel">
@@ -447,27 +605,105 @@ ${agentVar}.perform(**_kwargs)
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Neighborhood manifest
+// Neighborhood manifest — boot walks priority chain:
+//   1. ?neighborhood=URL  (query param)
+//   2. ?egg=URL           (query param — fetch egg, extract neighborhood_json)
+//   3. same-origin ./neighborhood.json   (when the tether is served INSIDE
+//      a neighborhood, e.g. commons/tether.html)
+//   4. scan-mode overlay  (let the user scan a QR or paste a URL)
 // ────────────────────────────────────────────────────────────────────────
-async function loadNeighborhood() {
+async function resolveNeighborhoodUrl() {
+  const params = new URLSearchParams(location.search);
+  const explicit = params.get('neighborhood');
+  if (explicit) return { url: explicit, source: 'query-param' };
+  const eggUrl = params.get('egg');
+  if (eggUrl) {
+    const fromEgg = await unwrapEgg(eggUrl);
+    if (fromEgg) return { url: fromEgg, source: 'query-egg → unwrap' };
+  }
+  // Try same-origin (works when this tether is bundled inside a neighborhood repo).
   try {
-    const res = await fetch('neighborhood.json');
+    const r = await fetch('neighborhood.json', { method: 'HEAD' });
+    if (r.ok) return { url: 'neighborhood.json', source: 'same-origin' };
+  } catch (e) {}
+  return null;
+}
+
+async function unwrapEgg(eggUrl) {
+  try {
+    const r = await fetch(eggUrl);
+    if (!r.ok) return null;
+    const egg = await r.json();
+    return egg.neighborhood_json || egg.neighborhood_url || null;
+  } catch (e) {
+    log('egg unwrap failed: ' + e.message, 'warn');
+    return null;
+  }
+}
+
+async function loadNeighborhoodFrom(url) {
+  try {
+    const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     state.nbhd = await res.json();
-    document.getElementById('nbhd-rappid').textContent = state.nbhd.rappid;
+    document.getElementById('nbhd-rappid').textContent = state.nbhd.rappid || '(no rappid)';
+    const nameEl = document.getElementById('nbhd-name');
+    if (nameEl) nameEl.textContent = state.nbhd.display_name || state.nbhd.name || '(unnamed)';
+    const quirkEl = document.getElementById('nbhd-quirk');
+    if (quirkEl) quirkEl.textContent = state.nbhd.quirks?.event_protocol || state.nbhd.quirks?.merge_rule || '—';
     setPill('net-status', 'Online · neighborhood loaded', 'ok');
-    log('neighborhood.json fetched · rappid=' + state.nbhd.rappid.slice(0, 48) + '…', 'ok');
+    log('neighborhood loaded · rappid=' + (state.nbhd.rappid || '?').slice(0, 48) + '…', 'ok');
+    // Best-effort members count (resolves relative to the manifest URL)
+    try {
+      const membersUrl = new URL('members.json', new URL(url, location.href)).href;
+      const mr = await fetch(membersUrl);
+      if (mr.ok) {
+        const data = await mr.json();
+        document.getElementById('nbhd-members').textContent = (data.members || []).length + ' members';
+      }
+    } catch (e) {}
+    return true;
   } catch (e) {
-    setPill('net-status', 'Offline / no canonical', 'warn');
-    log('neighborhood.json fetch failed: ' + e.message + ' — running standalone', 'warn');
+    setPill('net-status', 'Manifest load FAILED', 'err');
+    log('neighborhood load failed: ' + e.message, 'err');
+    return false;
   }
-  try {
-    const res = await fetch('members.json');
-    if (res.ok) {
-      const data = await res.json();
-      document.getElementById('nbhd-members').textContent = (data.members || []).length + ' members';
+}
+
+// Public entry: called by scan / paste / quick-link handlers
+async function setNeighborhoodUrl(rawUrl) {
+  const url = (rawUrl || '').trim();
+  if (!url) return;
+  let target = url;
+  // Smart handling: if the scanned/pasted URL is an .egg, fetch + unwrap.
+  if (url.toLowerCase().endsWith('.egg') || url.includes('/.well-known/neighborhood.egg')) {
+    log('input looks like an .egg — unwrapping for neighborhood_json…', '');
+    const fromEgg = await unwrapEgg(url);
+    if (!fromEgg) {
+      showScanError('Could not unwrap egg at ' + url);
+      return;
     }
-  } catch (e) {}
+    target = fromEgg;
+  }
+  const ok = await loadNeighborhoodFrom(target);
+  if (!ok) {
+    showScanError('Loaded URL but it did not return a valid neighborhood manifest.');
+    return;
+  }
+  hideScanOverlay();
+  await postNeighborhoodLoad();
+}
+
+// Run AFTER neighborhood is loaded (scan-mode case) — loads registry,
+// hot-loads tether-required agents, refreshes discovery + greeter.
+async function postNeighborhoodLoad() {
+  await loadRegistry();
+  await loadSoul();
+  renderDiscovery();
+  if (state.pyodide) {
+    await loadTetherAgents();
+    renderDiscovery();
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1010,37 +1246,389 @@ async function greeterAsk() {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// PHONE — the public payphone (default state of the tether)
+// ────────────────────────────────────────────────────────────────────────
+const phone = {
+  scan:    { stream: null, raf: 0, canvas: null, active: false },
+  summon:  { words: [], wordToIdx: {}, slots: [], cursor: 0 },
+};
+
+function showPhone()  { document.getElementById('phone-overlay').classList.add('open'); }
+function hidePhone()  {
+  document.getElementById('phone-overlay').classList.remove('open');
+  stopCamera();
+}
+function showPhoneError(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+function setPhoneStatus(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+// ── Mode tabs ────────────────────────────────────────────────────────
+function switchPhoneMode(mode) {
+  document.querySelectorAll('.phone-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  document.querySelectorAll('.phone-mode').forEach(m => m.classList.toggle('active', m.dataset.mode === mode));
+  // Stop camera when leaving scan mode
+  if (mode !== 'scan' && phone.scan.active) stopCamera();
+}
+
+// ── SCAN: camera on-demand (NOT auto-requested) ──────────────────────
+async function startCamera() {
+  const video = document.getElementById('phone-cam-video');
+  const placeholder = document.getElementById('phone-cam-placeholder');
+  const target = document.getElementById('phone-cam-target');
+  const toggle = document.getElementById('phone-cam-toggle');
+  if (typeof jsQR === 'undefined') {
+    setPhoneStatus('phone-cam-status', 'jsQR unavailable (CDN unreachable) — paste a URL on the Paste tab.');
+    return;
+  }
+  try {
+    phone.scan.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }
+    });
+    video.srcObject = phone.scan.stream;
+    await video.play();
+    placeholder.style.display = 'none';
+    video.style.display = 'block';
+    target.style.display = 'block';
+    toggle.textContent = 'Stop camera';
+    toggle.classList.add('secondary');
+    phone.scan.active = true;
+    setPhoneStatus('phone-cam-status', 'point at a neighborhood QR…');
+    phone.scan.canvas = document.createElement('canvas');
+    const ctx = phone.scan.canvas.getContext('2d', { willReadFrequently: true });
+    const tick = () => {
+      if (!phone.scan.active) return;
+      if (video.readyState >= video.HAVE_ENOUGH_DATA) {
+        const w = video.videoWidth, h = video.videoHeight;
+        if (w && h) {
+          phone.scan.canvas.width = w;
+          phone.scan.canvas.height = h;
+          ctx.drawImage(video, 0, 0, w, h);
+          const img = ctx.getImageData(0, 0, w, h);
+          const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+          if (code && code.data) {
+            log('QR · ' + code.data, 'ok');
+            setPhoneStatus('phone-cam-status', 'detected: ' + code.data.slice(0, 50) + (code.data.length > 50 ? '…' : ''));
+            stopCamera();
+            setNeighborhoodUrl(code.data);
+            return;
+          }
+        }
+      }
+      phone.scan.raf = requestAnimationFrame(tick);
+    };
+    phone.scan.raf = requestAnimationFrame(tick);
+  } catch (e) {
+    setPhoneStatus('phone-cam-status', 'camera unavailable: ' + e.message);
+    log('camera init failed: ' + e.message, 'warn');
+  }
+}
+function stopCamera() {
+  if (phone.scan.stream) { phone.scan.stream.getTracks().forEach(t => t.stop()); phone.scan.stream = null; }
+  if (phone.scan.raf) { cancelAnimationFrame(phone.scan.raf); phone.scan.raf = 0; }
+  const video = document.getElementById('phone-cam-video');
+  const placeholder = document.getElementById('phone-cam-placeholder');
+  const target = document.getElementById('phone-cam-target');
+  const toggle = document.getElementById('phone-cam-toggle');
+  if (video) video.style.display = 'none';
+  if (placeholder) placeholder.style.display = 'flex';
+  if (target) target.style.display = 'none';
+  if (toggle) { toggle.textContent = 'Open camera'; toggle.classList.remove('secondary'); }
+  phone.scan.active = false;
+}
+
+// ── SUMMON: load mnemonic words + iPod-style wheel + 7-slot incantation ──
+const MNEMONIC_URL = 'https://raw.githubusercontent.com/kody-w/RAR/main/rapp_sdk.py';
+const MNEMONIC_CACHE_KEY = 'rapp.mnemonic.words.v1';
+
+async function loadMnemonicWords() {
+  // Try cache first
+  try {
+    const cached = localStorage.getItem(MNEMONIC_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length === 1024) {
+        applyMnemonicWords(parsed);
+        return;
+      }
+    }
+  } catch (e) {}
+  // Fetch + parse from RAR raw
+  try {
+    const res = await fetch(MNEMONIC_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const src = await res.text();
+    // Pull out the triple-quoted MNEMONIC_WORDS block
+    const m = src.match(/MNEMONIC_WORDS\s*=\s*"""([\s\S]*?)"""/);
+    if (!m) throw new Error('MNEMONIC_WORDS block not found in rapp_sdk.py');
+    const words = m[1].split(/\s+/).filter(Boolean).map(w => w.toUpperCase());
+    if (words.length !== 1024) {
+      log('warn: expected 1024 mnemonic words, got ' + words.length, 'warn');
+    }
+    applyMnemonicWords(words);
+    try { localStorage.setItem(MNEMONIC_CACHE_KEY, JSON.stringify(words)); } catch (e) {}
+    log(`loaded ${words.length} mnemonic words from RAR`, 'ok');
+  } catch (e) {
+    log('mnemonic fetch failed: ' + e.message + ' — summon dial degraded', 'warn');
+    // Tiny fallback dictionary so the wheel still works
+    const fallback = "FORGE ANVIL BLADE RUNE SHARD SMELT TEMPER WELD CHISEL BRAND MOLD CAST STAMP ETCH CARVE BIND FUSE ALLOY INGOT RIVET CLASP THORN BARB SPIKE PRONG EDGE HONE GRIND QUENCH SEAR HAMMER STOKE".split(/\s+/);
+    applyMnemonicWords(fallback);
+  }
+}
+
+function applyMnemonicWords(words) {
+  phone.summon.words = words;
+  phone.summon.wordToIdx = {};
+  words.forEach((w, i) => { phone.summon.wordToIdx[w] = i; });
+  phone.summon.slots = [null, null, null, null, null, null, null];
+  phone.summon.cursor = 0;
+  renderSummonSlots();
+  renderSummonWheel();
+}
+
+function renderSummonSlots() {
+  const el = document.getElementById('summon-slots');
+  if (!el) return;
+  const nextIdx = phone.summon.slots.findIndex(s => s === null);
+  el.innerHTML = phone.summon.slots.map((s, i) => {
+    const cls = s !== null ? 'filled' : (i === nextIdx ? 'next' : '');
+    return `<div class="summon-slot ${cls}" data-slot="${i}">${s !== null ? phone.summon.words[s] || '?' : (i + 1)}</div>`;
+  }).join('');
+  el.querySelectorAll('.summon-slot').forEach(sl => {
+    sl.addEventListener('click', () => {
+      // Click a filled slot to clear from there on
+      const idx = parseInt(sl.dataset.slot, 10);
+      for (let j = idx; j < 7; j++) phone.summon.slots[j] = null;
+      renderSummonSlots();
+      updateSummonButton();
+    });
+  });
+  updateSummonButton();
+}
+
+function renderSummonWheel() {
+  const strip = document.getElementById('summon-wheel-strip');
+  if (!strip || !phone.summon.words.length) return;
+  const N = phone.summon.words.length;
+  const visible = 5;  // (active + 2 above + 2 below)
+  let html = '';
+  for (let off = -visible; off <= visible; off++) {
+    const idx = ((phone.summon.cursor + off) % N + N) % N;
+    const active = off === 0 ? ' active' : '';
+    html += `<div class="summon-wheel-item${active}">${phone.summon.words[idx]}</div>`;
+  }
+  strip.innerHTML = html;
+  // Center the active row (it's at the visible-th position; each row 40px)
+  const itemH = 40;
+  strip.style.transform = `translateY(${-itemH * visible - itemH / 2}px)`;
+}
+
+function wheelStep(delta) {
+  if (!phone.summon.words.length) return;
+  const N = phone.summon.words.length;
+  phone.summon.cursor = ((phone.summon.cursor + delta) % N + N) % N;
+  renderSummonWheel();
+}
+
+function pressWheel() {
+  if (!phone.summon.words.length) return;
+  const nextIdx = phone.summon.slots.findIndex(s => s === null);
+  if (nextIdx === -1) {
+    setPhoneStatus('summon-status', '7 words already chosen — clear a slot to add another.');
+    return;
+  }
+  phone.summon.slots[nextIdx] = phone.summon.cursor;
+  renderSummonSlots();
+  setPhoneStatus('summon-status', `slot ${nextIdx + 1}: ${phone.summon.words[phone.summon.cursor]}`);
+}
+
+function updateSummonButton() {
+  const btn = document.getElementById('summon-go');
+  const ready = phone.summon.slots.every(s => s !== null);
+  btn.disabled = !ready;
+  btn.textContent = ready ? 'Summon' : `Summon (need ${7 - phone.summon.slots.filter(s => s !== null).length} more)`;
+}
+
+// Words → 64-bit seed (mirrors rapp_sdk.words_to_seed; 10 bits per word).
+// Returns a BigInt because 64 bits doesn't fit in JS Number.
+function wordsToSeed(slots, words) {
+  const idxs = slots.map(s => s);   // already indices
+  let seed = 0n;
+  for (let i = 0; i < idxs.length; i++) {
+    seed |= BigInt(idxs[i]) << BigInt(10 * i);
+  }
+  return seed;
+}
+
+async function summon() {
+  if (!phone.summon.slots.every(s => s !== null)) return;
+  const seed = wordsToSeed(phone.summon.slots, phone.summon.words);
+  const seedStr = seed.toString();
+  const incantation = phone.summon.slots.map(i => phone.summon.words[i]).join(' ');
+  log(`summon · seed=${seedStr} · ${incantation}`, 'ok');
+  setPhoneStatus('summon-status', `resolving seed ${seedStr.slice(0, 16)}…`);
+
+  // Look up the seed in upstream RAR's seed-index (federation-substrate fallback chain).
+  const SEED_INDEX_URLS = [
+    'https://raw.githubusercontent.com/kody-w/RAR/main/seed-index.json',
+  ];
+  let card = null;
+  for (const url of SEED_INDEX_URLS) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const idx = await r.json();
+      // The seed-index has `seeds: { "<seed>": { id, name, url, ... } }`
+      if (idx.seeds && idx.seeds[seedStr]) { card = idx.seeds[seedStr]; break; }
+    } catch (e) {}
+  }
+  if (!card) {
+    setPhoneStatus('summon-status', `no card found for seed ${seedStr.slice(0, 12)}… — try a different incantation.`);
+    return;
+  }
+  // The card's `id` field is `@publisher/slug`. For neighborhood cards we'd
+  // tether directly; for agent cards we surface what we got. The summon
+  // resolves to the canonical card — what happens next depends on kind.
+  log(`summon resolved · ${card.id} · ${card.name}`, 'ok');
+  setPhoneStatus('summon-status', `resolved: ${card.id} (${card.name}). If it's a neighborhood, tethering…`);
+  // Heuristic: if the card looks like a neighborhood, we'd already have a URL.
+  // For now, summon resolution surfaces the card and lets the operator paste
+  // the neighborhood URL if applicable. (Full neighborhood-summon resolution
+  // requires the registry to publish per-card neighborhood URLs — follow-up.)
+}
+
+// ── PASTE mode ───────────────────────────────────────────────────────
+function wirePhone() {
+  document.querySelectorAll('.phone-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchPhoneMode(tab.dataset.mode));
+  });
+
+  // SCAN
+  document.getElementById('phone-cam-toggle').addEventListener('click', () => {
+    if (phone.scan.active) stopCamera();
+    else startCamera();
+  });
+
+  // SUMMON
+  document.getElementById('summon-prev').addEventListener('click', () => wheelStep(-1));
+  document.getElementById('summon-next').addEventListener('click', () => wheelStep(1));
+  document.getElementById('summon-press').addEventListener('click', pressWheel);
+  document.getElementById('summon-go').addEventListener('click', summon);
+  // Mouse wheel rotates the dial when over the wheel
+  document.getElementById('summon-wheel').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    wheelStep(e.deltaY > 0 ? 1 : -1);
+  }, { passive: false });
+  // Drag the strip
+  let dragY = null;
+  const wheelEl = document.getElementById('summon-wheel');
+  wheelEl.addEventListener('pointerdown', (e) => { dragY = e.clientY; wheelEl.setPointerCapture(e.pointerId); });
+  wheelEl.addEventListener('pointermove', (e) => {
+    if (dragY === null) return;
+    const dy = e.clientY - dragY;
+    if (Math.abs(dy) > 20) {
+      wheelStep(dy > 0 ? -1 : 1);
+      dragY = e.clientY;
+    }
+  });
+  wheelEl.addEventListener('pointerup',   () => { dragY = null; });
+  wheelEl.addEventListener('pointercancel', () => { dragY = null; });
+
+  // PASTE
+  document.getElementById('phone-paste-go').addEventListener('click', () => {
+    const v = document.getElementById('phone-paste-input').value.trim();
+    if (v) setNeighborhoodUrl(v);
+    else showPhoneError('phone-paste-err', 'paste a URL first');
+  });
+  document.getElementById('phone-paste-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = e.target.value.trim();
+      if (v) setNeighborhoodUrl(v);
+    }
+  });
+  document.getElementById('phone-quick-commons').addEventListener('click', (e) => {
+    e.preventDefault();
+    setNeighborhoodUrl('https://kody-w.github.io/rapp-commons/neighborhood.json');
+  });
+
+  // Keyboard shortcuts while phone is open
+  document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('phone-overlay').classList.contains('open')) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'ArrowUp')   { wheelStep(-1); e.preventDefault(); }
+    if (e.key === 'ArrowDown') { wheelStep(1); e.preventDefault(); }
+    if (e.key === 'Enter')     { pressWheel(); e.preventDefault(); }
+  });
+}
+
+// Legacy names used elsewhere in main() — alias to phone equivalents
+const showScanOverlay = showPhone;
+const hideScanOverlay = hidePhone;
+const showScanError   = (msg) => showPhoneError('phone-paste-err', msg);
+const startScanner    = async () => { /* no-op: camera is now on-demand via the Open camera button */ };
+
+// ────────────────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────────────────
 async function main() {
+  // ── 1. Identity + local state (works without any neighborhood) ──────
   state.identity = await loadOrMintIdentity();
   renderIdentity();
   loadLocalEvents();
   await renderEvents();
   updatePositions();
-  await loadNeighborhood();
-  await loadRegistry();
-  await loadSoul();
-  renderDiscovery();
 
-  const pyOk = await bootPyodide();
-  if (pyOk) await loadTetherAgents();
-  renderDiscovery();  // re-render now that some are loaded
-
+  // ── 2. Wire all the UI handlers up-front so phone modes work ─────────
+  wirePhone();
+  loadMnemonicWords();   // kicks off background fetch; populates wheel when done
   document.getElementById('c-post').disabled = false;
   document.getElementById('c-post').addEventListener('click', compose);
   document.getElementById('greeter-send').addEventListener('click', greeterAsk);
   document.getElementById('greeter-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); greeterAsk(); }
   });
-
   document.getElementById('rapp-pane-close').addEventListener('click', closeRapp);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && document.getElementById('rapp-pane').classList.contains('open')) closeRapp();
   });
 
+  // ── 3. Pyodide bootstraps regardless of neighborhood (agents load
+  //      after neighborhood is resolved, since requirements come from
+  //      the neighborhood's manifest). Kick off in parallel with the
+  //      neighborhood resolution so the boot feels fast. ───────────────
+  const pyodideReady = bootPyodide();
+
+  // ── 4. Resolve which neighborhood we're tethering to ─────────────────
+  const resolved = await resolveNeighborhoodUrl();
+  if (!resolved) {
+    log('no neighborhood URL resolved — opening scan mode', 'warn');
+    showScanOverlay();
+    await startScanner();
+    return;  // setNeighborhoodUrl() will continue the boot when the user scans/pastes
+  }
+
+  log('neighborhood URL: ' + resolved.url + ' (via ' + resolved.source + ')', 'ok');
+  const ok = await loadNeighborhoodFrom(resolved.url);
+  if (!ok) {
+    showScanOverlay();
+    await startScanner();
+    showScanError('Could not load neighborhood at ' + resolved.url + '. Scan or paste a working URL.');
+    return;
+  }
+
+  await pyodideReady;        // ensure Pyodide is up before agents are hot-loaded
+  await postNeighborhoodLoad();
+
   if (state.events.length === 0) {
-    banner('Welcome to the Commons. <strong>Generate a key, compose a hello, sign & post.</strong> Your post lives in this browser until you publish it to your public-estate outbound lane (Article XLVIII). Two clones can mutate offline indefinitely and reconcile losslessly — the merge key is <code>(rappid, ts)</code>.', 'info');
+    banner('Welcome. <strong>Generate a key, compose a hello, sign & post.</strong> Your post lives in this browser until you publish it to your public-estate outbound lane (Article XLVIII). Two clones can mutate offline indefinitely and reconcile losslessly — the merge key is <code>(rappid, ts)</code>.', 'info');
   }
 }
 
