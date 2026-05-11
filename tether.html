@@ -477,6 +477,27 @@ header h1 .icon { font-size: 1.25em; }
       </div>
     </div>
 
+    <div class="panel" id="private-estate-panel" style="display:none">
+      <h3 style="display:flex;justify-content:space-between;align-items:center">
+        <span>🔒 Your private estate</span>
+        <span id="pe-pill" style="font-size:0.6rem;padding:2px 8px;border-radius:999px;background:var(--bd);color:var(--mut);margin-left:6px">checking…</span>
+      </h3>
+      <p style="font-size:0.72rem;color:var(--mut);margin-bottom:8px">
+        Your private companion at <code style="font-size:0.66rem">&lt;handle&gt;/twin-private</code> per Article XLVIII. Drop agents here that you want to grab from any device — visible only to your authed sessions. Never leaves your account.
+      </p>
+      <div id="pe-empty" style="display:none">
+        <button id="pe-plant-btn" style="width:100%;background:var(--acc);color:#000;border:none;padding:8px;border-radius:5px;font-size:0.8rem;font-weight:600;cursor:pointer">🌱 Plant your private estate</button>
+        <p style="font-size:0.66rem;color:var(--mut);margin-top:6px;text-align:center">Creates a PRIVATE repo. You + your authed tethers can read; nobody else.</p>
+      </div>
+      <div id="pe-loaded" style="display:none">
+        <div style="font-size:0.7rem;color:var(--dim);margin-bottom:6px">Agents in <a id="pe-link" target="_blank" style="color:var(--acc);text-decoration:none">your private repo</a>:</div>
+        <div id="pe-agents" style="display:flex;flex-direction:column;gap:6px;font-size:0.78rem"></div>
+        <div style="margin-top:8px;font-size:0.66rem;color:var(--mut);text-align:center;line-height:1.4">
+          To publish a new agent, drop the <code>.py</code> file into your repo's <code>agents/</code> directory + push. The tether will pick it up on next refresh.
+        </div>
+      </div>
+    </div>
+
     <div class="panel" id="lobby-panel" style="display:none">
       <h3 style="display:flex;justify-content:space-between;align-items:center">
         <span>Lobby <span id="lobby-pill" style="font-size:0.6rem;padding:2px 8px;border-radius:999px;background:var(--bd);color:var(--mut);margin-left:6px">offline</span></span>
@@ -2301,6 +2322,9 @@ async function onDoormanAuthSuccess(token) {
       document.getElementById('gh-signin-substep').innerHTML = `✓ Signed in. No twin planted yet — click "🌱 Plant my front door" later. Opening Scan…`;
     }
 
+    // Check operator's private estate companion (Article XLVIII)
+    checkPrivateEstate().catch(e => log('private estate check failed: ' + e.message, 'warn'));
+
     // After a brief beat, close modal + switch to Scan tab so the
     // operator can immediately scan a neighborhood QR.
     setTimeout(() => {
@@ -2343,6 +2367,7 @@ async function authWithGitHubPAT() {
     renderIdentity();
     switchPhoneMode('scan');
     if (!phone.scan.active) startCamera();
+    checkPrivateEstate().catch(e => log('private estate check failed: ' + e.message, 'warn'));
   } catch (e) {
     log('PAT auth failed: ' + e.message, 'err');
     alert('Auth failed: ' + e.message);
@@ -2375,6 +2400,8 @@ function signOutGitHub() {
   state.identity.rappid = null;
   showAnon();
   renderIdentity();
+  hidePrivateEstatePanel();
+  PE.handle = null; PE.planted = false; PE.agents = [];
   log('signed out of GitHub (ECDSA keypair preserved)', '');
 }
 
@@ -2684,8 +2711,198 @@ async function restoreGitHubSession() {
     showAuthed(user, rappid, fdUrl);
     renderIdentity();
     log('restored session: @' + user.login + ' (via ' + (doormanToken ? 'doorman' : 'PAT') + ')', 'ok');
+    checkPrivateEstate().catch(e => log('private estate check failed: ' + e.message, 'warn'));
   } catch (e) {
     log('session restore failed: ' + e.message, 'warn');
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// PRIVATE ESTATE — operator-scoped private companion repo (Article XLVIII)
+//
+// Convention: <handle>/twin-private. Created PRIVATE; only readable with
+// the operator's GitHub token. Every tethered device the operator signs
+// into has access via the Doorman OAuth session in rapp_settings —
+// so "I want my agent from any of my devices" (Howard's use case) just
+// works: token → /repos/<handle>/twin-private/contents/agents/ → list,
+// fetch, hot-load into Pyodide.
+//
+// NOT visible to other neighbors. NOT in the public neighborhood's
+// rar/index.json. The operator's PRIVATE side of their two-tier estate.
+// ────────────────────────────────────────────────────────────────────────
+const PE = { handle: null, planted: false, agents: [] };
+
+function getOperatorToken() {
+  return doormanGetToken() || localStorage.getItem(GH_PAT_STORAGE) || null;
+}
+
+function showPrivateEstatePanel() {
+  document.getElementById('private-estate-panel').style.display = 'block';
+}
+function hidePrivateEstatePanel() {
+  document.getElementById('private-estate-panel').style.display = 'none';
+}
+
+async function checkPrivateEstate() {
+  const token = getOperatorToken();
+  const ghJ = localStorage.getItem(GH_USER_STORAGE);
+  if (!token || !ghJ) { hidePrivateEstatePanel(); return; }
+  let handle;
+  try { handle = JSON.parse(ghJ).login; } catch { hidePrivateEstatePanel(); return; }
+  if (!handle) { hidePrivateEstatePanel(); return; }
+  PE.handle = handle;
+  showPrivateEstatePanel();
+
+  const pill = document.getElementById('pe-pill');
+  pill.textContent = 'checking…';
+  pill.style.background = 'var(--bd)';
+  pill.style.color = 'var(--mut)';
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${handle}/twin-private`, { headers: ghHeaders(token) });
+    if (res.status === 404) {
+      PE.planted = false;
+      pill.textContent = 'not planted'; pill.style.background = 'var(--org)'; pill.style.color = '#000';
+      document.getElementById('pe-empty').style.display = 'block';
+      document.getElementById('pe-loaded').style.display = 'none';
+      return;
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const repo = await res.json();
+    PE.planted = true;
+    pill.textContent = repo.private ? '🔒 planted' : '⚠️ public!';
+    pill.style.background = repo.private ? 'var(--grn)' : 'var(--red)';
+    pill.style.color = '#000';
+    document.getElementById('pe-empty').style.display = 'none';
+    document.getElementById('pe-loaded').style.display = 'block';
+    document.getElementById('pe-link').textContent = `${handle}/twin-private`;
+    document.getElementById('pe-link').href = repo.html_url;
+    await loadPrivateAgents(token, handle);
+  } catch (e) {
+    pill.textContent = 'error';
+    pill.style.background = 'var(--red)';
+    log('private estate check failed: ' + e.message, 'warn');
+  }
+}
+
+async function loadPrivateAgents(token, handle) {
+  const target = document.getElementById('pe-agents');
+  target.innerHTML = '<div style="color:var(--mut);font-style:italic;font-size:0.74rem">listing…</div>';
+  try {
+    const res = await fetch(`https://api.github.com/repos/${handle}/twin-private/contents/agents`, { headers: ghHeaders(token) });
+    if (res.status === 404) {
+      target.innerHTML = '<div style="color:var(--mut);font-style:italic;font-size:0.74rem">No <code>agents/</code> directory yet. Push a <code>.py</code> file to <code>agents/</code> in your private repo to see it here.</div>';
+      PE.agents = [];
+      return;
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const listing = await res.json();
+    const pyFiles = (Array.isArray(listing) ? listing : []).filter(f => f.type === 'file' && f.name.endsWith('.py'));
+    PE.agents = pyFiles;
+    if (pyFiles.length === 0) {
+      target.innerHTML = '<div style="color:var(--mut);font-style:italic;font-size:0.74rem">No agents yet. Drop a <code>.py</code> in <code>agents/</code> and push.</div>';
+      return;
+    }
+    target.innerHTML = pyFiles.map(f => {
+      const isLoaded = (state.tetherAgents || []).some(a => a.name === '@private/' + f.name.replace(/_agent\.py$|\.py$/, ''));
+      return `<div class="disco-item ${isLoaded ? 'loaded' : 'optional'}" style="padding:7px 9px">
+        <div class="disco-name"><code style="font-size:0.74rem">${escapeHtml(f.name)}</code>
+          <span style="margin-left:auto;font-size:0.62rem;color:${isLoaded ? 'var(--grn)' : 'var(--mut)'}">${isLoaded ? '✓ loaded' : 'private'}</span>
+        </div>
+        <div class="disco-meta">size=${f.size} · sha=${f.sha.slice(0,8)}…</div>
+        <div class="disco-actions">
+          ${isLoaded ? '' : `<button class="disco-btn" data-install-private="${escapeHtml(f.name)}">+ Hot-load</button>`}
+          <a href="${f.html_url}" target="_blank" class="disco-btn" style="text-decoration:none">view</a>
+        </div>
+      </div>`;
+    }).join('');
+    target.querySelectorAll('button[data-install-private]').forEach(btn => {
+      btn.addEventListener('click', () => installPrivateAgent(btn.dataset.installPrivate, btn));
+    });
+  } catch (e) {
+    target.innerHTML = `<div style="color:var(--red);font-size:0.74rem">listing failed: ${escapeHtml(e.message)}</div>`;
+    log('private agent listing failed: ' + e.message, 'warn');
+  }
+}
+
+async function installPrivateAgent(filename, btn) {
+  if (!state.pyodide) { banner('Pyodide not available — cannot hot-load.', 'err'); return; }
+  const token = getOperatorToken();
+  if (!token || !PE.handle) return;
+  btn.disabled = true;
+  btn.textContent = 'installing…';
+  try {
+    const entry = PE.agents.find(a => a.name === filename);
+    if (!entry) throw new Error('not in current listing — refresh?');
+    // download_url for private repos requires the token, but the URL is short-lived signed
+    const sourceRes = await fetch(entry.download_url, { headers: ghHeaders(token) });
+    if (!sourceRes.ok) throw new Error('source fetch ' + sourceRes.status);
+    const src = await sourceRes.text();
+    // Write to Pyodide /agents/ and import
+    const modName = filename.replace(/\.py$/, '');
+    state.pyodide.FS.writeFile('/agents/' + filename, src);
+    const importCode = `from agents import ${modName}\n`;
+    state.pyodide.runPython(importCode);
+    // Best-effort: try to instantiate any Agent class found
+    const className = (src.match(/^class\s+(\w+)\s*\(/m) || [])[1];
+    if (className) {
+      state.pyodide.runPython(`_PRIVATE_${modName.toUpperCase()} = ${modName}.${className}()`);
+    }
+    state.tetherAgents = state.tetherAgents || [];
+    state.tetherAgents.push({ name: '@private/' + modName, class: className, _module: modName, _private: true });
+    log('hot-loaded private agent · ' + filename, 'ok');
+    renderDiscovery();
+    setPill('agent-status', `${state.tetherAgents.length} agent${state.tetherAgents.length === 1 ? '' : 's'} hot-loaded`, 'ok');
+    await loadPrivateAgents(token, PE.handle);   // re-render to show ✓ loaded
+  } catch (e) {
+    log('private hot-load failed: ' + e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = '+ Hot-load';
+    banner('Hot-load failed for ' + filename + ': ' + e.message, 'err');
+  }
+}
+
+async function plantPrivateEstate() {
+  const token = getOperatorToken();
+  const ghJ = localStorage.getItem(GH_USER_STORAGE);
+  if (!token || !ghJ) { alert('Sign in first.'); return; }
+  const handle = JSON.parse(ghJ).login;
+  if (!confirm(
+    `Plant your private estate?\n\n` +
+    `• Creates PRIVATE repo: ${handle}/twin-private\n` +
+    `• Only you + your authed tethers can read it.\n` +
+    `• Drop agent .py files into agents/ in this repo to grab them from any device.\n\n` +
+    `Proceed?`
+  )) return;
+  const btn = document.getElementById('pe-plant-btn');
+  btn.disabled = true;
+  btn.textContent = '🌱 Planting…';
+  try {
+    const res = await fetch('https://api.github.com/user/repos', {
+      method: 'POST',
+      headers: ghHeaders(token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        name: 'twin-private',
+        description: `Private companion to @${handle}/twin — operator's Article-XLVIII private estate. Agents here grab-able from any of @${handle}'s authed devices.`,
+        private: true,
+        auto_init: true,
+      }),
+    });
+    if (!res.ok && res.status !== 422) throw new Error('repo create ' + res.status);
+    // Seed an agents/ dir + a brief README so the operator sees the convention
+    await ghPutFile(token, handle, 'twin-private', 'README.md',
+      `# @${handle}/twin-private\n\nPrivate companion to [@${handle}/twin](https://github.com/${handle}/twin) per CONSTITUTION Article XLVIII.\n\n## What this is\n\nDrop your single-file Python agents into the [\`agents/\`](./agents/) directory. From any device where you're signed in to the RAPP tether, your private agents appear under "🔒 Your private estate" with a hot-load button. Nobody else can see this repo.\n\n## Conventions\n\n- One file per agent (\`*_agent.py\`)\n- Must define a class extending \`BasicAgent\`\n- Must have a \`__manifest__\` dict at module scope (per rapp-agent/1.0)\n\n## Why a separate repo\n\nYour public front door (@${handle}/twin) carries your identity, soul, and anything you've explicitly chosen to share with the world. This private companion carries the rest — work-in-progress agents, personal automations, anything you want available across devices but not visible to neighbors.\n`,
+      'plant: README');
+    await ghPutFile(token, handle, 'twin-private', 'agents/.gitkeep', '', 'plant: seed agents/ directory');
+    log('planted ' + handle + '/twin-private', 'ok');
+    banner(`🌱 Planted <a href="https://github.com/${handle}/twin-private" target="_blank" style="color:inherit">${handle}/twin-private</a>. Drop your agent .py files into the <code>agents/</code> directory and push; they'll appear in this panel.`, 'info');
+    btn.textContent = '✓ Private estate planted';
+    setTimeout(checkPrivateEstate, 800);
+  } catch (e) {
+    log('private plant failed: ' + e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = '🌱 Plant your private estate';
+    alert('Plant failed: ' + e.message);
   }
 }
 
@@ -3032,6 +3249,10 @@ async function main() {
   // "Call the doorman" button in the greeter panel — opt-in FaceTime
   const callDoormanBtn = document.getElementById('call-doorman-btn');
   if (callDoormanBtn) callDoormanBtn.addEventListener('click', openTphoneCall);
+
+  // Private estate plant button
+  const pePlant = document.getElementById('pe-plant-btn');
+  if (pePlant) pePlant.addEventListener('click', plantPrivateEstate);
 
   // Lobby chat input — Enter sends
   const lobbyInput = document.getElementById('lobby-input');
