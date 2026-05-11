@@ -56,5 +56,35 @@
     "secure":   "Joining requires a valid v2-format operator rappid. Posts to the event stream are signed with the operator's ECDSA P-256 key (same keypair used by vbrainstem.html / SPEC §18.11). Verifiers reject posts whose signature doesn't match the rappid's claimed fingerprint."
   },
 
+  "tether_requirements": {
+    "schema": "rapp-tether-requirements/1.0",
+    "_comment": "Agents the vbrainstem hot-loads when tethering to this neighborhood. The neighborhood is the source of truth for what its tether needs — every neighborhood has its own rar/, rappstore/, senses/, etc. URLs are tried in order; first 200 wins (Article XLVII substrate-agnostic federation). Order: (1) this neighborhood's own bundled copy is canonical for THIS tether; (2) upstream RAR is a fallback when the agent is also an official @rapp; (3) the page's local relative path is the last-resort offline fallback.",
+    "registry": "rar/index.json",
+    "agents": [
+      {
+        "name":         "@rapp/commons_post",
+        "class":        "CommonsPostAgent",
+        "instance_var": "_POST_AGENT",
+        "purpose":      "Validate inputs + compose canonical event JSON; returns a signing intent the host wraps with WebCrypto.",
+        "urls": [
+          "https://raw.githubusercontent.com/kody-w/rapp-commons/main/agents/commons_post_agent.py",
+          "https://raw.githubusercontent.com/kody-w/RAR/main/agents/%40rapp/commons_post_agent.py",
+          "agents/commons_post_agent.py"
+        ]
+      },
+      {
+        "name":         "@rapp/estate_outbound",
+        "class":        "EstateOutboundAgent",
+        "instance_var": "_OUTBOUND_AGENT",
+        "purpose":      "Stage signed events for the operator's outbound lane so the federation roll-up can pull them on its beat.",
+        "urls": [
+          "https://raw.githubusercontent.com/kody-w/rapp-commons/main/agents/estate_outbound_agent.py",
+          "https://raw.githubusercontent.com/kody-w/RAR/main/agents/%40rapp/estate_outbound_agent.py",
+          "agents/estate_outbound_agent.py"
+        ]
+      }
+    ]
+  },
+
   "soul_summary": "The commons is the doorman, not the destination. Greet everyone, answer 'what is this place', point to the docs, and stay out of the way."
 }

@@ -305,43 +305,72 @@ async function bootPyodide() {
   return true;
 }
 
-async function loadCommonsAgent() {
-  if (!state.pyodide) return false;
-  try {
-    // Fetch the agent sources — relative to this page, so works on GH Pages
-    // and from file:// when the user clones the repo.
-    const [postRes, outboundRes] = await Promise.all([
-      fetch('agents/commons_post_agent.py'),
-      fetch('agents/estate_outbound_agent.py'),
-    ]);
-    if (!postRes.ok) throw new Error('commons_post fetch HTTP ' + postRes.status);
-    if (!outboundRes.ok) throw new Error('estate_outbound fetch HTTP ' + outboundRes.status);
-    const postSrc = await postRes.text();
-    const outboundSrc = await outboundRes.text();
+// ── Hot-load tether-requirement agents declared by the neighborhood ──
+// The neighborhood manifest is the source of truth for which agents the
+// tether needs (tether_requirements.agents[]). Each agent entry lists an
+// ordered fallback chain of URLs; we try them in order per Article XLVII
+// substrate-agnostic federation. This way the tether's code knows how to
+// TETHER, not which agents to load — point it at a different
+// neighborhood.json and it loads that neighborhood's declared agents.
+async function fetchFirstAvailable(urls, label) {
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        log(`  ${label} ← ${url}`, 'ok');
+        return await res.text();
+      }
+      log(`  ${label} skip ${url} (HTTP ${res.status})`, 'warn');
+    } catch (e) {
+      log(`  ${label} skip ${url} (${e.message})`, 'warn');
+    }
+  }
+  throw new Error(`no working URL for ${label}`);
+}
 
-    // Mount basic_agent stub + the agents into Pyodide's virtual fs.
+async function loadTetherAgents() {
+  if (!state.pyodide) return false;
+  const reqs = state.nbhd?.tether_requirements?.agents;
+  if (!Array.isArray(reqs) || reqs.length === 0) {
+    setPill('agent-status', 'No tether requirements', 'warn');
+    log('neighborhood declares no tether_requirements.agents — running with JS fallback only', 'warn');
+    return false;
+  }
+
+  try {
+    // Bootstrap the Pyodide agents/ directory + basic_agent stub once.
     state.pyodide.FS.mkdirTree('/agents');
     state.pyodide.FS.writeFile('/agents/__init__.py', '');
     state.pyodide.FS.writeFile('/agents/basic_agent.py',
       'class BasicAgent:\n    def __init__(self, name, metadata):\n        self.name = name\n        self.metadata = metadata\n');
-    state.pyodide.FS.writeFile('/agents/commons_post_agent.py', postSrc);
-    state.pyodide.FS.writeFile('/agents/estate_outbound_agent.py', outboundSrc);
 
-    // Add /agents to sys.path and import both.
-    state.pyodide.runPython(`
-import sys
-if '/' not in sys.path: sys.path.insert(0, '/')
-from agents import commons_post_agent, estate_outbound_agent
-_POST_AGENT = commons_post_agent.CommonsPostAgent()
-_OUTBOUND_AGENT = estate_outbound_agent.EstateOutboundAgent()
-`);
-    setPill('agent-status', '@rapp/commons_post + @rapp/estate_outbound', 'ok');
+    // Fetch each declared agent and write to Pyodide FS.
+    const loaded = [];
+    for (const req of reqs) {
+      const src = await fetchFirstAvailable(req.urls || [], req.name);
+      // Pyodide module filename — derive from class name → snake_case agent.py
+      const modName = (req.name || 'agent').split('/').pop().replace(/-/g, '_') + '_agent';
+      const filename = '/agents/' + modName + '.py';
+      state.pyodide.FS.writeFile(filename, src);
+      loaded.push({ ...req, _module: modName });
+    }
+
+    // Import each, instantiate to the declared instance_var.
+    let importLines = 'import sys\nif "/" not in sys.path: sys.path.insert(0, "/")\n';
+    for (const a of loaded) {
+      importLines += `from agents import ${a._module}\n`;
+      importLines += `${a.instance_var} = ${a._module}.${a.class}()\n`;
+    }
+    state.pyodide.runPython(importLines);
+
+    state.tetherAgents = loaded;
     state.agentLoaded = true;
-    log('commons_post + estate_outbound loaded into Pyodide', 'ok');
+    setPill('agent-status', `${loaded.length} agent${loaded.length === 1 ? '' : 's'} hot-loaded`, 'ok');
+    log(`tether agents loaded · ${loaded.map(a => a.name).join(', ')}`, 'ok');
     return true;
   } catch (e) {
-    setPill('agent-status', 'Agent FAIL', 'err');
-    log('Agent load failed: ' + e.message, 'err');
+    setPill('agent-status', 'Hot-load FAIL', 'err');
+    log('tether agent hot-load failed: ' + e.message, 'err');
     return false;
   }
 }
@@ -743,7 +772,7 @@ async function main() {
   await loadSoul();
 
   const pyOk = await bootPyodide();
-  if (pyOk) await loadCommonsAgent();
+  if (pyOk) await loadTetherAgents();
 
   document.getElementById('c-post').disabled = false;
   document.getElementById('c-post').addEventListener('click', compose);
