@@ -396,11 +396,58 @@ header h1 .icon { font-size: 1.25em; }
 <div class="grid">
 
   <div>
-    <div class="stream" id="stream">
-      <h2>Event stream</h2>
-      <div class="event-empty" id="stream-empty">No events yet — be the first to post.</div>
-      <div id="stream-events"></div>
+
+    <!-- ╭─── PRIMARY: lobby (multi-device collab is the headline) ──────╮ -->
+    <div class="panel" id="lobby-panel" style="display:none;padding:18px;margin-bottom:18px">
+      <h2 style="display:flex;justify-content:space-between;align-items:center;font-size:1.1rem;margin-bottom:8px">
+        <span>🤝 Lobby <span id="lobby-pill" style="font-size:0.7rem;padding:3px 10px;border-radius:999px;background:var(--bd);color:var(--mut);margin-left:8px;vertical-align:middle">offline</span></span>
+        <span id="lobby-count" style="font-size:0.8rem;color:var(--mut);font-weight:400">0 online</span>
+      </h2>
+      <p style="font-size:0.82rem;color:var(--dim);margin-bottom:14px;line-height:1.5">Real-time mesh with the other operators currently tethered to this neighborhood. Tether <strong>more of your devices</strong> by scanning the QR below — they'll arrive in this same lobby pre-tethered.</p>
+
+      <!-- INVITE QR — visible by default; primary multi-device on-ramp -->
+      <div id="invite-panel" style="display:flex;gap:14px;align-items:center;background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.3);border-radius:10px;padding:14px;margin-bottom:14px;flex-wrap:wrap">
+        <canvas id="invite-qr" style="background:#fff;padding:6px;border-radius:6px;flex-shrink:0"></canvas>
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:700;font-size:0.92rem;margin-bottom:6px">📱 Bring another device into this neighborhood</div>
+          <p style="font-size:0.74rem;color:var(--dim);margin-bottom:6px;line-height:1.45">Scan with a phone (or paste the URL into any other browser tab). The new device opens the tPhone already tethered to <strong id="invite-nbhd-name">this neighborhood</strong> and meets you here in the lobby.</p>
+          <div id="invite-url" style="font-size:0.62rem;color:var(--acc);font-family:ui-monospace,monospace;word-break:break-all;background:rgba(0,0,0,0.25);padding:6px 8px;border-radius:4px"></div>
+        </div>
+      </div>
+
+      <!-- Active peers chips -->
+      <div id="lobby-peers" style="font-size:0.78rem;color:var(--dim);margin-bottom:10px;display:flex;flex-wrap:wrap;gap:5px">
+        <span style="color:var(--mut);font-style:italic">(connecting…)</span>
+      </div>
+
+      <!-- Chat stream (the main collaboration surface) -->
+      <div id="lobby-stream" style="background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:12px;min-height:320px;max-height:60vh;overflow-y:auto;font-size:0.86rem;margin-bottom:10px">
+        <div style="color:var(--mut);font-style:italic;text-align:center;padding:30px 0">No messages yet. Say hi to whoever's here.</div>
+      </div>
+
+      <input id="lobby-input" type="text" placeholder="message all tethered neighbors…" style="width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:9px 11px;color:var(--tx);font-family:inherit;font-size:0.88rem">
+
+      <!-- Host-only: ground the lobby to the operator's local brainstem.py.
+           When grounded, every message in the lobby (from host OR any guest)
+           gets relayed to localhost:7071/chat and the brainstem's reply is
+           broadcast back. Phone→lobby→host's brainstem, fully E2E P2P + local
+           (no broker after handshake; brainstem on localhost). -->
+      <button id="ground-toggle" style="display:none;width:100%;margin-top:10px;background:transparent;color:var(--grn);border:1px dashed var(--grn);padding:8px;border-radius:6px;font-size:0.78rem;cursor:pointer;font-family:inherit">🌐 Ground tether to local brainstem</button>
+
+      <button id="invite-toggle" style="width:100%;margin-top:8px;background:transparent;color:var(--mut);border:1px dashed var(--bd);padding:6px;border-radius:6px;font-size:0.72rem;cursor:pointer;font-family:inherit">📱 Hide invite QR</button>
     </div>
+    <!-- ╰────────────────────────────────────────────────────────────────╯ -->
+
+    <!-- ╭─── SECONDARY: persistent audit-trail event stream (collapsed) ╮ -->
+    <details style="background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:18px">
+      <summary style="cursor:pointer;font-size:0.92rem;font-weight:600;color:var(--tx);user-select:none">📜 Audit-trail event stream <span style="color:var(--mut);font-weight:400;font-size:0.78rem">(persistent · federated to <code style="font-size:0.7rem">events/</code> every ~10 min)</span></summary>
+      <p style="font-size:0.78rem;color:var(--dim);margin:10px 0;line-height:1.5">Lobby chat above is ephemeral (WebRTC mesh). To publish a thought to the neighborhood's <strong>permanent</strong> record, post a signed event here — federation roll-up unions it into the public <code style="font-size:0.7rem">events/</code> directory.</p>
+      <div class="stream" id="stream" style="margin-top:12px">
+        <h2 style="font-size:0.86rem;color:var(--dim);margin-bottom:10px">Recent events</h2>
+        <div class="event-empty" id="stream-empty">No events yet — be the first to post.</div>
+        <div id="stream-events"></div>
+      </div>
+    <!-- end of details — close after compose -->
 
     <div class="compose" style="margin-top:18px">
       <h2>Compose</h2>
@@ -434,6 +481,8 @@ header h1 .icon { font-size: 1.25em; }
         </label>
       </div>
     </div>
+    </details>
+    <!-- ╰────────────────────────────────────────────────────────────────╯ -->
   </div>
 
   <aside class="side">
@@ -495,27 +544,6 @@ header h1 .icon { font-size: 1.25em; }
         <div style="margin-top:8px;font-size:0.66rem;color:var(--mut);text-align:center;line-height:1.4">
           To publish a new agent, drop the <code>.py</code> file into your repo's <code>agents/</code> directory + push. The tether will pick it up on next refresh.
         </div>
-      </div>
-    </div>
-
-    <div class="panel" id="lobby-panel" style="display:none">
-      <h3 style="display:flex;justify-content:space-between;align-items:center">
-        <span>Lobby <span id="lobby-pill" style="font-size:0.6rem;padding:2px 8px;border-radius:999px;background:var(--bd);color:var(--mut);margin-left:6px">offline</span></span>
-        <span id="lobby-count" style="font-size:0.7rem;color:var(--mut);font-weight:400">0 online</span>
-      </h3>
-      <p style="font-size:0.72rem;color:var(--mut);margin-bottom:8px">Ephemeral chat with other operators currently tethered to this neighborhood. WebRTC mesh via PeerJS; not persisted — to publish, post to the event stream instead.</p>
-      <div id="lobby-peers" style="font-size:0.72rem;color:var(--dim);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px">
-        <span style="color:var(--mut);font-style:italic">(connecting…)</span>
-      </div>
-      <div id="lobby-stream" style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;max-height:240px;overflow-y:auto;font-size:0.82rem;margin-bottom:8px">
-        <div style="color:var(--mut);font-style:italic;text-align:center;padding:14px 0">No messages yet. Say hi to whoever's here.</div>
-      </div>
-      <input id="lobby-input" type="text" placeholder="message all tethered neighbors…" style="width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;color:var(--tx);font-family:inherit;font-size:0.82rem">
-      <button id="invite-toggle" style="width:100%;margin-top:8px;background:transparent;color:var(--acc);border:1px dashed var(--acc);padding:7px;border-radius:6px;font-size:0.74rem;cursor:pointer;font-family:inherit">📱 Invite a device (show QR)</button>
-      <div id="invite-panel" style="display:none;margin-top:10px;padding:10px;background:rgba(0,0,0,0.25);border:1px solid var(--bd);border-radius:8px;text-align:center">
-        <canvas id="invite-qr" style="background:#fff;padding:6px;border-radius:6px;max-width:100%"></canvas>
-        <div style="font-size:0.66rem;color:var(--mut);margin-top:6px;line-height:1.4">Have a mobile device scan this QR — it'll open the tPhone already tethered to <strong id="invite-nbhd-name">this neighborhood</strong>, and you'll meet in the lobby.</div>
-        <div id="invite-url" style="font-size:0.6rem;color:var(--acc);font-family:ui-monospace,monospace;margin-top:6px;word-break:break-all"></div>
       </div>
     </div>
 
@@ -2962,6 +2990,7 @@ const lobby = {
   members: new Map(), // peerId → { handle, rappid }
   messages: [],
   greeted: false,
+  grounded: false,  // host-side: if true, lobby chat is forwarded to localhost:7071/chat
 };
 
 function lobbyIdsFor(nbhd) {
@@ -3102,7 +3131,10 @@ function handleLobbyMessage(msg, conn) {
     }
     case 'chat': {
       lobbyAppend(msg);
-      if (lobby.isHost) lobbyBroadcast(msg, conn.peer);
+      if (lobby.isHost) {
+        lobbyBroadcast(msg, conn.peer);
+        if (lobby.grounded) maybeForwardToBrainstem(msg);
+      }
       break;
     }
     case 'system': {
@@ -3120,6 +3152,10 @@ async function initLobby() {
   const panel = document.getElementById('lobby-panel');
   if (panel) panel.style.display = 'block';
   setLobbyPill('connecting…', '');
+
+  // Render the invite QR immediately so the multi-device on-ramp is the
+  // first thing visible — even before broker handshake completes.
+  renderInviteQr();
 
   const { hostId, prefix } = lobbyIdsFor(state.nbhd);
   lobby.hostId = hostId;
@@ -3167,7 +3203,11 @@ async function tryClaimHost(hostId, guestId) {
       trial.on('error', (e) => log('host peer error: ' + (e?.type || e?.message || e), 'warn'));
       trial.on('disconnected', () => { setLobbyPill('reconnecting…', ''); try { trial.reconnect(); } catch {} });
       renderLobbyPeers();
-      lobbyAppend({ kind: 'system', from: 'lobby', text: 'You\'re the host — others who tether will connect through you.', ts: new Date().toISOString() });
+      // Host gets the "ground tether to local brainstem" toggle —
+      // available only on the device that has localhost:7071 reachable.
+      const groundBtn = document.getElementById('ground-toggle');
+      if (groundBtn) groundBtn.style.display = 'block';
+      lobbyAppend({ kind: 'system', from: 'lobby', text: 'You\'re the host — others who tether will connect through you. If you\'re on a desktop with brainstem.py running, tap "🌐 Ground tether to local brainstem" to let phone-tethered peers chat with your local brainstem securely (WebRTC + localhost; never leaves your devices).', ts: new Date().toISOString() });
       resolve();
     });
     trial.on('error', (err) => {
@@ -3276,10 +3316,89 @@ function sendLobbyChat(text) {
   if (lobby.isHost) {
     // Host writes locally and broadcasts to all guests
     lobbyBroadcast(msg, null);
+    if (lobby.grounded) maybeForwardToBrainstem(msg);
   } else if (lobby.hostConn) {
     try { lobby.hostConn.send(msg); } catch (e) { log('lobby send failed: ' + e.message, 'warn'); }
   } else {
     log('lobby not connected — message will not propagate', 'warn');
+  }
+}
+
+// ── Grounded mode (host-side only): every lobby chat → local brainstem ──
+// When the operator on the device that has brainstem.py running locally
+// taps "Ground tether to local brainstem," subsequent lobby chats are
+// POSTed to http://localhost:7071/chat with soul.md as the system prompt.
+// The brainstem's reply is broadcast back as a special 'brainstem' chat
+// so all tethered peers see it.
+//
+// Security profile: WebRTC channel is encrypted P2P after PeerJS broker
+// handshake; brainstem is on localhost (never exposed to net); messages
+// never hit any server. The phone-to-brainstem path = WebRTC mesh →
+// host's tether → host's localhost. Three hops, all on-host or
+// encrypted-direct.
+
+function toggleGrounding() {
+  if (!lobby.isHost) return;
+  lobby.grounded = !lobby.grounded;
+  const btn = document.getElementById('ground-toggle');
+  if (lobby.grounded) {
+    btn.textContent = '🌐 Grounded · localhost:7071 (tap to unground)';
+    btn.style.color = '#000';
+    btn.style.background = 'var(--grn)';
+    btn.style.borderStyle = 'solid';
+    const sys = { kind: 'system', from: 'lobby', text: 'Host grounded the tether to their local brainstem (localhost:7071). Any message here now routes to their brainstem; the brainstem\'s reply broadcasts back. Direct phone↔brainstem control via the WebRTC mesh.', ts: new Date().toISOString() };
+    lobbyAppend(sys);
+    lobbyBroadcast(sys, null);
+    log('🌐 grounded · lobby chats forwarded to localhost:7071', 'ok');
+  } else {
+    btn.textContent = '🌐 Ground tether to local brainstem';
+    btn.style.color = 'var(--grn)';
+    btn.style.background = 'transparent';
+    btn.style.borderStyle = 'dashed';
+    const sys = { kind: 'system', from: 'lobby', text: 'Host ungrounded the tether — peer-to-peer chat resumed.', ts: new Date().toISOString() };
+    lobbyAppend(sys);
+    lobbyBroadcast(sys, null);
+    log('🌐 ungrounded', '');
+  }
+}
+
+async function maybeForwardToBrainstem(msg) {
+  if (!lobby.grounded || !lobby.isHost) return;
+  if (msg.kind !== 'chat') return;
+  // Don't feed brainstem-emitted replies back into itself
+  if (msg.from === '🤖 brainstem') return;
+  try {
+    const messages = [];
+    if (greeter.soul) messages.push({ role: 'system', content: greeter.soul });
+    messages.push({ role: 'user', content: `${msg.from}: ${msg.text}` });
+    const res = await fetch('http://localhost:7071/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!res.ok) {
+      const errMsg = { kind: 'system', from: 'lobby', text: `(brainstem returned HTTP ${res.status})`, ts: new Date().toISOString() };
+      lobbyAppend(errMsg); lobbyBroadcast(errMsg, null);
+      return;
+    }
+    const data = await res.json();
+    let reply = data.response || data.content || data.text || JSON.stringify(data);
+    if (typeof reply === 'string') reply = reply.split('|||VOICE|||')[0].split('|||TWIN|||')[0].trim();
+    const replyMsg = {
+      kind: 'chat',
+      from: '🤖 brainstem',
+      rappid: '',
+      text:  reply || '(empty reply)',
+      ts:    new Date().toISOString()
+    };
+    lobbyAppend(replyMsg);
+    lobbyBroadcast(replyMsg, null);
+    log('brainstem reply broadcast (' + (reply || '').length + ' chars)', 'ok');
+  } catch (e) {
+    const errMsg = { kind: 'system', from: 'lobby', text: `(brainstem unreachable: ${e.message} — is ./start.sh running?)`, ts: new Date().toISOString() };
+    lobbyAppend(errMsg); lobbyBroadcast(errMsg, null);
+    log('brainstem forward failed: ' + e.message, 'warn');
   }
 }
 
@@ -3293,11 +3412,14 @@ function destroyLobby() {
   lobby.peerId = null;
   lobby.hostId = null;
   lobby.messages = [];
+  lobby.grounded = false;
   setLobbyPill('offline', '');
   renderLobbyPeers();
   renderLobbyMessages();
   const panel = document.getElementById('lobby-panel');
   if (panel) panel.style.display = 'none';
+  const groundBtn = document.getElementById('ground-toggle');
+  if (groundBtn) groundBtn.style.display = 'none';
 }
 
 window.addEventListener('beforeunload', destroyLobby);
@@ -3340,16 +3462,22 @@ function renderInviteQr() {
 }
 
 function toggleInvitePanel() {
+  // Invite QR is visible by default now (it's THE primary multi-device
+  // on-ramp). The toggle becomes a hide/show — useful if the operator
+  // wants more vertical space for the chat once everyone's tethered.
   const panel = document.getElementById('invite-panel');
   const btn   = document.getElementById('invite-toggle');
   if (!panel || !btn) return;
-  if (panel.style.display === 'none' || !panel.style.display) {
-    renderInviteQr();
-    panel.style.display = 'block';
+  const hidden = panel.style.display === 'none';
+  if (hidden) {
+    panel.style.display = 'flex';
+    btn.style.display = 'block';
     btn.textContent = '📱 Hide invite QR';
+    renderInviteQr();
   } else {
     panel.style.display = 'none';
-    btn.textContent = '📱 Invite a device (show QR)';
+    btn.style.display = 'block';
+    btn.textContent = '📱 Show invite QR';
   }
 }
 
@@ -3429,6 +3557,9 @@ async function main() {
   // 📱 Invite-a-device QR toggle
   const inviteBtn = document.getElementById('invite-toggle');
   if (inviteBtn) inviteBtn.addEventListener('click', toggleInvitePanel);
+  // 🌐 Ground tether to local brainstem (host-only)
+  const groundBtn = document.getElementById('ground-toggle');
+  if (groundBtn) groundBtn.addEventListener('click', toggleGrounding);
 
   // ── 3. Pyodide bootstraps regardless of neighborhood (agents load
   //      after neighborhood is resolved, since requirements come from
