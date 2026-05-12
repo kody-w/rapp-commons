@@ -3356,17 +3356,22 @@ function toggleGrounding() {
     let url = getBrainstemUrl();
     if (isMixedContent(url)) {
       const newUrl = prompt(
-        `Mixed-content note:\n\nThis tether runs on HTTPS (kody-w.github.io), and the browser will block ` +
-        `fetch() to ${url} (HTTP). To ground your tether to your local brainstem, expose it via a tunnel and ` +
-        `paste the HTTPS URL here:\n\n` +
-        `• cloudflared tunnel --url http://localhost:7071\n` +
-        `• ngrok http 7071\n` +
-        `• localhost.run / serveo / pinggy / etc.\n\n` +
-        `Paste the tunnel's HTTPS endpoint (chat path appended automatically if absent):`,
-        ''
+        `Mixed-content note:\n\n` +
+        `This tether runs on HTTPS (kody-w.github.io), so the browser blocks ` +
+        `fetch() to ${url} (plain HTTP). Two paths to an HTTPS endpoint:\n\n` +
+        `RECOMMENDED — no external services:\n` +
+        `  In a new terminal:  python3 rapp_brainstem/tls_proxy.py\n` +
+        `  First time only, visit https://localhost:7072/ in this browser\n` +
+        `  and click Advanced → Proceed to trust the self-signed cert.\n` +
+        `  Then paste:  https://localhost:7072/chat\n\n` +
+        `ALTERNATIVE — public tunnel (also works):\n` +
+        `  cloudflared tunnel --url http://localhost:7071\n` +
+        `  ngrok http 7071  /  localhost.run  /  serveo  /  pinggy\n\n` +
+        `Paste the HTTPS URL (chat path appended automatically if absent):`,
+        'https://localhost:7072/chat'
       );
       if (!newUrl || !newUrl.trim()) {
-        log('🌐 grounding cancelled — no tunnel URL provided', 'warn');
+        log('🌐 grounding cancelled — no HTTPS URL provided', 'warn');
         return;
       }
       let trimmed = newUrl.trim().replace(/\/$/, '');
