@@ -511,6 +511,12 @@ header h1 .icon { font-size: 1.25em; }
         <div style="color:var(--mut);font-style:italic;text-align:center;padding:14px 0">No messages yet. Say hi to whoever's here.</div>
       </div>
       <input id="lobby-input" type="text" placeholder="message all tethered neighbors…" style="width:100%;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:7px 9px;color:var(--tx);font-family:inherit;font-size:0.82rem">
+      <button id="invite-toggle" style="width:100%;margin-top:8px;background:transparent;color:var(--acc);border:1px dashed var(--acc);padding:7px;border-radius:6px;font-size:0.74rem;cursor:pointer;font-family:inherit">📱 Invite a device (show QR)</button>
+      <div id="invite-panel" style="display:none;margin-top:10px;padding:10px;background:rgba(0,0,0,0.25);border:1px solid var(--bd);border-radius:8px;text-align:center">
+        <canvas id="invite-qr" style="background:#fff;padding:6px;border-radius:6px;max-width:100%"></canvas>
+        <div style="font-size:0.66rem;color:var(--mut);margin-top:6px;line-height:1.4">Have a mobile device scan this QR — it'll open the tPhone already tethered to <strong id="invite-nbhd-name">this neighborhood</strong>, and you'll meet in the lobby.</div>
+        <div id="invite-url" style="font-size:0.6rem;color:var(--acc);font-family:ui-monospace,monospace;margin-top:6px;word-break:break-all"></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -3296,6 +3302,57 @@ function destroyLobby() {
 
 window.addEventListener('beforeunload', destroyLobby);
 
+// ── Invite QR — generate a "scan to join" QR encoding the current
+//    tether's deep link (?neighborhood=<url>). Mobile scans → opens the
+//    tPhone already tethered to the same neighborhood, they meet in
+//    the lobby. Works for browser-to-browser invites too — just paste
+//    the URL into another tab. ──
+function buildInviteUrl() {
+  // Anchor the invite URL to the canonical RAPP tether so mobile
+  // visitors always go to the live public payphone, regardless of
+  // which copy of the tether the inviter happens to be running.
+  const base = 'https://kody-w.github.io/RAPP/pages/tether.html';
+  if (!state.nbhdUrl) return base;
+  return base + '?neighborhood=' + encodeURIComponent(state.nbhdUrl);
+}
+
+function renderInviteQr() {
+  const canvas = document.getElementById('invite-qr');
+  const urlEl  = document.getElementById('invite-url');
+  const nameEl = document.getElementById('invite-nbhd-name');
+  if (!canvas || !urlEl) return;
+  const url = buildInviteUrl();
+  urlEl.textContent = url;
+  if (nameEl) nameEl.textContent = state.nbhd?.display_name || state.nbhd?.name || 'this neighborhood';
+  if (typeof QRious === 'undefined') {
+    canvas.outerHTML =
+      `<div style="background:#fff;color:#000;padding:12px;border-radius:8px;font-family:monospace;font-size:0.66rem;word-break:break-all">QRious unavailable — paste this URL on your other device:<br><b>${url}</b></div>`;
+    return;
+  }
+  new QRious({
+    element:    canvas,
+    value:      url,
+    size:       200,
+    background: '#ffffff',
+    foreground: '#000000',
+    level:      'M'
+  });
+}
+
+function toggleInvitePanel() {
+  const panel = document.getElementById('invite-panel');
+  const btn   = document.getElementById('invite-toggle');
+  if (!panel || !btn) return;
+  if (panel.style.display === 'none' || !panel.style.display) {
+    renderInviteQr();
+    panel.style.display = 'block';
+    btn.textContent = '📱 Hide invite QR';
+  } else {
+    panel.style.display = 'none';
+    btn.textContent = '📱 Invite a device (show QR)';
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Boot
 // ────────────────────────────────────────────────────────────────────────
@@ -3369,6 +3426,9 @@ async function main() {
       }
     });
   }
+  // 📱 Invite-a-device QR toggle
+  const inviteBtn = document.getElementById('invite-toggle');
+  if (inviteBtn) inviteBtn.addEventListener('click', toggleInvitePanel);
 
   // ── 3. Pyodide bootstraps regardless of neighborhood (agents load
   //      after neighborhood is resolved, since requirements come from
