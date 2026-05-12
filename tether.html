@@ -3066,24 +3066,16 @@ function lobbyBroadcast(msg, excludePeer) {
 }
 
 function lobbyWireConn(conn) {
-  conn.on('open', () => {
-    log(`lobby peer joined · ${conn.peer.slice(-12)}`, 'ok');
-    if (lobby.isHost) {
-      lobby.guests.set(conn.peer, conn);
-      // Send the new guest a roster + history; broadcast a join to others.
-      try {
-        conn.send({ kind: 'roster', members: Array.from(lobby.members.entries()),
-                                      history: lobby.messages.slice(-50) });
-      } catch {}
-      const me = lobbyMe();
-      lobbyBroadcast({ kind: 'system', text: 'a neighbor connected', ts: new Date().toISOString() }, conn.peer);
-    }
-    renderLobbyPeers();
-  });
+  // Wire data + close + error FIRST so we don't miss the initial 'hello'
+  // if it races the 'open' handler.
   conn.on('data', (raw) => {
     let msg = raw;
     try { if (typeof raw === 'string') msg = JSON.parse(raw); } catch {}
-    if (!msg || typeof msg !== 'object') return;
+    if (!msg || typeof msg !== 'object') {
+      log(`lobby · skipped non-object data from ${conn.peer.slice(-12)}`, 'warn');
+      return;
+    }
+    log(`lobby ← ${conn.peer.slice(-12)} · ${msg.kind}`, '');
     handleLobbyMessage(msg, conn);
   });
   conn.on('close', () => {
@@ -3095,7 +3087,24 @@ function lobbyWireConn(conn) {
     }
     renderLobbyPeers();
   });
-  conn.on('error', (e) => log('lobby conn error: ' + e?.message || e, 'warn'));
+  conn.on('error', (e) => log('lobby conn error: ' + (e?.message || e), 'warn'));
+  conn.on('open', () => {
+    log(`lobby peer connected · ${conn.peer.slice(-12)} · isHost=${lobby.isHost}`, 'ok');
+    if (lobby.isHost) {
+      lobby.guests.set(conn.peer, conn);
+      // Pre-register as anonymous member so the count reflects the
+      // connection immediately, even before the 'hello' arrives.
+      if (!lobby.members.has(conn.peer)) {
+        lobby.members.set(conn.peer, { handle: 'anon-' + conn.peer.slice(-6), rappid: '' });
+      }
+      try {
+        conn.send({ kind: 'roster', members: Array.from(lobby.members.entries()),
+                                      history: lobby.messages.slice(-50) });
+      } catch (e) { log('roster send failed: ' + e.message, 'warn'); }
+      lobbyBroadcast({ kind: 'system', from: 'lobby', text: 'a neighbor connected', ts: new Date().toISOString() }, conn.peer);
+    }
+    renderLobbyPeers();
+  });
 }
 
 function handleLobbyMessage(msg, conn) {
@@ -3339,18 +3348,45 @@ function sendLobbyChat(text) {
 
 function toggleGrounding() {
   if (!lobby.isHost) return;
-  lobby.grounded = !lobby.grounded;
   const btn = document.getElementById('ground-toggle');
-  if (lobby.grounded) {
-    btn.textContent = '🌐 Grounded · localhost:7071 (tap to unground)';
+
+  if (!lobby.grounded) {
+    // About to GROUND. Check mixed-content first; if we're on HTTPS and
+    // the configured URL is HTTP, prompt for a tunnel URL.
+    let url = getBrainstemUrl();
+    if (isMixedContent(url)) {
+      const newUrl = prompt(
+        `Mixed-content note:\n\nThis tether runs on HTTPS (kody-w.github.io), and the browser will block ` +
+        `fetch() to ${url} (HTTP). To ground your tether to your local brainstem, expose it via a tunnel and ` +
+        `paste the HTTPS URL here:\n\n` +
+        `• cloudflared tunnel --url http://localhost:7071\n` +
+        `• ngrok http 7071\n` +
+        `• localhost.run / serveo / pinggy / etc.\n\n` +
+        `Paste the tunnel's HTTPS endpoint (chat path appended automatically if absent):`,
+        ''
+      );
+      if (!newUrl || !newUrl.trim()) {
+        log('🌐 grounding cancelled — no tunnel URL provided', 'warn');
+        return;
+      }
+      let trimmed = newUrl.trim().replace(/\/$/, '');
+      if (!/\/chat\b/.test(trimmed)) trimmed = trimmed + '/chat';
+      setBrainstemUrl(trimmed);
+      url = trimmed;
+      log('🌐 brainstem URL configured: ' + url, 'ok');
+    }
+
+    lobby.grounded = true;
+    btn.textContent = '🌐 Grounded · ' + url.replace(/^https?:\/\//, '').slice(0, 40) + ' (tap to unground)';
     btn.style.color = '#000';
     btn.style.background = 'var(--grn)';
     btn.style.borderStyle = 'solid';
-    const sys = { kind: 'system', from: 'lobby', text: 'Host grounded the tether to their local brainstem (localhost:7071). Any message here now routes to their brainstem; the brainstem\'s reply broadcasts back. Direct phone↔brainstem control via the WebRTC mesh.', ts: new Date().toISOString() };
+    const sys = { kind: 'system', from: 'lobby', text: `Host grounded the tether to their brainstem at ${url}. Any message here now routes to their brainstem; the brainstem's reply broadcasts back. Direct phone↔brainstem control via the WebRTC mesh.`, ts: new Date().toISOString() };
     lobbyAppend(sys);
     lobbyBroadcast(sys, null);
-    log('🌐 grounded · lobby chats forwarded to localhost:7071', 'ok');
+    log('🌐 grounded · forwarding to ' + url, 'ok');
   } else {
+    lobby.grounded = false;
     btn.textContent = '🌐 Ground tether to local brainstem';
     btn.style.color = 'var(--grn)';
     btn.style.background = 'transparent';
@@ -3362,23 +3398,56 @@ function toggleGrounding() {
   }
 }
 
+const BRAINSTEM_URL_KEY = 'rapp.tether.brainstem_url';
+
+function getBrainstemUrl() {
+  return localStorage.getItem(BRAINSTEM_URL_KEY) || 'http://localhost:7071/chat';
+}
+
+function setBrainstemUrl(url) {
+  if (url) localStorage.setItem(BRAINSTEM_URL_KEY, url);
+  else     localStorage.removeItem(BRAINSTEM_URL_KEY);
+}
+
+// Mixed-content + tunneling: when the tether is loaded over https
+// (kody-w.github.io) the browser blocks fetch() to http://localhost:*.
+// The remedy is a tunnel that exposes brainstem.py as HTTPS — cloudflared,
+// ngrok, localhost.run, etc. We detect the protocol mismatch here, surface
+// a clear message, and let the operator configure the tunnel URL.
+function isMixedContent(url) {
+  return location.protocol === 'https:' && url.startsWith('http://');
+}
+
 async function maybeForwardToBrainstem(msg) {
   if (!lobby.grounded || !lobby.isHost) return;
   if (msg.kind !== 'chat') return;
   // Don't feed brainstem-emitted replies back into itself
   if (msg.from === '🤖 brainstem') return;
+
+  const url = getBrainstemUrl();
+  if (isMixedContent(url)) {
+    const errMsg = {
+      kind: 'system', from: 'lobby',
+      text: `⚠️ Mixed-content blocked: this HTTPS tether can't fetch ${url}. Options: (1) expose brainstem via a tunnel (e.g. cloudflared, ngrok) and tap "🌐 Grounded" to paste the HTTPS tunnel URL; (2) clone RAPP and serve the tether locally over http://.`,
+      ts: new Date().toISOString(),
+    };
+    lobbyAppend(errMsg); lobbyBroadcast(errMsg, null);
+    log('grounded forward blocked · mixed content (https → ' + url + ')', 'warn');
+    return;
+  }
+
   try {
     const messages = [];
     if (greeter.soul) messages.push({ role: 'system', content: greeter.soul });
     messages.push({ role: 'user', content: `${msg.from}: ${msg.text}` });
-    const res = await fetch('http://localhost:7071/chat', {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages }),
       signal: AbortSignal.timeout(45000),
     });
     if (!res.ok) {
-      const errMsg = { kind: 'system', from: 'lobby', text: `(brainstem returned HTTP ${res.status})`, ts: new Date().toISOString() };
+      const errMsg = { kind: 'system', from: 'lobby', text: `(brainstem returned HTTP ${res.status} at ${url})`, ts: new Date().toISOString() };
       lobbyAppend(errMsg); lobbyBroadcast(errMsg, null);
       return;
     }
@@ -3396,7 +3465,7 @@ async function maybeForwardToBrainstem(msg) {
     lobbyBroadcast(replyMsg, null);
     log('brainstem reply broadcast (' + (reply || '').length + ' chars)', 'ok');
   } catch (e) {
-    const errMsg = { kind: 'system', from: 'lobby', text: `(brainstem unreachable: ${e.message} — is ./start.sh running?)`, ts: new Date().toISOString() };
+    const errMsg = { kind: 'system', from: 'lobby', text: `(brainstem unreachable at ${url}: ${e.message}. Is ./start.sh running? On HTTPS deployments you need a tunnel — see the system message above for options.)`, ts: new Date().toISOString() };
     lobbyAppend(errMsg); lobbyBroadcast(errMsg, null);
     log('brainstem forward failed: ' + e.message, 'warn');
   }
