@@ -182,7 +182,8 @@ async function discoverCloud(){ try{
   const h=(n.commons&&n.commons.cloud_hosts)||[]; if(h.length) return (h[0].url||h[0]).replace(/\/$/,'');
 }catch(e){} return null; }
 async function startCloud(){ status('cloud commons — connected','ok'); enableComposer(); setHostState();
-  await pollCloud(); setInterval(pollCloud, 4000); }
+  await pollCloud(); setInterval(pollCloud, 4000);
+  if(!sessionStorage.getItem('rc-hello')){ sessionStorage.setItem('rc-hello','1'); postEvent('hello',{text: shortName(ME.rappid)+' arrived in the Commons'}); } }
 async function pollCloud(){ try{
   const r=await (await fetch(`${CLOUD}/rooms/${ROOM}/events?since=${cloudSince}`,{cache:'no-store'})).json();
   const evs=r.events||[]; cloudSince+=evs.length; for(const ev of evs) await ingest(ev,null,false);
