@@ -52,8 +52,11 @@
         "note": "Well-known address. Whoever currently holds this id is the live kited vTwin host; connect to it to join. If it is free, you may claim it and host the Commons yourself. Ephemeral — passed to the next volunteer when a host leaves."
       }
     ],
-    "cloud_hosts": [],
-    "_comment": "Permanent always-on cloud hosts 'graduate' here (a kited host can become an always-on one) and are tried before the well-known kited id. None yet — kited hosting is the floor, cloud is the ceiling."
+    "cloud_hosts": [
+      { "kind": "cloud", "transport": "http", "url": "https://rapp-resident-kw165843.azurewebsites.net/api",
+        "host": "rapp-resident", "note": "Always-on resident vTwin (Azure Function). Tried before the kited address; the room is `commons`." }
+    ],
+    "_comment": "Permanent always-on cloud hosts 'graduate' here (a kited host becomes an always-on one) and are tried before the well-known kited id. Kited hosting is the floor, cloud is the ceiling."
   },
 
   "coordinates": {
