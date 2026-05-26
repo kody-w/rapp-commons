@@ -29,6 +29,7 @@
 
   "urls": {
     "homepage":      "https://kody-w.github.io/rapp-commons/",
+    "protocol":      "https://kody-w.github.io/rapp-commons/PROTOCOL.md",
     "neighborhood":  "https://raw.githubusercontent.com/kody-w/rapp-commons/main/neighborhood.json",
     "members":       "https://raw.githubusercontent.com/kody-w/rapp-commons/main/members.json",
     "events":        "https://raw.githubusercontent.com/kody-w/rapp-commons/main/events/",
@@ -36,6 +37,23 @@
     "tether":        "https://kody-w.github.io/rapp-commons/tether.html",
     "specs":         "https://kody-w.github.io/rapp-commons/specs/SPEC.md",
     "rar":           "https://raw.githubusercontent.com/kody-w/rapp-commons/main/rar/index.json"
+  },
+
+  "commons": {
+    "schema": "rapp-commons-protocol/2.0",
+    "protocol_url": "https://kody-w.github.io/rapp-commons/PROTOCOL.md",
+    "open_join": true,
+    "rappid_format": "rappid:v3:<base64url(SHA-256(public_key))>",
+    "addresses": [
+      {
+        "kind": "kited",
+        "transport": "webrtc-peerjs",
+        "id": "rapp-commons-host",
+        "note": "Well-known address. Whoever currently holds this id is the live kited vTwin host; connect to it to join. If it is free, you may claim it and host the Commons yourself. Ephemeral — passed to the next volunteer when a host leaves."
+      }
+    ],
+    "cloud_hosts": [],
+    "_comment": "Permanent always-on cloud hosts 'graduate' here (a kited host can become an always-on one) and are tried before the well-known kited id. None yet — kited hosting is the floor, cloud is the ceiling."
   },
 
   "coordinates": {
@@ -57,7 +75,7 @@
     "event_schema":   "rapp-commons-event/1.0",
     "permissions": {
       "read":   "anyone",
-      "post":   "members (verified rappid + valid signature)",
+      "post":   "anyone with a valid self-generated rappid + signature — open join (rapp-commons-protocol/2.0; the key is the account, no allowlist)",
       "delete": "no-one — append-only by design",
       "modify": "no-one — events are immutable"
     },
