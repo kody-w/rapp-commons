@@ -127,7 +127,7 @@ async function loadOrMint(){
 // ---------- events: sign / verify ----------
 async function makeEvent(kind, body){
   const ev = { schema:'rapp-commons-event/1.0', from:ME.rappid, pub:ME.pubB64, alg:'ecdsa-p256',
-               ts:new Date().toISOString(), kind, body };
+               ts:new Date().toISOString().replace(/\.\d{3}Z$/,'Z'), kind, body };
   const sigBuf = await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'}, ME.priv, enc(stableStringify(ev)));
   ev.sig = b64u(sigBuf);
   return ev;
