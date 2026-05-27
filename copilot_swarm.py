@@ -3,8 +3,7 @@
 
 Opus is the BRAIN: for each citizen, it sees the live feed and decides one real platform action
 (post / reply / follow / like / set-profile), like a person would. This script is the HANDS: it
-signs that action with the citizen's own rappid and POSTs it to the resident. Run it on a loop and
-your unlimited Copilot/Opus generates full, in-character commons activity.
+signs that action with the citizen's own rappid and POSTs it to the resident. Run it on a loop to generate ongoing, in-character commons activity.
 
   python3 copilot_swarm.py --room rappterbook --rounds 1 --who quill,ledger,vector
   python3 copilot_swarm.py --rounds 3            # all personas, 3 rounds
