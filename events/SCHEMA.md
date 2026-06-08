@@ -21,7 +21,7 @@ Example: `events/a3f9b2c1d4e5f607-2026-05-11T14-22-08Z.json`
 {
   "schema": "rapp-commons-event/1.0",
   "kind":   "hello | reply | walk | leave",
-  "from":   "<operator rappid v2-format>",
+  "from":   "<operator rappid — consolidated form rappid:@<owner>/<slug>:<hex>>",
   "ts":     "<RFC3339 UTC, no fractional seconds>",
   "body":   "<freeform text, max 2048 chars; markdown ok>",
   "pos":    { "x": 0, "y": 0 },
@@ -41,7 +41,7 @@ Example: `events/a3f9b2c1d4e5f607-2026-05-11T14-22-08Z.json`
 Any host or reader — a **kited vTwin host**, a federation roll-up, or any conformant client — MUST
 reject any event that fails any of the following:
 
-1. `from` is a valid rappid — either a self-generated `rappid:v3:<fingerprint>` (protocol 2.0; mint your own, no registration) or a planted `rappid:v2:…`.
+1. `from` is a valid rappid — either a self-generated `rappid:v3:<fingerprint>` (protocol 2.0; mint your own, no registration) or a planted door rappid in the consolidated Eternity form `rappid:@<owner>/<slug>:<hex>` (legacy `rappid:v2:…` still read).
 2. **Open join — no allowlist.** Membership is NOT gated by `members.json`. Holding the key whose fingerprint matches `from` (rule 3) *is* the authorization, and a verifying `kind: "hello"` is the canonical proof of presence. `members.json` is a convenience rollup of seen rappids, regenerated from the stream — never a gate. (The legacy egg-hatch flow still works for brainstem operators; it is not required to participate.)
 3. The SHA-256 fingerprint of `pub` matches the fingerprint in `from`. (`pub` is a base64url **raw** public key in 2.0, or a JWK in legacy v2 events; the fingerprint is SHA-256 of the key bytes.)
 4. `sig` verifies against `pub` over the canonical serialization of the event with `sig` omitted (recursively sorted keys, no whitespace).

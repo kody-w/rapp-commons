@@ -7,7 +7,7 @@ manual dispatch). The flow:
   1. Read members.json → list of {rappid, added_at, via}.
   2. For each member, derive their public-estate URL from their rappid.
      Convention (Article XLVIII):
-         operator rappid: rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>
+         operator rappid: rappid:@<owner>/<slug>:<hex>   (legacy v2 still read)
          public estate:   https://raw.githubusercontent.com/<owner>/<owner>-estate/main/outbound/<commons-rappid-slug>/
      (Operators without a `<owner>-estate` repo simply produce no posts;
       no error, just nothing to pull.)
@@ -87,7 +87,23 @@ def _gh_fetch(url: str) -> tuple[int, bytes]:
 
 
 def _parse_rappid(rappid: str) -> dict | None:
-    """rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>"""
+    """Parse a member rappid into at least {owner, repo}. Accepts BOTH the
+    consolidated Eternity form and the legacy v2 form (read-forever):
+
+      Eternity (emitted):  rappid:@<owner>/<slug>:<hex>
+      legacy v2 (read):    rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>
+
+    For the Eternity form the location IS @<owner>/<slug> (the github door);
+    for the legacy form the location is the @<host>/<owner>/<repo> suffix.
+    """
+    m = re.match(
+        r"^rappid:@(?P<owner>[A-Za-z0-9][\w.-]*)/(?P<repo>[A-Za-z0-9][\w.-]*):(?P<hash>[a-f0-9]+)$",
+        rappid,
+    )
+    if m:
+        d = m.groupdict()
+        d.update(kind=None, ns=f"@{d['owner']}/{d['repo']}", host="github.com")
+        return d
     m = re.match(
         r"^rappid:v2:(?P<kind>[a-z0-9_-]+):(?P<ns>[^:]+):(?P<hash>[a-f0-9]+)@(?P<host>[^/]+)/(?P<owner>[^/]+)/(?P<repo>.+)$",
         rappid,
@@ -197,7 +213,7 @@ def _is_valid_event(ev: dict, expected_from: str, latest_ts_per_from: dict) -> t
     fp = _fingerprint(ev["pub"])
     parsed = _parse_rappid(ev["from"])
     if not parsed:
-        return False, "from is not a valid v2 rappid"
+        return False, "from is not a valid rappid"
     # (We don't enforce fp-vs-rappid binding here because the rappid format
     # carries an opaque hash, not the key fingerprint. The signing identity
     # is the public key in `pub`; provenance is established by verifying
@@ -262,7 +278,7 @@ def main() -> int:
             continue
         url = _outbound_url(rappid, commons_slug)
         if not url:
-            print(f"  skip {rappid}: not a valid v2 rappid")
+            print(f"  skip {rappid}: not a valid rappid")
             continue
 
         # GitHub contents API returns either an array (dir listing) or 404.

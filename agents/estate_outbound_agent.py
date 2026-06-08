@@ -67,7 +67,7 @@ __manifest__ = {
     "dependencies": ["@rapp/basic_agent"],
     "example_call": {
         "args": {
-            "neighborhood_rappid": "rappid:v2:neighborhood:@rapp-commons/origin:3929ce90ebe97fe2a95432e9f647f3a3@github.com/kody-w/rapp-commons",
+            "neighborhood_rappid": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
             "event": {"schema": "rapp-commons-event/1.0", "kind": "hello", "from": "...", "ts": "...", "body": "...", "sig": "...", "pub": {}}
         }
     },

@@ -1121,9 +1121,9 @@ async function compose() {
   if (!state.identity) { log('no identity — cannot post', 'err'); return; }
   if (!state.identity.rappid) {
     banner('Bind your identity to a rappid first. Mint one at <code>tools/door_address.py</code> in the parent RAPP repo and paste it below, or accept the auto-generated one.', 'warn');
-    const auto = prompt('Paste your v2 rappid (or leave blank for a local-only test rappid):',
+    const auto = prompt('Paste your rappid (or leave blank for a local-only test rappid):',
                         '');
-    const rappid = auto.trim() || ('rappid:v2:operator:@local/test:' + state.identity.fingerprint.slice(0,32) + '@local/tether');
+    const rappid = auto.trim() || ('rappid:@local/test:' + state.identity.fingerprint.slice(0,32));
     bindIdentityToRappid(rappid);
   }
 
@@ -1429,7 +1429,10 @@ function closeRapp() {
 const tphoneCall = { startedAt: 0, durTimer: 0 };
 
 function parseNbhdCoords(rappid) {
-  // rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>
+  // Eternity (emitted):  rappid:@<owner>/<slug>:<hex>
+  const c = (rappid || '').match(/^rappid:@([\w.-]+)\/([\w.-]+):[a-f0-9]+$/);
+  if (c) return { owner: c[1], repo: c[2] };
+  // legacy v2 (read-forever): rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>
   const m = (rappid || '').match(/@[^/]+\/([^/]+)\/(.+)$/);
   if (!m) return null;
   return { owner: m[1], repo: m[2] };
@@ -2062,9 +2065,10 @@ const startScanner    = async () => { /* no-op: camera is now on-demand via the 
 // a Cloudflare-Worker doorman akin to the vbrainstem ?copilot=1 pattern).
 //
 // What we mint:
-//   - Operator rappid: rappid:v2:twin:@<handle>/twin:<hash>@github.com/<handle>/twin
+//   - Operator rappid: rappid:@<handle>/twin:<hash>  (Eternity form, Art. XXXIV.1)
+//   - kind ('twin') lives in the rappid.json RECORD, not the string.
 //   - Convention: every operator's twin lives at <handle>/twin globally —
-//     namespace (@<handle>/twin) and repo name (twin) match so the lookup
+//     the door (@<handle>/twin) and repo name (twin) match so the lookup
 //     is uniform and tethers can dial @<handle>'s twin without ambiguity.
 //   - hash: SHA-256-truncated of "<handle>:twin:genesis" for fresh mints;
 //     existing twins use whatever hash is in their rappid.json (see
@@ -2174,7 +2178,9 @@ async function operatorHash(handle) {
 // repo name match so the lookup is uniform.
 async function defaultMintRappid(handle) {
   const hash = await operatorHash(handle);
-  return `rappid:v2:twin:@${handle}/twin:${hash}@github.com/${handle}/twin`;
+  // Eternity form (Art. XXXIV.1): rappid:@<owner>/<slug>:<hex>. kind ('twin')
+  // lives in the rappid.json RECORD, not the string. The door is @<handle>/twin.
+  return `rappid:@${handle}/twin:${hash}`;
 }
 
 // CANONICAL resolution: always try the front door first.
@@ -2187,7 +2193,7 @@ async function lookupOrMintRappid(handle) {
     const r = await fetch(url, { cache: 'no-cache' });
     if (r.ok) {
       const data = await r.json();
-      if (data.rappid && /^rappid:v2:/.test(data.rappid)) {
+      if (data.rappid && /^rappid:(@[\w.-]+\/[\w.-]+:[a-f0-9]+$|v2:)/.test(data.rappid)) {
         log(`rappid resolved from front door · ${url}`, 'ok');
         return { rappid: data.rappid, source: 'front-door', frontDoorRappid: data };
       }
@@ -2567,7 +2573,10 @@ async function ghPutFile(pat, owner, repo, path, content, msg) {
 
 function buildGrailFor(handle, rappid) {
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
-  const hash = rappid.match(/:([a-f0-9]+)@/)?.[1] || '';
+  // Eternity form rappid:@<owner>/<slug>:<hex> — hash is the trailing hex.
+  // Fall back to the legacy `:<hash>@` shape for any v2 string still in flight.
+  const hash = rappid.match(/:([a-f0-9]+)$/)?.[1]
+            || rappid.match(/:([a-f0-9]+)@/)?.[1] || '';
   return {
     'rappid.json': JSON.stringify({
       schema:    'rapp-rappid/2.0',
@@ -2578,7 +2587,7 @@ function buildGrailFor(handle, rappid) {
       host:      'github.com',
       owner:     handle,
       repo:      'twin',
-      parent_rappid: 'rappid:v2:prototype:@rapp/origin:0b635450c04249fbb4b1bdb571044dec@github.com/kody-w/RAPP',
+      parent_rappid: 'rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec',
       minted_at: now,
       notes:     `Twin for @${handle}. Convention: every operator's twin lives at <handle>/twin (namespace and repo name match for uniform global lookup). Planted via the RAPP public tether — the operator's permanent global address per Article XLVI, travels across every neighborhood they join.`,
     }, null, 2),
