@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>RAPP Commons — the one world</title>
+<!--
+  commons.html — the UNIFIED first-person 3D commons (the public batcave).
+  Per evolution/NORTH_STAR.md: ONE walkable, persistent, social world that HOUSES
+  and streams everything from raw.githubusercontent.com in a single scene.
+
+    PORTALS  — worlds.json.worlds[]  -> glowing rings; walk up + press E to enter surface_url.
+    HOMES    — worlds.json.rooms[]   -> enterable voxel cubbies; E -> home.html?state=<raw+state_dir>.
+    NPCs     — npcs/registry.json    -> Pip/Atlas as voxel residents that wander.
+    STREAM   — HUD input posts a signed rapp-commons-event/1.0 hello (POST to the kited host).
+    PRESENCE — PeerJS multiplayer stub; other avatars appear (like the Nexus hub).
+
+  Two CDN deps, no build step. Three.js r128 (global THREE) + PeerJS 1.5.2.
+  Additive only — never touches PROTOCOL.md, index.html, swarm_agent.py, events/, tether.html.
+-->
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#000; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; color:#cfe; }
+  #c { display:block; width:100%; height:100%; }
+
+  /* crosshair */
+  #cross { position:fixed; left:50%; top:50%; width:14px; height:14px; margin:-7px 0 0 -7px;
+           pointer-events:none; z-index:5; opacity:.7; }
+  #cross::before,#cross::after { content:""; position:absolute; background:#5ff; box-shadow:0 0 6px #0ff; }
+  #cross::before { left:6px; top:0; width:2px; height:14px; }
+  #cross::after  { top:6px; left:0; height:2px; width:14px; }
+
+  /* lock / start overlay */
+  #lock { position:fixed; inset:0; z-index:30; display:flex; flex-direction:column; align-items:center;
+          justify-content:center; text-align:center; cursor:pointer;
+          background:radial-gradient(circle at 50% 40%, rgba(0,40,80,.55), rgba(0,0,8,.92)); }
+  #lock h1 { font-size:34px; font-weight:700; letter-spacing:.04em; margin-bottom:8px;
+             background:linear-gradient(90deg,#0ff,#f0f); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  #lock p { max-width:560px; line-height:1.55; opacity:.85; margin:6px auto; font-size:14px; }
+  #lock .go { margin-top:22px; padding:13px 30px; border:1px solid #0ff; border-radius:30px;
+              color:#9ff; font-weight:600; letter-spacing:.05em; box-shadow:0 0 24px rgba(0,255,255,.35); }
+  #lock .keys { margin-top:18px; font-size:12px; opacity:.6; }
+  #lock .keys b { color:#9ff; }
+
+  /* HUD */
+  #hud { position:fixed; left:14px; top:14px; z-index:10; font-size:12px; line-height:1.5;
+         background:rgba(0,10,24,.6); border:1px solid rgba(0,255,255,.25); border-radius:10px;
+         padding:10px 13px; max-width:320px; backdrop-filter:blur(4px); pointer-events:none; }
+  #hud b { color:#5ff; }
+  #hud .who { color:#f7f; }
+  #peers { margin-top:6px; opacity:.85; }
+
+  /* prompt (walk-up) */
+  #prompt { position:fixed; left:50%; bottom:140px; transform:translateX(-50%); z-index:10;
+            background:rgba(0,12,28,.82); border:1px solid #0ff; border-radius:10px; padding:10px 18px;
+            font-size:14px; box-shadow:0 0 24px rgba(0,255,255,.3); display:none; pointer-events:none; }
+  #prompt b { color:#ff5; }
+  #prompt .n { color:#5ff; font-weight:600; }
+
+  /* post bar */
+  #postbar { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:20;
+             display:flex; gap:8px; align-items:center; width:min(640px,92vw);
+             background:rgba(0,10,24,.7); border:1px solid rgba(0,255,255,.3); border-radius:30px;
+             padding:7px 8px 7px 16px; backdrop-filter:blur(6px); }
+  #postbar .lbl { font-size:11px; color:#7cf; white-space:nowrap; }
+  #say { flex:1; background:transparent; border:none; outline:none; color:#dff; font-size:14px; }
+  #say::placeholder { color:#567; }
+  #postbar button { background:linear-gradient(90deg,#066,#609); border:1px solid #0ff; color:#cff;
+                    border-radius:24px; padding:8px 18px; font-size:13px; font-weight:600; cursor:pointer; }
+  #postbar button:hover { box-shadow:0 0 16px rgba(0,255,255,.4); }
+
+  /* feed */
+  #feed { position:fixed; right:14px; bottom:80px; z-index:10; width:min(320px,40vw); max-height:38vh;
+          overflow-y:auto; display:flex; flex-direction:column-reverse; gap:6px; pointer-events:none; }
+  .ev { background:rgba(0,12,28,.66); border-left:2px solid #0ff; border-radius:6px; padding:6px 9px;
+        font-size:12px; line-height:1.4; animation:rise .4s ease; }
+  .ev .from { color:#5ff; font-weight:600; }
+  .ev .meta { color:#789; font-size:10px; }
+  @keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+  /* toast */
+  #toast { position:fixed; left:50%; top:60px; transform:translateX(-50%); z-index:40;
+           background:rgba(0,20,40,.92); border:1px solid #0ff; border-radius:8px; padding:9px 16px;
+           font-size:12px; color:#cff; opacity:0; transition:opacity .3s; pointer-events:none; max-width:80vw; }
+  #toast.show { opacity:1; }
+  a { color:#5ff; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="cross"></div>
+
+<div id="hud">
+  <div><b>RAPP COMMONS</b> — the one world</div>
+  <div class="who">you · <span id="me">…minting key…</span></div>
+  <div id="peers">presence: connecting…</div>
+  <div style="margin-top:6px;opacity:.7">WASD move · mouse look · <b>E</b>/click to enter</div>
+</div>
+
+<div id="prompt"></div>
+
+<div id="postbar">
+  <span class="lbl">say to the commons</span>
+  <input id="say" maxlength="2048" placeholder="post a signed hello… (Enter)" />
+  <button id="post">Post</button>
+</div>
+
+<div id="feed"></div>
+<div id="toast"></div>
+
+<div id="lock">
+  <h1>RAPP COMMONS</h1>
+  <p>One first-person world — the public analog of the batcave. Homes, worlds, games and residents,
+     all streamed live from <code>raw.githubusercontent.com</code>. Your avatar <i>is</i> your key.</p>
+  <p>Walk to a <b style="color:#0ff">glowing portal</b> to enter a world, a <b style="color:#ff0">lit cubby</b>
+     to visit a home, and say hello to post a signed event into the commons stream.</p>
+  <div class="go">▶ Enter the commons</div>
+  <div class="keys"><b>WASD</b> move · <b>mouse</b> look · <b>E</b> / click enter · <b>Esc</b> release cursor</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script>
+"use strict";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   0. WORLD DNA + sources. Registries stream from the commons repo (raw CDN),
+      with a same-origin fallback so it also works when served from the repo.
+   ───────────────────────────────────────────────────────────────────────── */
+const RAW_BASE   = "https://raw.githubusercontent.com/kody-w/rapp-commons/main/";
+const WORLDS_URL = ["worlds.json", RAW_BASE + "worlds.json"];
+const NPCS_URL   = ["npcs/registry.json", RAW_BASE + "npcs/registry.json"];
+
+// kited vTwin host — the static commons gateway that relays signed events.
+const COMMONS_HOST = "https://kody-w.github.io/rapp-commons/";
+const EVENT_POST   = COMMONS_HOST + "events/"; // would POST rapp-commons-event/1.0 here
+
+const DNA = {
+  ambientColor:0x0a0a18, fogColor:0x000022, fogNear:14, fogFar:120,
+  groundColor:0x141426, skyTop:0x16213e, skyBot:0x05060f,
+  moveSpeed:7.0, cameraHeight:2.0,
+  portalColor1:0x00ffff, portalColor2:0xff00ff, homeColor:0xffcc44,
+  particleCount:1200, portalRadius:22, homeRadius:34
+};
+
+async function fetchJSON(urls){
+  for (const u of urls){
+    try { const r = await fetch(u, {cache:"no-store"}); if (r.ok) return await r.json(); } catch(e){}
+  }
+  return null;
+}
+function resolveUrl(u){
+  if (!u) return null;
+  if (/^https?:\/\//.test(u)) return u;       // already absolute
+  return RAW_BASE + u.replace(/^\.?\//,"");    // repo-relative -> raw CDN
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   1. THREE setup — dark space, fog, sky dome, glowing grid, particles.
+   ───────────────────────────────────────────────────────────────────────── */
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true, powerPreference:"high-performance" });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(DNA.fogColor, DNA.fogNear, DNA.fogFar);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0, DNA.cameraHeight, 0);
+
+// sky dome (gradient shader)
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(500, 32, 16),
+  new THREE.ShaderMaterial({
+    side:THREE.BackSide,
+    uniforms:{ top:{value:new THREE.Color(DNA.skyTop)}, bot:{value:new THREE.Color(DNA.skyBot)} },
+    vertexShader:`varying vec3 v; void main(){ v=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform vec3 top; uniform vec3 bot; varying vec3 v;
+      void main(){ float h=normalize(v).y*0.5+0.5; gl_FragColor=vec4(mix(bot,top,h),1.0); }`
+  })
+);
+scene.add(sky);
+
+// gentle terrain + signature glowing grid
+const gGeo = new THREE.PlaneGeometry(400,400,60,60);
+gGeo.rotateX(-Math.PI/2);
+const pos = gGeo.attributes.position;
+for (let i=0;i<pos.count;i++){
+  const x=pos.getX(i), z=pos.getZ(i);
+  pos.setY(i, Math.sin(x*0.06)*Math.cos(z*0.06)*0.6);
+}
+gGeo.computeVertexNormals();
+const ground = new THREE.Mesh(gGeo, new THREE.MeshStandardMaterial({
+  color:DNA.groundColor, roughness:0.9, metalness:0.1 }));
+ground.receiveShadow = true;
+scene.add(ground);
+const grid = new THREE.GridHelper(400, 120, 0x0aa, 0x044);
+grid.material.opacity = 0.35; grid.material.transparent = true;
+grid.position.y = 0.02;
+scene.add(grid);
+
+// particles (ambient dust)
+const pCount = DNA.particleCount;
+const pArr = new Float32Array(pCount*3);
+for (let i=0;i<pCount;i++){
+  pArr[i*3]   = (Math.random()-0.5)*120;
+  pArr[i*3+1] = Math.random()*50;
+  pArr[i*3+2] = (Math.random()-0.5)*120;
+}
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute("position", new THREE.BufferAttribute(pArr,3));
+const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  color:0x66ffee, size:0.18, transparent:true, opacity:0.55 }));
+scene.add(particles);
+
+// lighting
+scene.add(new THREE.AmbientLight(DNA.ambientColor, 0.9));
+const sun = new THREE.DirectionalLight(0x88aaff, 0.7);
+sun.position.set(30,60,20); sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+scene.add(sun);
+
+/* ─────────────────────────────────────────────────────────────────────────
+   2. PointerLockControls (CDN) — camera IS the player.
+   ───────────────────────────────────────────────────────────────────────── */
+const controls = new THREE.PointerLockControls(camera, renderer.domElement);
+scene.add(controls.getObject());
+
+const lockEl = document.getElementById("lock");
+lockEl.addEventListener("click", ()=> controls.lock());
+controls.addEventListener("lock",   ()=> lockEl.style.display="none");
+controls.addEventListener("unlock", ()=> lockEl.style.display="flex");
+
+const keys = {};
+addEventListener("keydown", e=>{
+  // don't steal typing in the post bar
+  if (document.activeElement === sayEl){
+    if (e.key === "Enter") submitPost();
+    return;
+  }
+  keys[e.code]=true;
+  if (e.code==="KeyE") tryEnter();
+  if (e.code==="Slash" || e.key==="t"){ e.preventDefault(); sayEl.focus(); }
+});
+addEventListener("keyup", e=> keys[e.code]=false);
+// click while locked = "use" -> enter the highlighted target
+renderer.domElement.addEventListener("click", ()=>{ if (controls.isLocked) tryEnter(); });
+
+addEventListener("resize", ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   3. Interactables — PORTALS (worlds) + HOMES (cubbies). Both are walk-up
+      destinations registered with a trigger radius + an enter() action.
+   ───────────────────────────────────────────────────────────────────────── */
+const interactables = []; // {group, pos:Vector3, radius, label, action, type}
+
+function portalShader(c1,c2){
+  return new THREE.ShaderMaterial({
+    transparent:true, side:THREE.DoubleSide,
+    uniforms:{ time:{value:0}, c1:{value:new THREE.Color(c1)}, c2:{value:new THREE.Color(c2)} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float time; uniform vec3 c1; uniform vec3 c2; varying vec2 vUv;
+      void main(){
+        vec2 p = vUv-0.5; float d = length(p);
+        float ring = sin(d*18.0 - time*2.5)*0.5+0.5;
+        float swirl = sin(atan(p.y,p.x)*6.0 + time)*0.5+0.5;
+        vec3 col = mix(c1, c2, ring*0.6 + swirl*0.4);
+        float a = smoothstep(0.5,0.1,d);
+        gl_FragColor = vec4(col, a*0.85);
+      }`
+  });
+}
+const portalMats = [];
+
+function makePortal(world, angle){
+  const g = new THREE.Group();
+  const x = Math.cos(angle)*DNA.portalRadius, z = Math.sin(angle)*DNA.portalRadius;
+  g.position.set(x, 3, z);
+  g.lookAt(0, 3, 0);
+
+  const torus = new THREE.Mesh(
+    new THREE.TorusGeometry(3, 0.32, 16, 48),
+    new THREE.MeshStandardMaterial({ color:DNA.portalColor1, emissive:DNA.portalColor1,
+      emissiveIntensity:1.4, metalness:0.6, roughness:0.25 })
+  );
+  g.add(torus);
+
+  const mat = portalShader(DNA.portalColor1, DNA.portalColor2);
+  portalMats.push(mat);
+  g.add(new THREE.Mesh(new THREE.CircleGeometry(2.7, 40), mat));
+
+  const glow = new THREE.PointLight(DNA.portalColor1, 1.6, 30);
+  g.add(glow);
+
+  g.add(makeLabel(world.name, 0x9ffff5, 4.3));
+  scene.add(g);
+
+  interactables.push({
+    group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:5.5, type:"portal",
+    label:world.name, blurb:world.blurb,
+    action:()=>{
+      const url = resolveUrl(world.surface_url);
+      toast(`Entering “${world.name}” → ${url}`);
+      window.open(url, "_blank", "noopener");
+    }
+  });
+}
+
+function makeHome(room, angle){
+  const g = new THREE.Group();
+  const x = Math.cos(angle)*DNA.homeRadius, z = Math.sin(angle)*DNA.homeRadius;
+  g.position.set(x, 0, z);
+  g.lookAt(0,0,0);
+
+  // voxel cubby: base + walls + roof + glowing doorway
+  const wall = new THREE.MeshStandardMaterial({ color:0x2a2f4a, roughness:0.8, metalness:0.2 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(6,4,6), wall);
+  body.position.y = 2; body.castShadow = body.receiveShadow = true; g.add(body);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(4.6,2.4,4),
+    new THREE.MeshStandardMaterial({ color:0x553355, emissive:0x221122, roughness:0.7 }));
+  roof.position.y = 5.2; roof.rotation.y = Math.PI/4; roof.castShadow = true; g.add(roof);
+
+  // lit doorway (face toward center, +z after lookAt)
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(2,3),
+    new THREE.MeshBasicMaterial({ color:DNA.homeColor, transparent:true, opacity:0.85 }));
+  door.position.set(0,1.5,3.02); g.add(door);
+  const dl = new THREE.PointLight(DNA.homeColor, 1.4, 16); dl.position.set(0,2,4); g.add(dl);
+
+  g.add(makeLabel(room.name, 0xffe39a, 6.6));
+  scene.add(g);
+
+  interactables.push({
+    group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:6.5, type:"home",
+    label:room.name, blurb:room.blurb,
+    action:()=>{
+      // home.html?state=<absolute state_dir> — viewer fetches <state>/room.json from raw CDN
+      const stateDir = resolveUrl(room.state_dir || ("cubbies/"+room.handle+"/home/"));
+      const viewer   = resolveUrl(WORLDS.home_viewer || "home.html");
+      const url = viewer + "?state=" + encodeURIComponent(stateDir);
+      toast(`Visiting “${room.name}” → home.html?state=…`);
+      window.open(url, "_blank", "noopener");
+    }
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   4. NPC residents — voxel characters that wander (Pip / Atlas).
+   ───────────────────────────────────────────────────────────────────────── */
+const npcs = [];
+function makeNPC(def, i){
+  const g = new THREE.Group();
+  const hue = (i*0.27)%1;
+  const col = new THREE.Color().setHSL(hue, 0.7, 0.55);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.9,1.2,0.6),
+    new THREE.MeshStandardMaterial({ color:col, emissive:col.clone().multiplyScalar(0.25), roughness:0.6 }));
+  body.position.y = 0.9; body.castShadow = true; g.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,0.6),
+    new THREE.MeshStandardMaterial({ color:0xffe0bd, roughness:0.7 }));
+  head.position.y = 1.85; head.castShadow = true; g.add(head);
+  // floating glyph
+  const eye = new THREE.PointLight(col, 0.8, 6); eye.position.y = 1.9; g.add(eye);
+  g.add(makeLabel(def.name + " · npc", 0xc8ffe0, 2.7));
+
+  const a0 = Math.random()*Math.PI*2;
+  g.position.set(Math.cos(a0)*8, 0, Math.sin(a0)*8);
+  scene.add(g);
+  npcs.push({ group:g, def, t:Math.random()*10,
+    target:new THREE.Vector3(g.position.x, 0, g.position.z) });
+}
+function wanderNPCs(dt){
+  for (const n of npcs){
+    n.t += dt;
+    const p = n.group.position;
+    if (p.distanceTo(n.target) < 0.6 || Math.random() < 0.002){
+      const a = Math.random()*Math.PI*2, r = 6 + Math.random()*14;
+      n.target.set(Math.cos(a)*r, 0, Math.sin(a)*r);
+    }
+    const dir = n.target.clone().sub(p); dir.y = 0;
+    if (dir.lengthSq() > 0.01){
+      dir.normalize();
+      p.addScaledVector(dir, dt*1.6);
+      n.group.rotation.y = Math.atan2(dir.x, dir.z);
+    }
+    n.group.position.y = Math.sin(n.t*3)*0.06; // little bob
+  }
+}
+
+/* text sprite label */
+function makeLabel(text, color, y){
+  const cv = document.createElement("canvas"); cv.width=512; cv.height=128;
+  const ctx = cv.getContext("2d");
+  ctx.font = "bold 52px -apple-system,Segoe UI,sans-serif";
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle = "#"+color.toString(16).padStart(6,"0");
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 18;
+  ctx.fillText(text, 256, 64);
+  const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthWrite:false }));
+  spr.scale.set(6,1.5,1); spr.position.y = y;
+  return spr;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   5. Identity — your avatar IS your key. Mint an ECDSA P-256 keypair, derive
+      the rappid fingerprint, sign events. (WebCrypto, browser-local.)
+   ───────────────────────────────────────────────────────────────────────── */
+const ME = { rappid:null, fp:null, key:null, pubJwk:null };
+async function mintIdentity(){
+  try {
+    ME.key = await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"}, true, ["sign","verify"]);
+    ME.pubJwk = await crypto.subtle.exportKey("jwk", ME.key.publicKey);
+    const canon = canonicalJSON(ME.pubJwk);
+    const dg = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
+    ME.fp = [...new Uint8Array(dg)].map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,16);
+    ME.rappid = "rappid:v3:" + ME.fp;
+  } catch(e){
+    ME.fp = Math.random().toString(16).slice(2,18).padEnd(16,"0");
+    ME.rappid = "rappid:v3:" + ME.fp;
+  }
+  document.getElementById("me").textContent = ME.rappid;
+}
+function canonicalJSON(o){
+  if (Array.isArray(o)) return "["+o.map(canonicalJSON).join(",")+"]";
+  if (o && typeof o==="object")
+    return "{"+Object.keys(o).sort().map(k=>JSON.stringify(k)+":"+canonicalJSON(o[k])).join(",")+"}";
+  return JSON.stringify(o);
+}
+async function signEvent(ev){
+  const body = canonicalJSON(ev);
+  if (!ME.key) return "unsigned";
+  const sig = await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"}, ME.key.privateKey,
+    new TextEncoder().encode(body));
+  return [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   6. The signed stream — post a rapp-commons-event/1.0 hello to the commons.
+      Builds + signs the canonical event; would POST it to the kited host
+      (events/ relay). Mirrors agents/commons_post_agent.py's compose→sign split.
+   ───────────────────────────────────────────────────────────────────────── */
+const sayEl = document.getElementById("say");
+document.getElementById("post").addEventListener("click", submitPost);
+
+async function submitPost(){
+  const text = sayEl.value.trim();
+  if (!text) return;
+  sayEl.value = "";
+  const p = controls.getObject().position;
+  const ev = {
+    schema:"rapp-commons-event/1.0",
+    kind:"hello",
+    from: ME.rappid || "rappid:v3:unknown",
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    body: text,
+    pos: { x: Math.round(p.x), y: Math.round(p.z) },
+    in_reply_to: null
+  };
+  ev.sig = await signEvent(ev);
+  ev.pub = ME.pubJwk || {};
+
+  renderEvent({ from:ev.from, body:ev.body, ts:ev.ts, mine:true });
+  spawnSpeech(text, p);
+
+  // Broadcast to nearby avatars (proximity chat) over the presence mesh.
+  broadcast({ t:"event", ev:{ from:ev.from, body:ev.body, ts:ev.ts } });
+
+  // Would POST the signed event to the kited vTwin host's events relay:
+  //   POST {EVENT_POST}  Content-Type: application/json   body = canonical(ev)
+  // The static host persists the rollup back into events/ (append-only, signed).
+  toast(`Signed hello posted → would POST rapp-commons-event/1.0 to ${EVENT_POST}`);
+}
+
+const feedEl = document.getElementById("feed");
+function renderEvent({from, body, ts, mine}){
+  const d = document.createElement("div");
+  d.className = "ev";
+  d.innerHTML = `<div class="from">${mine?"you":esc(from.slice(0,22))}</div>`+
+                `<div>${esc(body)}</div>`+
+                `<div class="meta">${esc(ts||"")}</div>`;
+  feedEl.appendChild(d);
+  while (feedEl.children.length > 12) feedEl.removeChild(feedEl.firstChild);
+}
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+// floating speech bubble in-world
+function spawnSpeech(text, atPos){
+  const spr = makeLabel("💬 "+text.slice(0,28), 0xffffff, 0);
+  spr.scale.set(8,2,1);
+  spr.position.copy(atPos); spr.position.y = 3.2;
+  scene.add(spr);
+  const born = clock.getElapsedTime();
+  speechBubbles.push({ spr, born });
+}
+const speechBubbles = [];
+
+/* ─────────────────────────────────────────────────────────────────────────
+   7. PeerJS multiplayer presence stub — other avatars appear (like Nexus).
+      Host (no ?host=) opens a room; joiners (?host=ID) connect. Each peer
+      streams its position; we render a remote avatar per connected peer.
+   ───────────────────────────────────────────────────────────────────────── */
+const peersEl = document.getElementById("peers");
+const conns = [];                 // active DataConnections
+const remoteAvatars = new Map();  // peerId -> {group}
+let peer = null, isHost = false, roomId = null;
+
+function initPresence(){
+  if (typeof Peer === "undefined"){ peersEl.textContent = "presence: offline (no PeerJS)"; return; }
+  const hostId = new URLSearchParams(location.search).get("host");
+  try {
+    peer = new Peer();
+    peer.on("open", id=>{
+      if (hostId){ roomId = hostId; isHost = false; setTimeout(()=>joinHost(hostId), 900);
+                   peersEl.textContent = "presence: connecting to "+hostId.slice(0,8)+"…"; }
+      else { roomId = id; isHost = true; updatePresence();
+             const share = location.origin+location.pathname+"?host="+id;
+             console.log("Commons room — share to bring neighbors:", share); }
+    });
+    peer.on("connection", c=> wireConn(c));
+    peer.on("error", e=>{ peersEl.textContent = "presence: "+(e.type||"error"); });
+    peer.on("disconnected", ()=>{ try{ peer.reconnect(); }catch(_){} });
+  } catch(e){ peersEl.textContent = "presence: unavailable"; }
+}
+function joinHost(id){
+  try { const c = peer.connect(id, {reliable:false}); wireConn(c); } catch(e){}
+}
+function wireConn(c){
+  c.on("open", ()=>{ conns.push(c); ensureAvatar(c.peer); updatePresence(); helloPeer(c); });
+  c.on("data", d=> onPeerData(c.peer, d));
+  c.on("close", ()=>{ dropPeer(c.peer); const i=conns.indexOf(c); if(i>=0) conns.splice(i,1); updatePresence(); });
+  c.on("error", ()=>{});
+}
+function helloPeer(c){
+  const p = controls.getObject().position;
+  try { c.send({ t:"hello", rappid:ME.rappid, x:p.x, z:p.z, ry:controls.getObject().rotation.y }); } catch(_){}
+}
+function broadcast(msg){ for (const c of conns){ try{ c.send(msg); }catch(_){} } }
+function onPeerData(id, d){
+  if (!d) return;
+  if (d.t==="pos" || d.t==="hello"){ moveAvatar(id, d.x, d.z, d.ry); }
+  if (d.t==="event"){ renderEvent({ from:d.ev.from, body:d.ev.body, ts:d.ev.ts }); }
+}
+function ensureAvatar(id){
+  if (remoteAvatars.has(id)) return;
+  const g = new THREE.Group();
+  const col = new THREE.Color().setHSL(Math.random(),0.7,0.6);
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.45,1.1,4,8),
+    new THREE.MeshStandardMaterial({ color:col, emissive:col.clone().multiplyScalar(0.3), roughness:0.5 }));
+  body.position.y = 1.1; g.add(body);
+  g.add(new THREE.PointLight(col, 0.7, 6));
+  g.add(makeLabel("neighbor", 0xb0ffd0, 2.6));
+  scene.add(g);
+  remoteAvatars.set(id, { group:g });
+}
+function moveAvatar(id, x, z, ry){
+  ensureAvatar(id);
+  const a = remoteAvatars.get(id);
+  a.group.position.set(x, 0, z);
+  if (typeof ry==="number") a.group.rotation.y = ry;
+}
+function dropPeer(id){
+  const a = remoteAvatars.get(id);
+  if (a){ scene.remove(a.group); remoteAvatars.delete(id); }
+}
+function updatePresence(){
+  const n = remoteAvatars.size;
+  peersEl.textContent = `presence: ${isHost?"hosting":"joined"} · ${n} neighbor${n===1?"":"s"} in-world`;
+}
+let lastPosSend = 0;
+function streamPosition(now){
+  if (now - lastPosSend < 100) return;       // 10 Hz
+  lastPosSend = now;
+  const o = controls.getObject();
+  broadcast({ t:"pos", x:o.position.x, z:o.position.z, ry:o.rotation.y });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   8. Proximity prompt + enter logic
+   ───────────────────────────────────────────────────────────────────────── */
+const promptEl = document.getElementById("prompt");
+let nearest = null;
+function updateProximity(){
+  const p = controls.getObject().position;
+  let best=null, bestD=Infinity;
+  for (const it of interactables){
+    const d = p.distanceTo(it.pos);
+    if (d < it.radius && d < bestD){ best=it; bestD=d; }
+  }
+  nearest = best;
+  for (const m of portalMats){} // (mats animate in loop)
+  if (best){
+    promptEl.style.display = "block";
+    promptEl.innerHTML = `<span class="n">${esc(best.label)}</span> — ${esc(best.blurb||"")}<br>`+
+                         `press <b>E</b> to ${best.type==="home"?"visit this home":"enter this world"}`;
+  } else promptEl.style.display = "none";
+}
+function tryEnter(){ if (nearest) nearest.action(); }
+
+/* toast helper */
+let toastT;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove("show"), 3200);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   9. Movement + main loop
+   ───────────────────────────────────────────────────────────────────────── */
+const clock = new THREE.Clock();
+const fwd = new THREE.Vector3(), rgt = new THREE.Vector3(), UP = new THREE.Vector3(0,1,0);
+function move(dt){
+  if (!controls.isLocked) return;
+  const o = controls.getObject();
+  camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+  rgt.crossVectors(fwd, UP).normalize();
+  const s = DNA.moveSpeed * dt;
+  if (keys["KeyW"]||keys["ArrowUp"])    o.position.addScaledVector(fwd,  s);
+  if (keys["KeyS"]||keys["ArrowDown"])  o.position.addScaledVector(fwd, -s);
+  if (keys["KeyA"]||keys["ArrowLeft"])  o.position.addScaledVector(rgt, -s);
+  if (keys["KeyD"]||keys["ArrowRight"]) o.position.addScaledVector(rgt,  s);
+  o.position.y = DNA.cameraHeight;
+  // soft bounds
+  const R = 90; const d = Math.hypot(o.position.x,o.position.z);
+  if (d > R){ o.position.x *= R/d; o.position.z *= R/d; }
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t  = clock.getElapsedTime();
+
+  move(dt);
+  wanderNPCs(dt);
+  updateProximity();
+  streamPosition(performance.now());
+
+  for (const m of portalMats) m.uniforms.time.value = t;
+  particles.rotation.y += dt*0.05;
+  particles.position.y = Math.sin(t*0.3)*0.5;
+
+  // expire speech bubbles
+  for (let i=speechBubbles.length-1;i>=0;i--){
+    const b = speechBubbles[i];
+    const age = t - b.born;
+    b.spr.position.y += dt*0.4;
+    b.spr.material.opacity = Math.max(0, 1 - age/5);
+    if (age > 5){ scene.remove(b.spr); speechBubbles.splice(i,1); }
+  }
+
+  renderer.render(scene, camera);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   10. Boot — mint identity, stream registries, build the one world.
+   ───────────────────────────────────────────────────────────────────────── */
+let WORLDS = null;
+async function boot(){
+  await mintIdentity();
+  animate();
+  initPresence();
+
+  WORLDS = await fetchJSON(WORLDS_URL) || { worlds:[], rooms:[], home_viewer:"home.html" };
+  const npcReg = await fetchJSON(NPCS_URL) || { npcs:[] };
+
+  // PORTALS — worlds on an inner ring
+  const ws = WORLDS.worlds || [];
+  ws.forEach((w,i)=> makePortal(w, (i/Math.max(ws.length,1))*Math.PI*2));
+
+  // HOMES — cubbies on an outer ring
+  const rs = WORLDS.rooms || [];
+  rs.forEach((r,i)=> makeHome(r, (i/Math.max(rs.length,1))*Math.PI*2 + 0.4));
+
+  // NPC residents
+  (npcReg.npcs || []).forEach((n,i)=> makeNPC(n, i));
+
+  toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · ${(npcReg.npcs||[]).length} residents (streamed from raw CDN)`);
+}
+boot();
+</script>
+</body>
+</html>
