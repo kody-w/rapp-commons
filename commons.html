@@ -2306,8 +2306,12 @@ async function residentBeat(res){
   res.beat++;
   const areas = residentAreas();
   // 70% drift to a fresh area, else amble nearby (still moves the avatar).
+  // BUT at NIGHT the villagers keep a rhythm — they head HOME (see 4d).
   let dest;
-  if (Math.random() < 0.7 && areas.length){
+  if (residentScheduleMode() === "home"){
+    const h = residentHome(res);
+    dest = { area:"home", x:h.x, z:h.z };
+  } else if (Math.random() < 0.7 && areas.length){
     dest = areas[Math.floor(Math.random()*areas.length)];
   } else {
     const p = res.npc.group.position;
@@ -2442,6 +2446,32 @@ function commonsResidents(){
       pos: { x: Math.round(p.x*1000)/1000, y: Math.round(p.y*1000)/1000, z: Math.round(p.z*1000)/1000 },
       lastAction: r.lastAction
     };
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   4d. RESIDENT SCHEDULE (additive) — the villagers keep a daily rhythm tied to
+   the day-night clock: when it's NIGHT they head HOME (a stable per-resident
+   anchor on the residential lane behind spawn) and carry a lit lantern; by day
+   they ROAM the venues. A pure function of timeOfDay() — deterministic and
+   inspectable via window.commonsAgent.residentSchedule(). The visual drift reuses
+   the existing wander mover (res.npc.target); nothing here signs or mutates state.
+   ───────────────────────────────────────────────────────────────────────── */
+function residentHome(res){
+  if (res._home) return res._home;
+  const i = Math.max(0, RESIDENTS.indexOf(res));
+  res._home = { x: -18 + (i % 6) * 12, z: 28 + Math.floor(i/6) * 8 };  // a row of homes behind spawn
+  return res._home;
+}
+function residentScheduleMode(){ return dayNightPhase(DAYNIGHT.t) === "night" ? "home" : "roam"; }
+function residentSchedule(){
+  const mode = residentScheduleMode();
+  return RESIDENTS.map(r => {
+    const h = residentHome(r);
+    const t = r.npc.target;
+    const target = mode === "home" ? h : { x:+t.x.toFixed(1), z:+t.z.toFixed(1) };
+    return { name: r.name, from: r.being.rappid, mode,
+             home: { x:h.x, z:h.z }, target: { x:target.x, z:target.z } };
   });
 }
 
@@ -3946,6 +3976,9 @@ boot();
     // SPAWN SIGNPOST: the venue directory with compass bearings from spawn.
     // directory() -> [{name, at:{x,z}, distance, bearing, direction}] (nearest first).
     directory:    () => (typeof commonsDirectory === "function" ? commonsDirectory() : []),
+    // RESIDENT SCHEDULE: the villagers' daily rhythm tied to the clock — they head
+    // HOME at night, ROAM by day. residentSchedule() -> [{name,from,mode,home,target}].
+    residentSchedule: () => (typeof residentSchedule === "function" ? residentSchedule() : []),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

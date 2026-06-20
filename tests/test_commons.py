@@ -277,6 +277,27 @@ async def run():
             else:
                 check("spawn_signpost", False, "window.commonsAgent.directory missing")
 
+            # resident_schedule: the villagers keep a daily rhythm -- HOME at night,
+            # ROAM by day. DETERMINISTIC -- pure function of setTimeOfDay() (no poll).
+            has_sched = await ev("()=>typeof window.commonsAgent.residentSchedule==='function'", False)
+            if has_sched:
+                sched_night = await ev("()=>{try{window.commonsAgent.setTimeOfDay(0.0);return window.commonsAgent.residentSchedule()}catch(e){return null}}", None)
+                sched_day   = await ev("()=>{try{window.commonsAgent.setTimeOfDay(0.5);return window.commonsAgent.residentSchedule()}catch(e){return null}}", None)
+                sched_night = sched_night or []; sched_day = sched_day or []
+                enough = len(sched_night) >= 2
+                night_home = enough and all(r.get("mode") == "home" for r in sched_night)
+                day_roam   = len(sched_day) >= 2 and all(r.get("mode") == "roam" for r in sched_day)
+                has_home   = enough and all(isinstance(r.get("home", {}).get("x"), (int, float))
+                                            and str(r.get("from", "")).startswith("rappid:") for r in sched_night)
+                # at night each resident's target IS its home anchor.
+                targets_home = enough and all(r.get("target") == r.get("home") for r in sched_night)
+                check("resident_schedule",
+                      bool(night_home and day_roam and has_home and targets_home),
+                      {"n": len(sched_night), "night_home": night_home,
+                       "day_roam": day_roam, "targets_home": targets_home})
+            else:
+                check("resident_schedule", False, "window.commonsAgent.residentSchedule missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
