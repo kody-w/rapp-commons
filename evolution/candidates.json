@@ -6,6 +6,11 @@
     "Co-op first-person action game in the commons world (Left 4 Dead style): multiplayer, signed, collaborative like voxel-world \u2014 waves/objectives players clear together, hosted by a kited vTwin, state streamed from raw CDN",
     "In-world proximity chat = the signed commons stream surfaced over nearby avatars",
     "Inventory + simple economy: own/gift/place objects (eggs, items) signed by rappid",
-    "Persistent shared world state streamed from raw CDN (homes, builds, presence trails) that survives all tabs closing"
+    "MERGE all worlds/games into INTERNAL 3D rooms/areas of commons.html \u2014 portals teleport within the one scene (camera moves + load area inline from raw CDN), NO window.open link-outs",
+    "Persistent shared world state streamed from raw CDN (homes, builds, presence trails) that survives all tabs closing",
+    "Red Dead Redemption-style POKER table room: walk up, sit, deal/bet/fold hands; players AND AI beings take seats; signed append-only, PeerJS multiplayer",
+    "Spawn N independent AI beings as parallel headless avatar tabs (SecondLife agent x N) joining commons.html PeerJS room \u2014 a populated living world",
+    "Words with Friends as a real-time 3D board-table ROOM you walk into and play (signed moves, players+AIs)",
+    "window.commonsAgent coordinate+interaction API in commons.html (where/teleport/walk/face/enter/interact) so headless avatars fully act with coordinates like a real person"
   ]
 }

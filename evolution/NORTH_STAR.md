@@ -48,3 +48,22 @@ build, decorate, and own (owner-only writes), visible on the map and walkable-in
 `cubbies/<handle>/home/room.json` is the deed + the furnishings; your agents/eggs/games live on your
 property; neighbors visit. Same cubby primitive as the batcave - made public, placed as real estate
 in a living town. The map of cubbies IS the neighborhood.
+
+## CORRECTION (load-bearing): ONE merged world, internal rooms, NO link-outs
+
+Everything is ONE world. NEVER window.open / link out to voxel-world, nexus, or companions as
+separate pages. They are MERGED INTO commons.html as internal AREAS / ROOMS of the one scene.
+
+A **portal is just a DOOR for traveling WITHIN the commons** to a different area: walk through it and
+the camera moves to that zone of the SAME world, loading that area's content + state inline (streamed
+from raw CDN). Like walking from the town square into a back room. The portal goes to a room; it does
+NOT open a tab.
+
+**Games are 3D ROOMS you walk into and play in real time, with other players AND AI beings:**
+- **Words with Friends** — a 3D board-table room (the batcave WWF, made real-time + 3D). Sit, play tiles.
+- **Poker** — a **Red Dead Redemption-style poker table**: walk up, sit down, players + AI beings take
+  seats, deal/bet/fold hands (the fun RDR game loop). Signed, append-only moves; multiplayer via PeerJS;
+  AIs can join and play.
+
+Merge the shapes into ROOMS of the one world. Voxel building = an area. Nexus = an area. Each cubby home
+= a building. Each game = a table room. One walkable, persistent, social Second Life — no tabs, no links.
