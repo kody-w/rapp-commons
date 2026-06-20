@@ -3631,6 +3631,65 @@ function fractalState(){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9e. MATRIX — the universe on window.commonsAgent: the 4D address (3D · frame ·
+   UTC), the frame mechanism (freeze a save-state / resume it / fork a dimension),
+   the dream-catcher merge (additive; keep consistent, reject contradictions), and
+   the DOUBLE JUMP (two loops compete; the trailing one adopts the leader's gain).
+   The commons IS the living hologram organism; these expose how it's addressed,
+   navigated, merged, and improved — no link-out, all in this one world.
+   ───────────────────────────────────────────────────────────────────────── */
+let MX_FRAME = 0, MX_DIM = 0;
+function mxPos(){ return controls.getObject().position; }
+function mxCoordinate(){
+  const p = mxPos();
+  return { x:+p.x.toFixed(2), y:+p.y.toFixed(2), z:+p.z.toFixed(2),
+           frame: MX_FRAME, utc: new Date().toISOString(), dimension: MX_DIM };
+}
+function mxFreeze(){
+  MX_FRAME++; const p = mxPos();
+  return { frame: MX_FRAME, pos:{ x:p.x, y:p.y, z:p.z }, dimension: MX_DIM, utc: new Date().toISOString() };
+}
+function mxResume(token){
+  if(!token || !token.pos) return null;
+  mxPos().set(token.pos.x, token.pos.y, token.pos.z);
+  MX_FRAME = token.frame; MX_DIM = token.dimension;
+  if(typeof updateProximity === "function") updateProximity();
+  return mxCoordinate();
+}
+function mxFork(token){
+  MX_DIM = MX_DIM + 1;
+  if(token && token.pos){ mxPos().set(token.pos.x, token.pos.y, token.pos.z); MX_FRAME = token.frame; }
+  return "dim-" + MX_DIM + "@f" + (token ? token.frame : MX_FRAME);
+}
+function mxMerge(base, candidates){
+  base = base || {}; const kept = [], rejected = [];
+  for(const c of (candidates || [])){
+    const k = c.key;
+    if(k in base){
+      if(base[k] === c.val) kept.push(Object.assign({}, c, { reason: "matches the established frame" }));
+      else rejected.push(Object.assign({}, c, { reason: "contradicts base[" + k + "] (glitch in the matrix)" }));
+    } else kept.push(Object.assign({}, c, { reason: "additive, no conflict" }));
+  }
+  return { kept, rejected };
+}
+function mxScore(v){ return Math.round(100 * (1 - Math.exp(-3 * v)) * 100) / 100; }
+function mxDoubleJump(n){
+  n = n || 6; let j1 = 0.20, j2 = 0.35; const rounds = [];   // Jump1 (caller) vs Jump2 (brainstem)
+  for(let r = 0; r < n; r++){
+    const s1 = mxScore(j1), s2 = mxScore(j2);
+    const leader = (s2 >= s1) ? "Jump2(brainstem)" : "Jump1(caller)";
+    const top = Math.max(j1, j2), gain = (top - Math.min(j1, j2)) * 0.6 + 0.05;   // the laggard adopts the leader
+    if(j1 <= j2) j1 = Math.min(1, j1 + gain); else j2 = Math.min(1, j2 + gain);
+    rounds.push({ round: r, leader, j1: mxScore(j1), j2: mxScore(j2) });
+  }
+  const f = rounds[0], l = rounds[rounds.length - 1];
+  return { rounds,
+    trailing: { first: Math.min(f.j1, f.j2), last: Math.min(l.j1, l.j2) },
+    best:     { first: Math.max(f.j1, f.j2), last: Math.max(l.j1, l.j2) },
+    improved: Math.min(l.j1, l.j2) > Math.min(f.j1, f.j2) };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -4087,6 +4146,14 @@ boot();
     // FRACTAL WINDOW: a world within the world (bounded recursion via an in-world screen).
     // fractal() -> {depth, maxDepth, light, canNest, nestedSrc, mounted}.
     fractal:      () => (typeof fractalState === "function" ? fractalState() : null),
+    // MATRIX — the universe on commonsAgent: the 4D address (3D·frame·UTC), the frame
+    // mechanism (freeze/resume/fork a dimension), the dream-catcher merge, and the double jump.
+    coordinate: () => (typeof mxCoordinate === "function" ? mxCoordinate() : null),
+    freeze:     () => (typeof mxFreeze === "function" ? mxFreeze() : null),
+    resume:     (t) => (typeof mxResume === "function" ? mxResume(t) : null),
+    fork:       (t) => (typeof mxFork === "function" ? mxFork(t) : null),
+    merge:      (base, cands) => (typeof mxMerge === "function" ? mxMerge(base, cands) : null),
+    doubleJump: (n) => (typeof mxDoubleJump === "function" ? mxDoubleJump(n) : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

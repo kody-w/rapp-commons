@@ -323,6 +323,54 @@ async def run():
             else:
                 check("fractal_frames", False, "window.commonsAgent.fractal missing")
 
+            # MATRIX — the universe on commonsAgent: 4D address, frame mechanism, dream-catcher
+            # merge, and the double jump. The commons IS the living hologram organism.
+            mx = await ev("()=>!!window.commonsAgent && typeof window.commonsAgent.doubleJump==='function'", False)
+            if mx:
+                # 4D coordinate: 3D space + frame-time + a UTC iso string
+                c = await ev("()=>{try{return window.commonsAgent.coordinate()}catch(e){return null}}", None) or {}
+                import re as _re
+                coord_ok = (isinstance(c.get("x"), (int, float)) and isinstance(c.get("y"), (int, float))
+                            and isinstance(c.get("z"), (int, float)) and isinstance(c.get("frame"), int)
+                            and bool(_re.match(r"\d{4}-\d\d-\d\dT", str(c.get("utc", "")))))
+                check("matrix_4d", coord_ok, c)
+
+                # frame mechanism: freeze a save-state, navigate away, resume restores it, fork -> dimension id
+                fm = await ev("""()=>{try{
+                    const t=window.commonsAgent.freeze();
+                    const before=window.commonsAgent.coordinate().x;
+                    window.commonsAgent.teleport(7,1.6,3); const moved=window.commonsAgent.coordinate().x;
+                    window.commonsAgent.resume(t); const back=window.commonsAgent.coordinate().x;
+                    const dim=window.commonsAgent.fork(t);
+                    return {has_token:!!t, before, moved, back, dim};
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                frame_ok = (fm.get("has_token") and abs((fm.get("moved") or 0) - 7) < 1.5
+                            and abs((fm.get("back", 99)) - (fm.get("before", -99))) < 1.0
+                            and isinstance(fm.get("dim"), str) and fm.get("dim"))
+                check("matrix_frame", bool(frame_ok), fm)
+
+                # dream-catcher merge: keep a consistent candidate, reject a contradicting one
+                dc = await ev("""()=>{try{
+                    return window.commonsAgent.merge({a:1,b:2},[{key:'c',val:3},{key:'a',val:1},{key:'a',val:9}]);
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                keys_kept = {k.get("key") for k in (dc.get("kept") or [])}
+                dc_ok = ("c" in keys_kept and any(r.get("key") == "a" and r.get("val") == 9 for r in (dc.get("rejected") or [])))
+                check("matrix_merge", bool(dc_ok), dc)
+
+                # double jump: two loops compete, the trailing climbs, the best improves, leaders alternate
+                dj = await ev("()=>{try{return window.commonsAgent.doubleJump(6)}catch(e){return null}}", None) or {}
+                rounds = dj.get("rounds") or []
+                dj_ok = (len(rounds) >= 4 and dj.get("trailing", {}).get("last", 0) > dj.get("trailing", {}).get("first", 1)
+                         and dj.get("best", {}).get("last", 0) >= dj.get("best", {}).get("first", 0)
+                         and dj.get("improved") is True and len(set(r.get("leader") for r in rounds)) >= 2)
+                check("matrix_double_jump", bool(dj_ok),
+                      {"trailing": dj.get("trailing"), "best": dj.get("best"), "leaders": [r.get("leader") for r in rounds]})
+            else:
+                check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
+                check("matrix_frame", False, "")
+                check("matrix_merge", False, "")
+                check("matrix_double_jump", False, "")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
