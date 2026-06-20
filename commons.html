@@ -899,11 +899,34 @@ function registerPokerRoom(){
    we surface its match data and let the seated player append a signed
    rapp-wwf-move/1.0 entry (same shape the existing matches/ moves use).
    ════════════════════════════════════════════════════════════════════════ */
+const WWF_N = 15;                         // the board is 15x15
+// standard 15x15 premium-square layout (TW=triple word, DW=double word,
+// TL=triple letter, DL=double letter). Read-only decoration over the EXISTING
+// game; it does not affect the signed move shape or the game's rules.
+const WWF_PREMIUM = (function(){
+  const g = Array.from({length:WWF_N}, ()=> Array(WWF_N).fill(null));
+  const put = (r,c,k)=>{ g[r][c]=k; g[r][WWF_N-1-c]=k; g[WWF_N-1-r][c]=k; g[WWF_N-1-r][WWF_N-1-c]=k; };
+  // (only the top-left octant is listed; put() mirrors into all four corners)
+  [[0,0],[0,7],[7,0]].forEach(([r,c])=>put(r,c,"TW"));
+  [[1,1],[2,2],[3,3],[4,4],[7,7]].forEach(([r,c])=>put(r,c,"DW")); // center (7,7) = star
+  [[1,5],[5,1],[5,5],[5,9]].forEach(([r,c])=>put(r,c,"TL"));
+  [[0,3],[2,6],[3,0],[3,7],[6,2],[6,6],[7,3]].forEach(([r,c])=>put(r,c,"DL"));
+  return g;
+})();
+const WWF_PREMIUM_COLOR = { TW:0xc23b3b, DW:0xc27ab0, TL:0x2f7fc2, DL:0x4fb0c2 };
+
 const WWF = {
   pos:new THREE.Vector3(-46, DNA.cameraHeight, 0),
   GAME:["games/words-with-friends/game.json", RAW_BASE+"games/words-with-friends/game.json"],
-  built:false, game:null, match:null, moves:[]
+  built:false, game:null, match:null, moves:[],
+  tiles:[],            // [{at,letter,from,row,col,seq}] — every tile on the live board
+  players:[],          // [{name, score, from}] derived from the signed moves
+  toMove:null,         // index into players whose turn it is
+  tileGroup:null       // 3D group holding the lettered cubes (re-rendered)
 };
+// "H8" <-> [row,col]: column letter A..O, row number 1..15 (matches the move files).
+function wwfCellLabel(row, col){ return String.fromCharCode(65+col) + (row+1); }
+
 function buildWordsTable(){
   if (WWF.built) return;
   const C = WWF.pos;
@@ -912,12 +935,21 @@ function buildWordsTable(){
   const top = new THREE.Mesh(new THREE.BoxGeometry(5,0.3,5),
     new THREE.MeshStandardMaterial({ color:0x16243e, emissive:0x07101f, roughness:0.85 }));
   top.position.y = 1.0; top.castShadow = top.receiveShadow = true; g.add(top);
+  // premium squares — flat colored pads under the grid (TW/DW/TL/DL).
+  for (let r=0;r<WWF_N;r++) for (let c=0;c<WWF_N;c++){
+    const k = WWF_PREMIUM[r][c]; if (!k) continue;
+    const x = (c/WWF_N - 0.5 + 0.5/WWF_N)*5, z = (r/WWF_N - 0.5 + 0.5/WWF_N)*5;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(5/WWF_N*0.92,0.04,5/WWF_N*0.92),
+      new THREE.MeshStandardMaterial({ color:WWF_PREMIUM_COLOR[k], emissive:WWF_PREMIUM_COLOR[k],
+        emissiveIntensity:0.35, roughness:0.6 }));
+    pad.position.set(x,1.17,z); g.add(pad);
+  }
   // a 15x15 grid etched on top (lines)
   const lineMat = new THREE.LineBasicMaterial({ color:0x2f6fae, transparent:true, opacity:0.6 });
-  for (let i=0;i<=15;i++){
-    const t = (i/15 - 0.5)*5;
-    const gv = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(t,1.16,-2.5),new THREE.Vector3(t,1.16,2.5)]);
-    const gh = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-2.5,1.16,t),new THREE.Vector3(2.5,1.16,t)]);
+  for (let i=0;i<=WWF_N;i++){
+    const t = (i/WWF_N - 0.5)*5;
+    const gv = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(t,1.19,-2.5),new THREE.Vector3(t,1.19,2.5)]);
+    const gh = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-2.5,1.19,t),new THREE.Vector3(2.5,1.19,t)]);
     g.add(new THREE.Line(gv,lineMat)); g.add(new THREE.Line(gh,lineMat));
   }
   const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.6,1.0,12),
@@ -925,17 +957,81 @@ function buildWordsTable(){
   leg.position.y = 0.5; g.add(leg);
   const cool = new THREE.PointLight(0x66aaff, 1.2, 22); cool.position.set(0,5,0); g.add(cool);
   g.add(makeLabel("Words with Friends", 0x9fd0ff, 6.0));
+  // a HUD plate for scores + whose-turn, floating above the board (re-rendered).
   WWF.group = g; WWF.built = true;
 }
 
-// place a played tile as a small voxel on the board (visual surface of a move).
-function wwfPlaceTile(letter, row, col){
+// a small lettered cube face texture (letter on a tile).
+function wwfTileTexture(letter){
+  const cv = document.createElement("canvas"); cv.width=96; cv.height=96;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#f2e2b0"; ctx.fillRect(0,0,96,96);
+  ctx.strokeStyle = "#b89a4e"; ctx.lineWidth = 6; ctx.strokeRect(4,4,88,88);
+  ctx.fillStyle = "#2a1c08"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.font = "bold 60px -apple-system,Segoe UI,sans-serif";
+  ctx.fillText(String(letter||"?").toUpperCase(), 48, 50);
+  const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+// (re)draw every signed tile on the board as a small lettered cube. Reads WWF.tiles.
+function renderWordsBoard(){
   if (!WWF.built) return;
-  const t = makeLabel(String(letter||"?"), 0xffe9a0, 0);
-  t.scale.set(0.7,0.7,1);
-  const x = (col/15 - 0.5 + 0.5/15)*5, z = (row/15 - 0.5 + 0.5/15)*5;
-  t.position.set(x, 1.3, z);
-  WWF.group.add(t);
+  if (!WWF.tileGroup){ WWF.tileGroup = new THREE.Group(); WWF.group.add(WWF.tileGroup); }
+  const grp = WWF.tileGroup;
+  while (grp.children.length){ const c=grp.children.pop();
+    if (c.material){ const m=[].concat(c.material); m.forEach(mm=>{ if(mm.map)mm.map.dispose(); mm.dispose(); }); }
+    if (c.geometry) c.geometry.dispose(); }
+  const sz = 5/WWF_N*0.86;
+  for (const t of WWF.tiles){
+    const tex = wwfTileTexture(t.letter);
+    const faceMat = new THREE.MeshStandardMaterial({ map:tex, roughness:0.7 });
+    const sideMat = new THREE.MeshStandardMaterial({ color:0xd8c486, roughness:0.7 });
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(sz,0.18,sz),
+      [sideMat,sideMat,faceMat,sideMat,sideMat,sideMat]);  // +Y face shows the letter
+    const x = (t.col/WWF_N - 0.5 + 0.5/WWF_N)*5, z = (t.row/WWF_N - 0.5 + 0.5/WWF_N)*5;
+    cube.position.set(x,1.30,z); cube.castShadow = true;
+    grp.add(cube);
+  }
+  // scores + whose-turn plate above the board
+  const p0 = WWF.players[0]||{name:"p0",score:0}, p1 = WWF.players[1]||{name:"p1",score:0};
+  const turnName = (WWF.toMove!=null && WWF.players[WWF.toMove]) ? WWF.players[WWF.toMove].name : "—";
+  const plate = makeLabel(`${p0.name} ${p0.score|0}  ·  ${p1.name} ${p1.score|0}   ▶ ${turnName}`, 0xffe9a0, 0);
+  plate.scale.set(7,1.4,1); plate.position.set(0,3.4,0); grp.add(plate);
+}
+
+// derive players (names, running scores, whose turn) from the signed move log.
+function wwfRecomputeState(){
+  const order = (WWF.match && WWF.match.players) || [];
+  const scores = {};
+  order.forEach(n=>{ scores[n]=0; });
+  for (const mv of WWF.moves){
+    const who = mv.player; if (who==null) continue;
+    if (!(who in scores)) { scores[who]=0; if (order.indexOf(who)<0) order.push(who); }
+    scores[who] += (mv.score|0);
+  }
+  WWF.players = order.map(n=>({
+    name:n, score:scores[n]|0,
+    from:(WWF.moves.find(m=>m.player===n)||{}).from || null
+  }));
+  // next to move = (count of plays) % players (the existing game alternates turns).
+  const plays = WWF.moves.filter(m=>(m.type||"play")==="play").length;
+  WWF.toMove = WWF.players.length ? (plays % WWF.players.length) : null;
+}
+
+// rebuild the live tile list from the signed moves (each placement -> a tile).
+function wwfRebuildTiles(){
+  const seen = {};
+  WWF.tiles = [];
+  WWF.moves.forEach((mv, mi)=>{
+    (mv.placements||[]).forEach(p=>{
+      const [r,c,ltr] = p;
+      const key = r+","+c;
+      if (seen[key]) return;             // a square is occupied once; first play wins
+      seen[key] = true;
+      WWF.tiles.push({ at:wwfCellLabel(r,c), letter:ltr, from:mv.from||null,
+                       row:r, col:c, seq:(mv.seq!=null?mv.seq:mi) });
+    });
+  });
 }
 
 async function loadWordsMatch(){
@@ -944,20 +1040,41 @@ async function loadWordsMatch(){
   // discover the existing match (same-origin first, raw CDN fallback) — read-only surfacing.
   const matchId = "kody-w-vs-blazingbeard-20260611T012434Z";
   const base = "games/words-with-friends/matches/"+matchId+"/";
+  const meta = await fetchJSON([base+"game.json", RAW_BASE+base+"game.json"]) || {};
   const moveFiles = [
     "moves/m000-kody-w-20260611T012552Z.json",
     "moves/m001-blazingbeard-20260611T012650Z.json",
     "moves/m002-kody-w-20260611T022404Z.json",
     "moves/m003-blazingbeard-20260618T210539Z.json"
   ];
-  WWF.match = { id:matchId };
+  WWF.match = { id:matchId, players:(meta.players||[]).slice(), board_size:meta.board_size||WWF_N };
   WWF.moves = [];
   for (const f of moveFiles){
     const mv = await fetchJSON([base+f, RAW_BASE+base+f]);
-    if (mv){ WWF.moves.push(mv);
-      // surface each move's placements onto the 3D board
-      (mv.placements||[]).forEach(p=>{ const [r,c,ltr] = p; wwfPlaceTile(ltr, r, c); }); }
+    if (mv) WWF.moves.push(mv);
   }
+  // build the live board from the EXISTING signed moves (visualization only).
+  wwfRebuildTiles();
+  wwfRecomputeState();
+  renderWordsBoard();
+}
+
+/* ── Headless inspection surface: a JSON snapshot of the live WWF board. Reads the
+      same WWF state the signed move log drives; never signs, never mutates. ──── */
+function wwfState(){
+  // a flat 15x15 board grid of letters (null for empty) for easy inspection.
+  const board = Array.from({length:WWF_N}, ()=> Array(WWF_N).fill(null));
+  for (const t of WWF.tiles){ if (t.row>=0 && t.row<WWF_N && t.col>=0 && t.col<WWF_N) board[t.row][t.col] = t.letter; }
+  return {
+    board,
+    tiles: WWF.tiles.map(t=>({ at:t.at, letter:t.letter, from:t.from })),
+    toMove: WWF.toMove,
+    players: WWF.players.map(p=>({ name:p.name, score:p.score|0, from:p.from })),
+    match: (WWF.match && WWF.match.id) || null,
+    moves: WWF.moves.length,
+    built: !!WWF.built,
+    premium: WWF_PREMIUM
+  };
 }
 
 // append a signed rapp-wwf-move/1.0 — WRAPS the existing rules (same shape).
@@ -977,7 +1094,11 @@ async function wwfPlay(word, at, dir, placements){
   if (!sig) return { error:"cannot sign — move not shipped" };
   body.sig = sig; body.pub = ME.pubJwk;
   WWF.moves.push(body);
-  (placements||[]).forEach(p=>{ const [r,c,ltr] = p; wwfPlaceTile(ltr, r, c); });
+  // re-derive the live board from the (now longer) signed move log — same path
+  // the existing matches use; we only WRAP the rules, never rewrite them.
+  wwfRebuildTiles();
+  wwfRecomputeState();
+  renderWordsBoard();
   showRoomHud("Words with Friends",
     `Played <b>${esc(word)}</b> at <b>${esc(at)}</b> (${esc(dir)}) — signed rapp-wwf-move/1.0 appended.<br>`+
     `<span style="opacity:.6">${WWF.moves.length} signed moves on the board · rules unchanged (wrapped, not rewritten)</span>`,
@@ -992,13 +1113,19 @@ function registerWordsRoom(){
     blurb:"A 3D board-table surfacing the existing turn-based signed game. Append signed rapp-wwf-move/1.0 plays; rules unchanged.",
     action: async ()=>{
       travelTo(Object.assign(WWF.pos.clone(),{label:"Words with Friends"}));
-      await loadWordsMatch();
+      await loadWordsMatch();              // loads + renders the LIVE signed board
+      renderWordsBoard();
       const last = WWF.moves[WWF.moves.length-1];
+      const p0 = WWF.players[0]||{name:"p0",score:0}, p1 = WWF.players[1]||{name:"p1",score:0};
+      const turn = (WWF.toMove!=null && WWF.players[WWF.toMove]) ? WWF.players[WWF.toMove].name : "—";
+      // play a fresh signed tile (your OWN rappid) on an open square below the existing words.
+      const demo = ()=>wwfPlay("HI","A14","across",[[13,0,"H"],[13,1,"I"]]);
       showRoomHud("Words with Friends",
-        `Match <b>${esc((WWF.match&&WWF.match.id)||"")}</b> — ${WWF.moves.length} signed moves on the board.`+
+        `Match <b>${esc((WWF.match&&WWF.match.id)||"")}</b> — ${WWF.tiles.length} tiles, ${WWF.moves.length} signed moves.<br>`+
+        `Score: <b>${esc(p0.name)} ${p0.score|0}</b> · <b>${esc(p1.name)} ${p1.score|0}</b> &nbsp; ▶ to move: <b>${esc(turn)}</b>`+
         (last?`<br>last: <b>${esc(last.word||"")}</b> by ${esc(last.player||last.from||"")}`:"")+
         `<br><span style="opacity:.6">existing rules wrapped, not rewritten — your plays are signed rapp-wwf-move/1.0</span>`,
-        [ {label:"play DEMO (signed)", onClick:()=>wwfPlay("HI","H8","across",[[7,7,"H"],[7,8,"I"]])},
+        [ {label:"play a tile (signed by you)", onClick:demo},
           {label:"leave board", onClick:()=>{ hideRoomHud(); }} ]);
     }
   });
@@ -1522,6 +1649,8 @@ boot();
     where, teleport, walk, face, nearby, goto, enter, interact, say, list,
     // live poker-table snapshot for headless inspection (community/pot/seats/turn/phase).
     pokerState: () => (typeof pokerState === "function" ? pokerState() : null),
+    // live Words-with-Friends board snapshot (board grid + signed tiles + scores + turn).
+    wwfState: () => (typeof wwfState === "function" ? wwfState() : null),
     // convenience: identity + a one-shot full snapshot for headless callers.
     me: () => ({ rappid: ME.rappid, fp: ME.fp }),
     snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })

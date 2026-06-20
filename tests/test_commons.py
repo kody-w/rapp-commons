@@ -81,6 +81,35 @@ async def run():
                        "phase": st.get("phase"), "pot": st.get("pot")})
             else:
                 check("poker_renders", False, "window.commonsAgent.pokerState missing")
+
+            # wwf_renders: enter the Words-with-Friends room and assert the LIVE
+            # 3D board is visible/inspectable -- it surfaces the EXISTING signed
+            # match (tiles read straight off games/words-with-friends/matches/),
+            # so every tile's `from` is a signed rappid id (never a human).
+            has_wwf = await ev("()=>typeof window.commonsAgent.wwfState==='function'", False)
+            if has_wwf:
+                await ev("()=>{try{window.commonsAgent.enter('words');}catch(e){}return 1}")
+                # the room loads the signed match asynchronously; poll for the board.
+                wst = None
+                for _ in range(40):
+                    wst = await ev("()=>{try{return window.commonsAgent.wwfState()}catch(e){return null}}", None)
+                    if wst and wst.get("board") and wst.get("tiles"):
+                        break
+                    await page.wait_for_timeout(500)
+                wst = wst or {}
+                board = wst.get("board") or []
+                tiles = wst.get("tiles") or []
+                players = wst.get("players") or []
+                rappid_tiles = [t for t in tiles if str(t.get("from", "")).startswith("rappid:")]
+                check("wwf_renders",
+                      len(board) == 15 and all(len(row) == 15 for row in board)
+                      and len(tiles) >= 1 and len(rappid_tiles) == len(tiles)
+                      and len(players) >= 2 and wst.get("toMove") is not None,
+                      {"tiles": len(tiles), "rappid_tiles": len(rappid_tiles),
+                       "players": players, "toMove": wst.get("toMove"),
+                       "sample": tiles[:3]})
+            else:
+                check("wwf_renders", False, "window.commonsAgent.wwfState missing")
         await b.close()
     print_summary()
 
