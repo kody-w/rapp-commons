@@ -508,7 +508,10 @@ const POKER = {
   RANKS:"23456789TJQKA", SUITS:"shdc",
   seats:[],          // {seat, being, chips, mesh, hole, folded, inHand}
   hand:null,         // current hand record
-  built:false
+  built:false,
+  phase:"unseated",  // unseated | seated | preflop | flop | turn | river | showdown
+  toAct:null,        // seat index whose turn it is (null between turns)
+  lastResult:null    // last showdown result (for the banner)
 };
 function pokerRankVal(c){ return POKER.RANKS.indexOf(c[0]) + 2; }
 function pokerFreshDeck(){
@@ -586,6 +589,123 @@ async function pokerAction(seat, action, amount, extra){
   return body;
 }
 
+/* ── LIVE 3D TABLE SURFACE ──────────────────────────────────────────────────
+   Everything below is *visualization only*: it reads POKER state that the
+   existing signed hand loop already produced and draws it on the felt. It
+   never signs, never mutates the hand record, never touches the engine action
+   shapes — so the signed loop stays the single source of truth. ───────────── */
+const SUIT_GLYPH = { s:"♠", h:"♥", d:"♦", c:"♣" };
+// a playing-card sprite (face-up) or a blue card-back when no card is given.
+function pokerCardSprite(card){
+  const cv = document.createElement("canvas"); cv.width=140; cv.height=200;
+  const ctx = cv.getContext("2d");
+  if (!card){
+    ctx.fillStyle="#15315e"; ctx.fillRect(0,0,140,200);
+    ctx.strokeStyle="#3a6fc0"; ctx.lineWidth=6; ctx.strokeRect(5,5,130,190);
+    ctx.fillStyle="#3a6fc0"; for(let y=18;y<190;y+=14) for(let x=14;x<130;x+=14){ ctx.fillRect(x,y,6,6); }
+  } else {
+    const rank=card[0], suit=card[1];
+    const red = (suit==="h"||suit==="d");
+    ctx.fillStyle="#fbfbf6"; ctx.fillRect(0,0,140,200);
+    ctx.strokeStyle="#bbb"; ctx.lineWidth=4; ctx.strokeRect(3,3,134,194);
+    ctx.fillStyle = red ? "#c2182b" : "#15171c";
+    ctx.textAlign="left"; ctx.textBaseline="top";
+    ctx.font="bold 44px -apple-system,Segoe UI,sans-serif";
+    ctx.fillText(rank==="T"?"10":rank, 12, 8);
+    ctx.font="40px serif"; ctx.fillText(SUIT_GLYPH[suit]||"?", 14, 56);
+    ctx.textAlign="center"; ctx.font="bold 84px serif";
+    ctx.fillText(SUIT_GLYPH[suit]||"?", 70, 96);
+  }
+  const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthWrite:false }));
+  spr.scale.set(0.95, 1.35, 1);
+  return spr;
+}
+// a small stacked-chips + name + chips-count tag for one seat.
+function pokerSeatTag(seat, toAct){
+  const name = (seat.being && seat.being.name) || "seat";
+  const cv = document.createElement("canvas"); cv.width=512; cv.height=140;
+  const ctx = cv.getContext("2d");
+  ctx.font="bold 46px -apple-system,Segoe UI,sans-serif";
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  const turn = toAct === seat.seat;
+  ctx.fillStyle = turn ? "#ffe14d" : (seat.folded ? "#7a7a7a" : "#dff7ff");
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = turn ? 26 : 14;
+  ctx.fillText((turn?"▶ ":"")+name+(seat.folded?" (folded)":""), 256, 46);
+  ctx.font="bold 40px -apple-system,Segoe UI,sans-serif"; ctx.shadowBlur=10;
+  ctx.fillStyle = "#9affc0";
+  ctx.fillText("◉ "+(seat.chips|0)+" chips", 256, 100);
+  const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthWrite:false }));
+  spr.scale.set(4.4,1.2,1);
+  return spr;
+}
+// (re)draw the live felt: community cards, pot total, seat tags + turn marker,
+// and (at showdown) the winning result. Reads POKER.* only.
+function renderPokerScene(){
+  if (!POKER.built) return;
+  if (!POKER.render){ POKER.render = new THREE.Group(); POKER.group.add(POKER.render); }
+  const grp = POKER.render;
+  while (grp.children.length){ const c=grp.children.pop();
+    if (c.material){ if(c.material.map) c.material.map.dispose(); c.material.dispose(); }
+    if (c.geometry) c.geometry.dispose(); }
+  const board = (POKER.hand && POKER.hand.board) || [];
+  // community cards laid out across the felt centre (5 slots: flop/turn/river)
+  for (let i=0;i<5;i++){
+    const spr = pokerCardSprite(board[i] || null);
+    spr.position.set((i-2)*1.15, 2.0, 0);
+    grp.add(spr);
+  }
+  // pot total floating above the board
+  if (POKER.hand){
+    const pot = makeLabel("POT  "+(POKER.hand.pot|0), 0xffe14d, 0);
+    pot.scale.set(4.2,1.05,1); pot.position.set(0, 3.3, 0); grp.add(pot);
+  }
+  // per-seat: chip stack + name + whose-turn marker
+  for (const s of POKER.seats){
+    if (!s.occupied) continue;
+    const tag = pokerSeatTag(s, POKER.toAct);
+    tag.position.set(s.pos.x - POKER.pos.x, 3.0, s.pos.z - POKER.pos.z);
+    grp.add(tag);
+    // a little stack of chip discs in front of each occupied seat
+    const stackN = Math.max(1, Math.min(6, Math.round((s.chips|0)/250)));
+    for (let k=0;k<stackN;k++){
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.05,16),
+        new THREE.MeshStandardMaterial({ color: s.folded?0x555555:0xc0392b, emissive:0x200505 }));
+      disc.position.set((s.pos.x - POKER.pos.x)*0.78, 1.2 + k*0.06, (s.pos.z - POKER.pos.z)*0.78);
+      grp.add(disc);
+    }
+  }
+  // showdown banner
+  if (POKER.lastResult && POKER.lastResult.winner){
+    const w = POKER.lastResult.winner;
+    const ban = makeLabel("🏆 "+w.who+" wins ("+w.hand+")", 0x9affc0, 0);
+    ban.scale.set(6.5,1.4,1); ban.position.set(0, 4.4, 0); grp.add(ban);
+  }
+}
+
+/* ── Headless inspection surface: a JSON snapshot of the live table. Reads the
+      same POKER state the signed loop drives; never signs. ────────────────── */
+function pokerState(){
+  const seats = POKER.seats.filter(s=>s.occupied).map(s=>({
+    seat: s.seat,
+    name: (s.being && s.being.name) || null,
+    from: (s.being && s.being.rappid) || null,   // per-seat rappid (bot or you)
+    chips: s.chips|0,
+    folded: !!s.folded,
+    isHuman: !!s.isHuman
+  }));
+  return {
+    community: ((POKER.hand && POKER.hand.board) || []).slice(),
+    pot: (POKER.hand && POKER.hand.pot|0) || 0,
+    seats,
+    toAct: (POKER.toAct==null ? null : POKER.toAct),
+    phase: POKER.phase || (POKER.hand ? "idle" : "unseated"),
+    built: !!POKER.built,
+    actions: (POKER.hand && POKER.hand.log && POKER.hand.log.length) || 0
+  };
+}
+
 function buildPokerTable(){
   if (POKER.built) return;
   const C = POKER.pos;
@@ -635,6 +755,8 @@ function seatPokerBots(){
     tag.position.set(POKER.seats[i].pos.x - POKER.pos.x, 2.4, POKER.seats[i].pos.z - POKER.pos.z);
     POKER.group.add(tag);
   }
+  if (POKER.phase === "unseated") POKER.phase = "seated";
+  renderPokerScene();
   })();
   return POKER._seating;
 }
@@ -669,6 +791,8 @@ async function pokerPlayHand(){
   active.forEach(s=>{ s.hole=[]; s.folded=false; s.inHand=true; });
   POKER.hand = { id:"hand-"+Date.now(), seq:0, log:[], board:[], pot:0,
                  commitment, nonce, bigBlind:2, smallBlind:1 };
+  POKER.lastResult = null; POKER.phase = "preflop"; POKER.toAct = null;
+  renderPokerScene();
 
   // dealer (seat 0) signs the deck COMMITMENT as a deal action
   await pokerAction(active[0], "deal", 0, { stage:"commit", commitment });
@@ -689,20 +813,25 @@ async function pokerPlayHand(){
     for (let k=0;k<n;k++) POKER.hand.board.push(deck[di++]);
     // dealer reveals the community cards as a signed deal action
     await pokerAction(active[0], "deal", 0, { stage:name, cards: POKER.hand.board.slice() });
+    POKER.phase = name; POKER.toAct = null; renderPokerScene();   // visualize the new board
   };
 
   // a (compact) betting round: each non-folded being acts once, signed.
   const bettingRound = async (street)=>{
+    POKER.phase = street;
     let toCall = 0;
     for (const s of active){
       if (s.folded || !s.inHand) continue;
+      POKER.toAct = s.seat; renderPokerScene();   // light up whose turn it is
       if (s.isHuman){ await pokerAction(s, "check", 0, { street }); continue; }
       const d = botDecide(s, toCall, POKER.hand.board);
       if (d.action === "fold"){ s.folded = true; }
-      else if (d.action === "bet" || d.action === "raise"){ toCall = d.amount; POKER.hand.pot += d.amount; }
-      else if (d.action === "call"){ POKER.hand.pot += d.amount; }
+      else if (d.action === "bet" || d.action === "raise"){ toCall = d.amount; POKER.hand.pot += d.amount; s.chips -= d.amount; }
+      else if (d.action === "call"){ POKER.hand.pot += d.amount; s.chips -= d.amount; }
       await pokerAction(s, d.action, d.amount, { street });
+      renderPokerScene();
     }
+    POKER.toAct = null; renderPokerScene();
   };
 
   await bettingRound("preflop");
@@ -717,6 +846,7 @@ async function pokerPlayHand(){
     const r = rankHand7(s.hole.concat(POKER.hand.board));
     if (!bestR || cmpRank(r,bestR) > 0){ bestR = r; winner = s; }
   }
+  POKER.phase = "showdown"; POKER.toAct = null;
   // dealer REVEALS deck+nonce so anyone can verify the commitment (commit-reveal)
   await pokerAction(active[0], "reveal", 0, { deck, nonce, commitment });
   if (winner) winner.chips += POKER.hand.pot;
@@ -730,6 +860,7 @@ async function pokerPlayHand(){
     actions: POKER.hand.log.length,
     commitment, verifiable:true
   };
+  POKER.lastResult = result; renderPokerScene();   // draw the showdown banner on the felt
   // surface the result in the room HUD
   if (winner){
     showRoomHud("Poker Room — Texas Hold'em",
@@ -750,10 +881,14 @@ function registerPokerRoom(){
     action: async ()=>{
       travelTo(Object.assign(POKER.pos.clone(),{label:"Poker Room"}));
       if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
+      renderPokerScene();
       showRoomHud("Poker Room — Texas Hold'em",
         "You sit at seat 0. Five AI beings hold the other seats — each minted its own rappid and signs every action.",
         [ {label:"deal a hand", onClick:()=>pokerPlayHand()},
           {label:"leave table", onClick:()=>{ hideRoomHud(); } } ]);
+      // play one live hand so the felt shows community cards / pot / showdown
+      // immediately on entry (also gives headless callers a live pokerState()).
+      if (!POKER.hand) { try { await pokerPlayHand(); } catch(e){ console.warn("poker auto-deal:", e); } }
     }
   });
 }
@@ -1385,6 +1520,8 @@ boot();
 
   window.commonsAgent = {
     where, teleport, walk, face, nearby, goto, enter, interact, say, list,
+    // live poker-table snapshot for headless inspection (community/pot/seats/turn/phase).
+    pokerState: () => (typeof pokerState === "function" ? pokerState() : null),
     // convenience: identity + a one-shot full snapshot for headless callers.
     me: () => ({ rappid: ME.rappid, fp: ME.fp }),
     snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })

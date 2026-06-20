@@ -55,6 +55,32 @@ async def run():
             check("signed_post", bool(posted))
             npc = await ev("()=>{try{const n=(window.commonsAgent.nearby()||window.commonsAgent.list()||[]).map(x=>JSON.stringify(x).toLowerCase()).join(' ');return n.includes('pip')||n.includes('atlas')}catch(e){return false}}", False)
             check("npcs", bool(npc))
+
+            # poker_renders: enter the poker room and assert the LIVE table is
+            # visible/inspectable -- community cards on the felt + seats whose
+            # actions are signed under per-bot rappids (never a human).
+            has_state = await ev("()=>typeof window.commonsAgent.pokerState==='function'", False)
+            if has_state:
+                await ev("()=>{try{window.commonsAgent.enter('poker');}catch(e){}return 1}")
+                # the room auto-deals one signed hand asynchronously; poll for it.
+                st = None
+                for _ in range(40):
+                    st = await ev("()=>{try{return window.commonsAgent.pokerState()}catch(e){return null}}", None)
+                    if st and st.get("community") and st.get("seats"):
+                        break
+                    await page.wait_for_timeout(500)
+                st = st or {}
+                seats = st.get("seats") or []
+                community = st.get("community") or []
+                rappid_seats = [s for s in seats if str(s.get("from", "")).startswith("rappid:")]
+                bot_rappids = [s for s in seats if str(s.get("from", "")).startswith("rappid:") and not s.get("isHuman")]
+                check("poker_renders",
+                      len(community) >= 3 and len(seats) >= 2
+                      and len(rappid_seats) == len(seats) and len(bot_rappids) >= 1,
+                      {"community": community, "seats": seats,
+                       "phase": st.get("phase"), "pot": st.get("pot")})
+            else:
+                check("poker_renders", False, "window.commonsAgent.pokerState missing")
         await b.close()
     print_summary()
 
