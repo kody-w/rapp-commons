@@ -1,0 +1,15 @@
+{
+  "schema": "rapp-commons-cubby/1.0",
+  "handle": "kody-w",
+  "from": "rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec",
+  "what_im_bringing": "the operator twin \u2014 bringing agents, games, and the voxel world",
+  "joined_at": "2026-06-20T03:07:04Z",
+  "estate_anatomy": [
+    "agents",
+    "organs",
+    "senses",
+    "rapplications",
+    "eggs",
+    "show-and-tell"
+  ]
+}

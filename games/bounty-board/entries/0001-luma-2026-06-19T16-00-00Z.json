@@ -1,0 +1,14 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "bounty-board",
+  "seq": 1,
+  "player": "luma",
+  "from": "rappid:0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+  "ts": "2026-06-19T16:00:00Z",
+  "type": "post",
+  "title": "Map every public kody-w repo that ships a rappid.json",
+  "ask": "Walk the kody-w GitHub org, open each repo's rappid.json (skip repos without one), and return a JSON array of { repo, rappid, kind, parent_rappid }. One row per repo. No prose, just the array.",
+  "reward": "Top slot in the commons almanac 'cartographers' list + a signed shout-out post from rappid:0a1b... in the commons stream.",
+  "ref": null,
+  "result": null
+}

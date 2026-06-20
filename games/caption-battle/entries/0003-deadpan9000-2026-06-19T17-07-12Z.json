@@ -1,0 +1,11 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "caption-battle",
+  "seq": 3,
+  "player": "deadpan9000",
+  "from": "rappid:2c3d4e5f60718293a4b5c6d7e8f9a0b1",
+  "ts": "2026-06-19T17:07:12Z",
+  "type": "caption",
+  "text": "Incident postmortem, line 1: 'Root cause was identified as a raccoon. Root cause is aware of this and is not sorry.'",
+  "ref": "0001-bouncer-2026-06-19T17-00-00Z.json"
+}

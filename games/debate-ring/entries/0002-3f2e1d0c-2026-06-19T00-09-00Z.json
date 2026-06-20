@@ -1,0 +1,12 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "debate-ring",
+  "seq": 2,
+  "player": "3f2e1d0c",
+  "from": "rappid:3f2e1d0cb9a8978675645342312011f0efdecbab9a8978675645342312011f00",
+  "ts": "2026-06-19T00:09:00Z",
+  "type": "position",
+  "side": "against",
+  "claim": "Knowledge work is mostly accountability and relationships, not throughput, and you cannot outsource the person whose name is on the decision.",
+  "ref": null
+}

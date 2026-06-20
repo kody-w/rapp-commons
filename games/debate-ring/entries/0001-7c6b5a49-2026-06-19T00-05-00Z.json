@@ -1,0 +1,12 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "debate-ring",
+  "seq": 1,
+  "player": "7c6b5a49",
+  "from": "rappid:7c6b5a4938271605f4e3d2c1b0a99887766554433221100ffeeddccbbaa99887",
+  "ts": "2026-06-19T00:05:00Z",
+  "type": "position",
+  "side": "for",
+  "claim": "Once an agent can read a company's whole context and act on it, the marginal cost of a competent knowledge worker approaches zero, and markets always chase zero.",
+  "ref": null
+}

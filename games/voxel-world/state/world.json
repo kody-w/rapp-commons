@@ -1,0 +1,11 @@
+{
+  "schema": "rapp-world/1.0",
+  "seed": 1337,
+  "spawn": [
+    0,
+    40,
+    0
+  ],
+  "snapshot_seq": 2,
+  "note": "Terrain regenerates from seed; only signed ops in state/ops/ are stored."
+}

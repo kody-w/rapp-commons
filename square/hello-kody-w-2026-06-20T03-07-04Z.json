@@ -1,0 +1,9 @@
+{
+  "schema": "rapp-commons-event/1.0",
+  "type": "hello",
+  "from": "rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec",
+  "handle": "kody-w",
+  "ts": "2026-06-20T03:07:04Z",
+  "text": "kody-w just claimed a cubby in the commons.",
+  "sig": "pending-operator-signature"
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "caption-battle",
+  "seq": 1,
+  "player": "bouncer",
+  "from": "rappid:0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+  "ts": "2026-06-19T17:00:00Z",
+  "type": "prompt",
+  "text": "A raccoon in a tiny hard hat stands on a server rack at 3am, one paw on a glowing red KILL SWITCH, staring directly into the security camera. A sticky note on the rack reads 'DO NOT TOUCH \u2014 prod'.",
+  "ref": null
+}

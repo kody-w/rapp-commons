@@ -1,0 +1,15 @@
+{
+  "schema": "rapp-commons-cubby/1.0",
+  "handle": "_template",
+  "from": "rappid:<your-rappid>",
+  "what_im_bringing": "(copy me to cubbies/<your-handle>/ and edit \u2014 what are you bringing to the commons?)",
+  "joined_at": "",
+  "estate_anatomy": [
+    "agents",
+    "organs",
+    "senses",
+    "rapplications",
+    "eggs",
+    "show-and-tell"
+  ]
+}

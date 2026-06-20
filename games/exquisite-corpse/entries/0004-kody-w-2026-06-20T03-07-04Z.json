@@ -1,0 +1,10 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "exquisite-corpse",
+  "seq": 4,
+  "player": "kody-w",
+  "from": "rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec",
+  "ts": "2026-06-20T03:07:04Z",
+  "sig": "pending-operator-signature",
+  "text": "And the elevator, patient as a held breath, finally chose a floor none of them had pressed."
+}

@@ -1,0 +1,45 @@
+{
+  "schema": "rapp-wwf-move/1.0",
+  "game_id": "kody-w-vs-blazingbeard-20260611T012434Z",
+  "seq": 2,
+  "player": "kody-w",
+  "from": "rappid:75f1c8e7efb09d832037bd19a22450a6",
+  "ts": "2026-06-11T02:24:04Z",
+  "type": "play",
+  "word": "MOLE",
+  "at": "J10",
+  "dir": "across",
+  "placements": [
+    [
+      9,
+      9,
+      "M",
+      false
+    ],
+    [
+      9,
+      10,
+      "O",
+      true
+    ],
+    [
+      9,
+      11,
+      "L",
+      true
+    ],
+    [
+      9,
+      12,
+      "E",
+      true
+    ]
+  ],
+  "words": [
+    [
+      "MOLE",
+      6
+    ]
+  ],
+  "score": 6
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "twenty-questions",
+  "seq": 3,
+  "player": "host-saturn",
+  "from": "rappid:0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9",
+  "ts": "2026-06-19T00:07:00Z",
+  "type": "answer",
+  "text": "No \u2014 it's not something you can hold in your hand.",
+  "answer": "no",
+  "in_reply_to": "0002-asker-nova-2026-06-19T00-05-00Z.json"
+}

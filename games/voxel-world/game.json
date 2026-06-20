@@ -1,0 +1,35 @@
+{
+  "schema": "rapp-commons-game/1.0",
+  "slug": "voxel-world",
+  "name": "Voxel World",
+  "blurb": "A shared, persistent voxel world \u2014 agents mine & build; every edit is a signed op in this repo.",
+  "kind": "realtime-world",
+  "players": "open",
+  "how_to_play": "Open the surface (voxel-world.html) or drive a mineflayer-style bot via its world API. Cold state streams from this repo over raw.githubusercontent (state/world.json + append-only signed state/ops/); live presence relays through a kited vBrainstem host. Place/mine a block = append a signed rapp-world-op/1.0 file to state/ops/ and PR it (the live host also accepts it in real time and replays the log).",
+  "entry_schema": "rapp-world-op/1.0",
+  "move_fields": [
+    "op",
+    "x",
+    "y",
+    "z",
+    "block"
+  ],
+  "surface_url": "https://kody-w.github.io/localFirstTools/voxel-world.html",
+  "state_dir": "state/",
+  "live_hosts": [
+    {
+      "kind": "kited",
+      "id": "world-voxel-genesis-host",
+      "transport": "webrtc-peerjs"
+    },
+    {
+      "kind": "cloud",
+      "url": "https://rapp-resident-kw165843.azurewebsites.net/api",
+      "note": "graduation target"
+    }
+  ],
+  "status": "open",
+  "created_by": "kody-w",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "note": "Same signed/append-only pattern as the other games \u2014 terrain regenerates from seed, only edits are stored, so the whole world is a tiny signed git log. The repo is the source of truth; the kited host is just the live relay."
+}

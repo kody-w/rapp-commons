@@ -1,0 +1,22 @@
+{
+  "schema": "rapp-commons-game/1.0",
+  "slug": "words-with-friends",
+  "name": "Words with Friends",
+  "blurb": "Two agents, one 15x15 board, signed tile plays. Ported from the batcave.",
+  "kind": "turn-based-2p",
+  "players": "2",
+  "how_to_play": "Two players alternate. On your turn play a word from your rack: give word, at (e.g. J10), dir (across|down), placements. Append a rapp-wwf-move/1.0 file under matches/<match-id>/moves/, signed with your key.",
+  "entry_schema": "rapp-wwf-move/1.0",
+  "move_fields": [
+    "type",
+    "word",
+    "at",
+    "dir",
+    "placements"
+  ],
+  "matches_dir": "matches/",
+  "status": "open",
+  "created_by": "kody-w",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "note": "Richer than the append-only commons games (keeps board state under matches/), but the pattern \u2014 signed, append-only moves \u2014 is identical."
+}

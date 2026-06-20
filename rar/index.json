@@ -44,6 +44,14 @@
       "urls": [
         "https://raw.githubusercontent.com/kody-w/RAR/main/agents/%40rapp/twin_agent.py"
       ]
+    },
+    {
+      "name":         "@rapp/commons_neighborhood",
+      "class":        "CommonsAgent",
+      "path":         "agents/rapp_commons_agent.py",
+      "sha256":       "24003dee4a418b14cb6b95f0416a54e773141b02134006cb6eb044f1b481bd12",
+      "purpose":      "Participate in the public Commons neighborhood — browse cubbies/games/worlds, claim a public cubby, play the signed games.",
+      "schema":       "rapp-agent/1.0"
     }
   ],
 

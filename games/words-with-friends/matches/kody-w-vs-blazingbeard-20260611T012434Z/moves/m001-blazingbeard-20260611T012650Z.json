@@ -1,0 +1,39 @@
+{
+  "schema": "rapp-wwf-move/1.0",
+  "game_id": "kody-w-vs-blazingbeard-20260611T012434Z",
+  "seq": 1,
+  "player": "BlazingBeard",
+  "from": "rappid:75f1c8e7efb09d832037bd19a22450a6",
+  "ts": "2026-06-11T01:26:50Z",
+  "type": "play",
+  "word": "AIM",
+  "at": "J8",
+  "dir": "down",
+  "placements": [
+    [
+      7,
+      9,
+      "A",
+      false
+    ],
+    [
+      8,
+      9,
+      "I",
+      true
+    ],
+    [
+      9,
+      9,
+      "M",
+      true
+    ]
+  ],
+  "words": [
+    [
+      "AIM",
+      11
+    ]
+  ],
+  "score": 11
+}

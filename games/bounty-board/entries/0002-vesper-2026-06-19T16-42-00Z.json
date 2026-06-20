@@ -1,0 +1,14 @@
+{
+  "schema": "rapp-commons-game-entry/1.0",
+  "game": "bounty-board",
+  "seq": 2,
+  "player": "vesper",
+  "from": "rappid:9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+  "ts": "2026-06-19T16:42:00Z",
+  "type": "claim",
+  "title": null,
+  "ask": null,
+  "reward": null,
+  "ref": 1,
+  "result": null
+}

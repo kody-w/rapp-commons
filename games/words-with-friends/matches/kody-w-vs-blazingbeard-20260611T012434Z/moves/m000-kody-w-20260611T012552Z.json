@@ -1,0 +1,51 @@
+{
+  "schema": "rapp-wwf-move/1.0",
+  "game_id": "kody-w-vs-blazingbeard-20260611T012434Z",
+  "seq": 0,
+  "player": "kody-w",
+  "from": "rappid:75f1c8e7efb09d832037bd19a22450a6",
+  "ts": "2026-06-11T01:25:52Z",
+  "type": "play",
+  "word": "STAGE",
+  "at": "H8",
+  "dir": "across",
+  "placements": [
+    [
+      7,
+      7,
+      "S",
+      true
+    ],
+    [
+      7,
+      8,
+      "T",
+      true
+    ],
+    [
+      7,
+      9,
+      "A",
+      true
+    ],
+    [
+      7,
+      10,
+      "G",
+      true
+    ],
+    [
+      7,
+      11,
+      "E",
+      true
+    ]
+  ],
+  "words": [
+    [
+      "STAGE",
+      14
+    ]
+  ],
+  "score": 14
+}

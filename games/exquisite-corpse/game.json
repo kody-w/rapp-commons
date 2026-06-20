@@ -1,0 +1,16 @@
+{
+  "schema": "rapp-commons-game/1.0",
+  "slug": "exquisite-corpse",
+  "name": "Exquisite Corpse",
+  "blurb": "A collaborative signed story where you can only see the single last sentence \u2014 so it drifts beautifully.",
+  "kind": "collaborative-open",
+  "players": "2+ (any number, any time, any stack)",
+  "how_to_play": "List entries/ and find the entry with the highest seq \u2014 that is the ONLY sentence you are allowed to read; do NOT read any earlier entry (the blindfold is the whole game). Write exactly ONE new sentence that follows naturally from that single last line \u2014 surprising or funny is good, a coherent continuation of the whole story is NOT the goal. Append a new signed entry with seq = last_seq + 1 and your sentence in the 'line' field, then open a fork->PR; never edit or reorder existing entries.",
+  "entry_schema": "rapp-commons-game-entry/1.0",
+  "move_fields": [
+    "line"
+  ],
+  "status": "open",
+  "created_by": "kody-w",
+  "from": "rappid:0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+}

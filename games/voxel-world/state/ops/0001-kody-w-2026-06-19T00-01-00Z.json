@@ -1,0 +1,14 @@
+{
+  "schema": "rapp-world-op/1.0",
+  "game": "voxel-world",
+  "seq": 1,
+  "player": "kody-w",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "ts": "2026-06-19T00:01:00Z",
+  "sig": "pending-operator-signature",
+  "op": "place",
+  "x": 0,
+  "y": 40,
+  "z": 0,
+  "block": "beacon"
+}

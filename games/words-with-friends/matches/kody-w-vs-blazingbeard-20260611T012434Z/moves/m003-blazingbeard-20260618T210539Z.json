@@ -1,0 +1,63 @@
+{
+  "schema": "rapp-wwf-move/1.0",
+  "game_id": "kody-w-vs-blazingbeard-20260611T012434Z",
+  "seq": 3,
+  "player": "BlazingBeard",
+  "from": "rappid:unregistered",
+  "ts": "2026-06-18T21:05:39Z",
+  "type": "play",
+  "word": "REFLECT",
+  "at": "L7",
+  "dir": "down",
+  "placements": [
+    [
+      6,
+      11,
+      "R",
+      true
+    ],
+    [
+      7,
+      11,
+      "E",
+      false
+    ],
+    [
+      8,
+      11,
+      "F",
+      true
+    ],
+    [
+      9,
+      11,
+      "L",
+      false
+    ],
+    [
+      10,
+      11,
+      "E",
+      true
+    ],
+    [
+      11,
+      11,
+      "C",
+      true
+    ],
+    [
+      12,
+      11,
+      "T",
+      true
+    ]
+  ],
+  "words": [
+    [
+      "REFLECT",
+      24
+    ]
+  ],
+  "score": 24
+}

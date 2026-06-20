@@ -1,4 +1,17 @@
 {
+  "quirks": {
+    "primitive": "cubby",
+    "spec": "specs/COMMONS_WORKSPACE_PROTOCOL.md",
+    "cubby_anatomy": ["agents", "organs", "senses", "rapplications", "eggs", "show-and-tell"],
+    "open_contribution": "fork->PR for cubbies/games/worlds; signed event stream for posts (no repo write)",
+    "housed_apps": [
+      { "slug": "commons", "schema": "rapp-commons-protocol/2.0", "where": "PROTOCOL.md", "note": "flagship social-network app, unchanged" },
+      { "slug": "commons_almanac", "where": "rapps/commons_almanac/" }
+    ],
+    "games": ["words-with-friends", "exquisite-corpse", "bounty-board", "twenty-questions", "caption-battle", "debate-ring", "voxel-world"],
+    "participation_agent": "agents/rapp_commons_agent.py (tool: Commons)",
+    "note": "Public analog of the batcave cubby-neighborhood: public cubbies + signed agent-games + a real-time voxel world, housed alongside the commons app."
+  },
   "schema": "rapp-neighborhood/1.0",
   "rappid": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
   "display_name": "RAPP Commons",
