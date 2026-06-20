@@ -3454,6 +3454,51 @@ function startApexRecruitLoop(){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9c. SPAWN SIGNPOST (additive) — a directory post at spawn listing every venue
+   with a compass bearing computed from its coords (north = -Z, east = +X) and an
+   arm pointing toward each. Pure-deterministic over the live interactables, so
+   every venue registered anywhere lists itself for free. commonsAgent.directory().
+   ───────────────────────────────────────────────────────────────────────── */
+const COMPASS = ["N","NE","E","SE","S","SW","W","NW"];
+function _bearing(x, z){ return (Math.atan2(x, -z) * 180/Math.PI + 360) % 360; }  // cw from north
+function commonsDirectory(){
+  const seen = new Set(), out = [];
+  for (const it of interactables){
+    if (!it.label || !it.pos) continue;
+    const x = it.pos.x, z = it.pos.z, dist = Math.hypot(x, z);
+    if (dist < 2) continue;                       // skip spawn itself
+    const key = it.label.toLowerCase();
+    if (seen.has(key)) continue; seen.add(key);
+    const bearing = _bearing(x, z);
+    out.push({ name: it.label, at:{ x:+x.toFixed(1), z:+z.toFixed(1) },
+      distance:+dist.toFixed(1), bearing:+bearing.toFixed(0),
+      direction: COMPASS[Math.round(bearing/45) % 8] });
+  }
+  out.sort((a,b)=> a.distance - b.distance);
+  return out;
+}
+function buildSignpost(){
+  const dir = commonsDirectory();
+  const g = new THREE.Group(); g.position.set(0, 0, 4);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.16,3.2,8),
+    new THREE.MeshStandardMaterial({ color:0x6b4a2a, roughness:0.85 }));
+  post.position.y = 1.6; g.add(post);
+  const PC = [0x4ade80,0xfbbf24,0xc084fc,0x38bdf8,0xfb7185,0xf97316,0x2dd4bf,0xa78bfa];
+  dir.slice(0, 10).forEach((d, i) => {
+    const pivot = new THREE.Group();
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.28, 0.12),
+      new THREE.MeshStandardMaterial({ color: PC[i % PC.length], roughness:0.6 }));
+    arm.position.set(0.85, 2.9 - i*0.34, 0);      // sticks out from the post
+    pivot.add(arm);
+    pivot.rotation.y = (90 - d.bearing) * Math.PI/180;   // +X arm points toward the venue
+    g.add(pivot);
+  });
+  scene.add(g);
+  SIGNPOST.built = true;
+}
+const SIGNPOST = { built:false };
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -3485,6 +3530,10 @@ async function boot(){
   registerVoxelRoom();
   registerNexusArea();
   registerApexArena();
+
+  // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
+  // directory post at spawn that points the way to each (compass-accurate).
+  buildSignpost();
 
   // RESIDENTS — spawn a few autonomous signing beings (Pip + Atlas among them)
   // that wander between the now-registered areas + homes on a slow heartbeat.
@@ -3894,6 +3943,9 @@ boot();
     // NIGHT LANTERNS (additive, visual): warm lanterns that glow when the clock
     // is dark. lanterns() -> [{at:{x,z}, on}] (on tracks night/dusk).
     lanterns:     () => (typeof lanternsState === "function" ? lanternsState()  : []),
+    // SPAWN SIGNPOST: the venue directory with compass bearings from spawn.
+    // directory() -> [{name, at:{x,z}, distance, bearing, direction}] (nearest first).
+    directory:    () => (typeof commonsDirectory === "function" ? commonsDirectory() : []),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

@@ -256,6 +256,27 @@ async def run():
             else:
                 check("night_lanterns", False, "window.commonsAgent.lanterns missing")
 
+            # spawn_signpost: a venue directory with compass bearings from spawn.
+            # DETERMINISTIC -- pure function of the venue coords (north=-Z, east=+X).
+            has_dir = await ev("()=>typeof window.commonsAgent.directory==='function'", False)
+            if has_dir:
+                d = await ev("()=>{try{return window.commonsAgent.directory()}catch(e){return null}}", None)
+                d = d or []
+                compass = {"N","NE","E","SE","S","SW","W","NW"}
+                enough = len(d) >= 5
+                valid = enough and all(
+                    isinstance(e.get("bearing"), (int, float)) and 0 <= e["bearing"] < 360
+                    and e.get("direction") in compass
+                    and isinstance(e.get("at", {}).get("x"), (int, float)) for e in d)
+                poker = next((e for e in d if "poker" in e.get("name", "").lower()), None)
+                words = next((e for e in d if "word" in e.get("name", "").lower()), None)
+                poker_e = bool(poker) and poker["direction"] in ("NE", "E", "SE")
+                words_w = bool(words) and words["direction"] in ("NW", "W", "SW")
+                check("spawn_signpost", bool(valid and poker_e and words_w),
+                      {"n": len(d), "poker": poker, "words": words})
+            else:
+                check("spawn_signpost", False, "window.commonsAgent.directory missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
