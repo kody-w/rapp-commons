@@ -298,6 +298,9 @@ scene.add(sun);
    / setTimeOfDay(t) / advanceTime(dt). t in [0,1) is the fraction of the day; a
    full cycle ≈ DAYNIGHT.dayLength seconds of real time when auto.
    ───────────────────────────────────────────────────────────────────────── */
+// lantern registry declared early so applyTimeOfDay()'s initial call (below) can
+// safely reference it via the hoisted updateLanterns() — items fill in buildLanterns().
+const LANTERNS = { items: [], litPhases: ["night","dusk"], lit:false };
 const DAYNIGHT = {
   t: 0.42, dayLength: 600, auto: true,
   keys: [
@@ -336,6 +339,7 @@ function applyTimeOfDay(t){
   // the sun arcs across the sky: noon (t≈0.5) overhead, low at dawn/dusk.
   const ang = (t - 0.25) * Math.PI * 2;
   sun.position.set(Math.cos(ang)*60, Math.max(2, Math.sin(ang)*70), Math.sin(ang)*40);
+  if (typeof updateLanterns === "function") updateLanterns(dayNightPhase(t));  // glow when dark
 }
 function dayNightTick(dt){
   if (!DAYNIGHT.auto) return;
@@ -346,6 +350,42 @@ function timeOfDay(){ return { phase: dayNightPhase(DAYNIGHT.t), t: +DAYNIGHT.t.
 function setTimeOfDay(t){ DAYNIGHT.auto = false; DAYNIGHT.t = ((((+t)||0)%1)+1)%1; applyTimeOfDay(DAYNIGHT.t); return timeOfDay(); }
 function advanceTime(dt){ DAYNIGHT.t = (((DAYNIGHT.t + ((+dt)||0))%1)+1)%1; applyTimeOfDay(DAYNIGHT.t); return timeOfDay(); }
 applyTimeOfDay(DAYNIGHT.t);
+
+/* ─────────────────────────────────────────────────────────────────────────
+   1c. NIGHT LANTERNS (additive, visual) — warm lanterns dotted around the
+   commons + its venues that GLOW when the day-night clock is dark (night/dusk)
+   and dim out by day. A pure function of timeOfDay() — deterministic and
+   inspectable via window.commonsAgent.lanterns() -> [{at:{x,z}, on}].
+   ───────────────────────────────────────────────────────────────────────── */
+function buildLanterns(){
+  const spots = [[0,6],[12,-6],[-12,-8],[22,12],[-16,-16],[40,2],[46,4],[-46,4],[22,30],[8,18],[-8,16],[16,-20]];
+  for (const [x,z] of spots){
+    const g = new THREE.Group(); g.position.set(x, 0, z);
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07,0.11,2.2,6),
+      new THREE.MeshStandardMaterial({ color:0x2a2118, roughness:0.85 }));
+    post.position.y = 1.1; g.add(post);
+    const orb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22,12,10),
+      new THREE.MeshStandardMaterial({ color:0xffd27f, emissive:0xffb24d, emissiveIntensity:0 }));
+    orb.position.y = 2.3; g.add(orb);
+    const light = new THREE.PointLight(0xffb24d, 0, 14, 2); light.position.y = 2.3; g.add(light);
+    scene.add(g);
+    LANTERNS.items.push({ at:{x,z}, orb, light });
+  }
+}
+function updateLanterns(phase){
+  const on = LANTERNS.litPhases.indexOf(phase) !== -1;
+  if (on === LANTERNS.lit && LANTERNS.items.length) return;   // only on transitions
+  LANTERNS.lit = on;
+  for (const L of LANTERNS.items){
+    L.orb.material.emissiveIntensity = on ? 1.0 : 0.0;
+    L.light.intensity = on ? 1.5 : 0.0;
+  }
+}
+function lanternsState(){ return LANTERNS.items.map(L => ({ at:{x:L.at.x, z:L.at.z}, on: LANTERNS.lit })); }
+buildLanterns();
+updateLanterns(dayNightPhase(DAYNIGHT.t));
 
 /* ─────────────────────────────────────────────────────────────────────────
    2. PointerLockControls (CDN) — camera IS the player.
@@ -3851,6 +3891,9 @@ boot();
     timeOfDay:    () => (typeof timeOfDay    === "function" ? timeOfDay()      : null),
     setTimeOfDay: (t)  => (typeof setTimeOfDay === "function" ? setTimeOfDay(t)  : null),
     advanceTime:  (dt) => (typeof advanceTime  === "function" ? advanceTime(dt)  : null),
+    // NIGHT LANTERNS (additive, visual): warm lanterns that glow when the clock
+    // is dark. lanterns() -> [{at:{x,z}, on}] (on tracks night/dusk).
+    lanterns:     () => (typeof lanternsState === "function" ? lanternsState()  : []),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

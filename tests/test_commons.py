@@ -239,6 +239,23 @@ async def run():
                 check("daynight_cycle", False,
                       "window.commonsAgent.timeOfDay/setTimeOfDay missing")
 
+            # night_lanterns: warm lanterns GLOW when the day-night clock is dark.
+            # DETERMINISTIC -- a pure function of setTimeOfDay(): lit at night, off by day.
+            has_lan = await ev("()=>typeof window.commonsAgent.lanterns==='function'", False)
+            if has_lan:
+                lan_night = await ev("()=>{try{window.commonsAgent.setTimeOfDay(0.0);return window.commonsAgent.lanterns()}catch(e){return null}}", None)
+                lan_day   = await ev("()=>{try{window.commonsAgent.setTimeOfDay(0.5);return window.commonsAgent.lanterns()}catch(e){return null}}", None)
+                lan_night = lan_night or []; lan_day = lan_day or []
+                enough = len(lan_night) >= 4
+                night_lit = enough and all(L.get("on") for L in lan_night)
+                day_off   = len(lan_day) >= 4 and all(not L.get("on") for L in lan_day)
+                has_coords = enough and all(isinstance(L.get("at", {}).get("x"), (int, float)) for L in lan_night)
+                check("night_lanterns",
+                      bool(night_lit and day_off and has_coords),
+                      {"n": len(lan_night), "night_lit": night_lit, "day_off": day_off})
+            else:
+                check("night_lanterns", False, "window.commonsAgent.lanterns missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
