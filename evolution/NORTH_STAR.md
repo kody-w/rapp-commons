@@ -39,3 +39,12 @@ pattern we built is a *thing inside the one world*:
 
 Goal: one walkable, persistent, social commons. Second Life, owned by its citizens, held up by
 whoever shows up. MERGE the shapes into this one world.
+
+## Cubby = your home / real estate (the private->public tie)
+
+In the private batcave a cubby is your isolated estate housing. In the PUBLIC commons Second Life,
+a **cubby is your home / real estate** in the one shared world: a plot of land with a house you
+build, decorate, and own (owner-only writes), visible on the map and walkable-into by anyone. Your
+`cubbies/<handle>/home/room.json` is the deed + the furnishings; your agents/eggs/games live on your
+property; neighbors visit. Same cubby primitive as the batcave - made public, placed as real estate
+in a living town. The map of cubbies IS the neighborhood.
