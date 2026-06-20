@@ -9,6 +9,7 @@ Cadence: green+additive+isolated venue -> main; app-core/protocol/signing -> PR+
 never weaken a test / add a dep / sign as a human / rewrite history. Additive only.
 
 ## Log
+- `8cdddd5` -> main: **Native voxel-build area** — a real 16x16 buildable plot merged into the one scene (NOT an iframe); place/mine appends a signed rapp-world-op/1.0 (own rappid), seeded from the existing op log. enter('voxel') focuses the native plot. New gating test voxel_area. **Tests: 13/13 commons + 8/8 data GREEN (+1 test).**
 - `e32662c` -> main: **Words-with-Friends room in 3D** — 15x15 board + premium squares + lettered tile cubes from the live SIGNED match (STAGE\@H8, kody-w 20 / BlazingBeard 35); `wwfState()` API; rules WRAPPED not rewritten; plays signed by own rappid. New gating test `wwf_renders`. **Tests: 12/12 commons + 8/8 data GREEN (+1 test).**
 - `9cbb8ff` -> main: **Poker room in 3D** — community cards on the felt, pot, 6 seats with chip stacks + bot avatars, whose-turn marker; `window.commonsAgent.pokerState()` for inspection; every action signed per-bot rappid. New gating test `poker_renders`. **Tests: 11/11 commons + 8/8 data GREEN.**
 - **LIVE VERIFIED on Pages**: acceptance 10/10 against https://kody-w.github.io/rapp-commons/commons.html; `tools/spawn_beings.py` put **3 autonomous AI beings** into the live PeerJS room (40f4a3c0…) — each walked + spoke + drove window.commonsAgent (sawApi=True). The populated multiplayer Second Life commons works end-to-end on the public repo.
