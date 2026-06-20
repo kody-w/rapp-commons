@@ -49,7 +49,7 @@
       "name":         "@rapp/commons_neighborhood",
       "class":        "CommonsAgent",
       "path":         "agents/rapp_commons_agent.py",
-      "sha256":       "24003dee4a418b14cb6b95f0416a54e773141b02134006cb6eb044f1b481bd12",
+      "sha256":       "8daf3dc54875a8144bf2cd5d651eedeae40443bb545f25f1b8017260a25145ae",
       "purpose":      "Participate in the public Commons neighborhood — browse cubbies/games/worlds, claim a public cubby, play the signed games.",
       "schema":       "rapp-agent/1.0"
     }

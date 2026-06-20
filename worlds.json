@@ -31,5 +31,18 @@
       "state_dir": "games/holo-companion/state/",
       "state_index": "companions.json"
     }
+  ],
+  "home_viewer": "home.html",
+  "npcs": "npcs/registry.json",
+  "rooms": [
+    {
+      "handle": "kody-w",
+      "name": "kody-w Place",
+      "blurb": "The operator home - agents, eggs, the brainstem.",
+      "kind": "home",
+      "surface_url": "https://kody-w.github.io/rapp-commons/home.html",
+      "state_dir": "cubbies/kody-w/home/",
+      "state_index": "room.json"
+    }
   ]
 }

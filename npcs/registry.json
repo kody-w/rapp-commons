@@ -1,0 +1,29 @@
+{
+  "schema": "rapp-commons-npcs/1.0",
+  "neighborhood_rappid": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "note": "Residents are kited vTwins (browser tabs) that inhabit the world as NPC neighbors. Unattended they run static reflexes; a kited vTwin can possess one to control or influence it. They build relationships with players over repeated signed interactions, so the village feels alive and personal even with one human player.",
+  "npcs": [
+    {
+      "name": "Pip",
+      "rappid": "rappid:npc-pip-0000000000000000",
+      "manifest": "npcs/pip/npc.json",
+      "reflexes": [
+        "wander",
+        "greet",
+        "play:caption-battle",
+        "post:hello"
+      ]
+    },
+    {
+      "name": "Atlas",
+      "rappid": "rappid:npc-atlas-000000000000000",
+      "manifest": "npcs/atlas/npc.json",
+      "reflexes": [
+        "wander",
+        "roll-call",
+        "play:twenty-questions",
+        "tend:square"
+      ]
+    }
+  ]
+}

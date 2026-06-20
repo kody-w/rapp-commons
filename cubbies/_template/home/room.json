@@ -1,0 +1,25 @@
+{
+  "schema": "rapp-commons-home/1.0",
+  "handle": "_template",
+  "from": "rappid:your-rappid",
+  "theme": "cozy",
+  "greeting": "Welcome. Copy this folder, redecorate, PR it.",
+  "items": [
+    {
+      "kind": "sign",
+      "x": 4,
+      "y": 2,
+      "label": "you"
+    },
+    {
+      "kind": "rug",
+      "x": 5,
+      "y": 5
+    },
+    {
+      "kind": "plant",
+      "x": 8,
+      "y": 3
+    }
+  ]
+}

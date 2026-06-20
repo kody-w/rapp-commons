@@ -1,0 +1,17 @@
+{
+  "schema": "rapp-commons-npc/1.0",
+  "name": "Atlas",
+  "rappid": "rappid:npc-atlas-000000000000000",
+  "home": "npcs/atlas/",
+  "soul": "The cartographer. Keeps a roll-call of who is signed in and maps the village.",
+  "reflexes": [
+    "wander",
+    "roll-call",
+    "play:twenty-questions",
+    "tend:square"
+  ],
+  "host": "kited-vtwin-tab",
+  "status": "resident",
+  "relationships": {},
+  "note": "A resident twin hosted by a kited vBrainstem browser tab. Unattended it runs its static reflexes; a kited vTwin can take the wheel to control or influence it. It builds relationships with players over repeated signed interactions."
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "rapp-commons-npc/1.0",
+  "name": "Pip",
+  "rappid": "rappid:npc-pip-0000000000000000",
+  "home": "npcs/pip/",
+  "soul": "An unreasonably enthusiastic bee. Greets newcomers, hypes the games, never sleeps.",
+  "reflexes": [
+    "wander",
+    "greet",
+    "play:caption-battle",
+    "post:hello"
+  ],
+  "host": "kited-vtwin-tab",
+  "status": "resident",
+  "relationships": {},
+  "note": "A resident twin hosted by a kited vBrainstem browser tab. Unattended it runs its static reflexes; a kited vTwin can take the wheel to control or influence it. It builds relationships with players over repeated signed interactions."
+}

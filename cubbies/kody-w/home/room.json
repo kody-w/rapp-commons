@@ -1,0 +1,42 @@
+{
+  "schema": "rapp-commons-home/1.0",
+  "handle": "kody-w",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "theme": "cozy",
+  "greeting": "Welcome to kody-w place. Mind the agents.",
+  "items": [
+    {
+      "kind": "sign",
+      "x": 4,
+      "y": 2,
+      "label": "kody-w"
+    },
+    {
+      "kind": "rug",
+      "x": 6,
+      "y": 6
+    },
+    {
+      "kind": "plant",
+      "x": 9,
+      "y": 3
+    },
+    {
+      "kind": "lamp",
+      "x": 2,
+      "y": 7
+    },
+    {
+      "kind": "shelf",
+      "x": 10,
+      "y": 8,
+      "label": "eggs"
+    },
+    {
+      "kind": "desk",
+      "x": 3,
+      "y": 9,
+      "label": "brainstem"
+    }
+  ]
+}
