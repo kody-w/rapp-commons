@@ -337,13 +337,13 @@ function makePortal(world, angle){
   // internal travel: walking through the portal teleports the camera to the
   // world's AREA spot inside THIS scene and streams its surface inline (no tab).
   const areaPos = new THREE.Vector3(x*0.62, DNA.cameraHeight, z*0.62);
-  // Voxel World is a NATIVE merged zone of THIS scene — entering it focuses the
-  // camera on the in-world buildable plot, never an iframe/link-out.
+  // Voxel World + Nexus Worlds are NATIVE merged zones of THIS scene — entering
+  // them focuses the camera on an in-world area, never an iframe/link-out.
   const isVoxel = String(world.slug||"").includes("voxel");
-  interactables.push({
-    group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:5.5, type:"portal",
-    slug:world.slug, label:world.name, blurb:world.blurb, areaPos,
-    action: isVoxel ? (async ()=>{
+  const isNexus = String(world.slug||"").includes("nexus");
+  let action;
+  if (isVoxel){
+    action = async ()=>{
       buildVoxelPlot();
       travelTo(Object.assign(VOX.pos.clone(),{label:world.name}));  // focus the NATIVE plot (no iframe)
       await loadVoxelWorld();
@@ -353,11 +353,22 @@ function makePortal(world, angle){
         `<span style="opacity:.6">voxel-world state wrapped, not rewritten — your edits are signed rapp-world-op/1.0 with your own rappid</span>`,
         [ {label:"place a block (signed by you)", onClick:()=>voxelPlace(8,0,8,"gold")},
           {label:"leave plot", onClick:()=>{ hideRoomHud(); }} ]);
-    }) : (()=>{
+    };
+  } else if (isNexus){
+    // Nexus is a NATIVE holographic-portals zone in THIS scene (the Nexus
+    // PATTERN ported in, NOT the external app embedded) — entering it focuses
+    // the camera on the holographic ring/frame portals; never an iframe/window.
+    action = ()=> enterNexusArea(world.name);
+  } else {
+    action = ()=>{
       travelTo(areaPos);
       const url = resolveUrl(world.surface_url);
       openSurface(world.name, "streaming inline from raw CDN — you stayed in the commons", url);
-    })
+    };
+  }
+  interactables.push({
+    group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:5.5, type:"portal",
+    slug:world.slug, label:world.name, blurb:world.blurb, areaPos, action
   });
 }
 
@@ -1410,6 +1421,106 @@ function registerVoxelRoom(){
   });
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   NEXUS AREA — a NATIVE holographic-portals ZONE inside THIS scene (no iframe).
+   The LAST link-out portal (Nexus Worlds) becomes a real merged zone: a ring of
+   floating, glowing holographic FRAME portals rendered in the existing Three.js
+   scene in the Nexus aesthetic — emissive ring/frame + the existing portalShader
+   swirl on the frame surface + a halo of drifting holographic particles. Each
+   frame PREVIEWS a world from the repo's worlds data (worlds.json worlds[],
+   streamed via raw CDN through the existing WORLDS load) rendered NATIVELY — the
+   Nexus PATTERN ported in, NOT the external app embedded. Entering Nexus focuses
+   the camera on this zone (travelTo) and opens ZERO iframes / ZERO windows.
+   ════════════════════════════════════════════════════════════════════════ */
+const NEXUS = {
+  pos:new THREE.Vector3(-40, DNA.cameraHeight, 0),   // its own area, opposite the voxel plot
+  built:false, group:null, frames:[], mats:[], particles:null
+};
+function buildNexusArea(){
+  if (NEXUS.built) return;
+  const C = NEXUS.pos;
+  const g = new THREE.Group(); g.position.set(C.x,0,C.z); scene.add(g);
+
+  // a low holographic dais grounding the zone.
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(12,12.6,0.3,48),
+    new THREE.MeshStandardMaterial({ color:0x0a1830, emissive:0x123a66,
+      emissiveIntensity:0.6, roughness:0.6, transparent:true, opacity:0.9 }));
+  dais.position.y = 0.15; dais.receiveShadow = true; g.add(dais);
+  const core = new THREE.PointLight(0x66ccff, 1.6, 40); core.position.set(0,5,0); g.add(core);
+  g.add(makeLabel("Nexus Worlds", 0x9fd8ff, 9.0));
+
+  // the holographic-particle halo — drifting points around the ring (the look).
+  const PN = 220, parr = new Float32Array(PN*3);
+  for (let i=0;i<PN;i++){
+    const a = Math.random()*Math.PI*2, r = 6 + Math.random()*6, h = 0.5 + Math.random()*6.5;
+    parr[i*3] = Math.cos(a)*r; parr[i*3+1] = h; parr[i*3+2] = Math.sin(a)*r;
+  }
+  const pgeo = new THREE.BufferGeometry();
+  pgeo.setAttribute("position", new THREE.BufferAttribute(parr,3));
+  const pmat = new THREE.PointsMaterial({ color:0x8fe6ff, size:0.16, transparent:true,
+    opacity:0.65, depthWrite:false, blending:THREE.AdditiveBlending });
+  const pts = new THREE.Points(pgeo, pmat); g.add(pts); NEXUS.particles = pts;
+
+  // one floating glowing FRAME portal per world (previewing the repo's worlds data).
+  const worlds = (WORLDS && WORLDS.worlds) || [];
+  const list = worlds.length ? worlds : [{ name:"Nexus", slug:"nexus", blurb:"" }];
+  const ringR = 8.5;
+  list.forEach((w,i)=>{
+    const ang = (i/Math.max(list.length,1))*Math.PI*2;
+    const fx = Math.cos(ang)*ringR, fz = Math.sin(ang)*ringR;
+    const fg = new THREE.Group(); fg.position.set(fx, DNA.cameraHeight, fz);
+    fg.lookAt(0, DNA.cameraHeight, 0);
+
+    // glowing emissive frame (the ring/frame of the portal).
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.18, 14, 40),
+      new THREE.MeshStandardMaterial({ color:DNA.portalColor2, emissive:DNA.portalColor2,
+        emissiveIntensity:1.6, metalness:0.5, roughness:0.25 }));
+    fg.add(frame);
+    // holographic shader surface previewing the world (the existing swirl shader).
+    const mat = portalShader(DNA.portalColor1, DNA.portalColor2);
+    NEXUS.mats.push(mat);
+    const pane = new THREE.Mesh(new THREE.CircleGeometry(1.55, 36), mat);
+    pane.position.z = 0.02; fg.add(pane);
+    const fl = new THREE.PointLight(DNA.portalColor1, 1.1, 14); fl.position.set(0,0,1); fg.add(fl);
+    fg.add(makeLabel(w.name || w.slug || ("world "+(i+1)), 0x9ffff5, 2.6));
+    g.add(fg);
+
+    // record the frame's world-space position for the headless surface.
+    NEXUS.frames.push({ name:(w.name||w.slug||("world "+(i+1))), slug:(w.slug||""),
+                        at:{ x:+(C.x+fx).toFixed(2), y:DNA.cameraHeight, z:+(C.z+fz).toFixed(2) } });
+  });
+
+  NEXUS.group = g; NEXUS.built = true;
+}
+
+// Enter the NATIVE nexus zone: build it, fly the camera there (NO iframe/window),
+// and surface a HUD listing the holographic frame portals. Zero openSurface.
+function enterNexusArea(label){
+  buildNexusArea();
+  travelTo(Object.assign(NEXUS.pos.clone(), { label: label || "Nexus Worlds" }));
+  const rows = NEXUS.frames.map(f=>`<b>${esc(f.name)}</b>`).join(" · ") || "—";
+  showRoomHud("Nexus Worlds",
+    `A native holographic-portals zone in THIS scene — ${NEXUS.frames.length} frame portal(s), each previewing a world streamed from the repo's worlds data.<br>`+
+    `<span style="opacity:.7">${rows}</span><br>`+
+    `<span style="opacity:.6">the Nexus pattern ported in, not the external app embedded — you stayed in the one world (no iframe)</span>`,
+    [ {label:"leave the nexus", onClick:()=>{ hideRoomHud(); }} ]);
+}
+
+// Headless inspection surface for the native nexus zone.
+function nexusAreaState(){
+  buildNexusArea();
+  return { native:true, frames: NEXUS.frames.map(f=>({ name:f.name, at:f.at })) };
+}
+
+function registerNexusArea(){
+  buildNexusArea();
+  makeAreaInteractable({
+    pos:NEXUS.pos, radius:13, type:"area", label:"Nexus Worlds", slug:"nexus-worlds",
+    blurb:"A NATIVE holographic-portals zone in this scene — floating glowing frame portals previewing the repo's worlds. The Nexus pattern ported in, not the external app embedded — no link-out.",
+    action: ()=> enterNexusArea("Nexus Worlds")
+  });
+}
+
 function registerWordsRoom(){
   buildWordsTable();
   makeAreaInteractable({
@@ -2241,6 +2352,11 @@ function animate(){
   particles.rotation.y += dt*0.05;
   particles.position.y = Math.sin(t*0.3)*0.5;
 
+  // animate the NATIVE nexus holographic zone (frame swirl + drifting halo).
+  for (const m of NEXUS.mats) m.uniforms.time.value = t;
+  if (NEXUS.particles) NEXUS.particles.rotation.y -= dt*0.12;
+  if (NEXUS.group) NEXUS.group.rotation.y += dt*0.02;
+
   // expire speech bubbles
   for (let i=speechBubbles.length-1;i>=0;i--){
     const b = speechBubbles[i];
@@ -2282,6 +2398,7 @@ async function boot(){
   registerPokerRoom();
   registerWordsRoom();
   registerVoxelRoom();
+  registerNexusArea();
 
   // RESIDENTS — spawn a few autonomous signing beings (Pip + Atlas among them)
   // that wander between the now-registered areas + homes on a slow heartbeat.
@@ -2492,6 +2609,11 @@ boot();
     voxelPlace: (x,y,z,block) => (typeof voxelPlace === "function" ? voxelPlace(x,y,z,block) : null),
     voxelMine:  (x,y,z)       => (typeof voxelMine  === "function" ? voxelMine(x,y,z)        : null),
     voxelState: ()            => (typeof voxelState === "function" ? voxelState()            : null),
+    // NATIVE nexus holographic-portals zone: the LAST link-out portal ported in
+    // as a real zone of THIS scene (floating glowing frame portals previewing the
+    // repo's worlds data). Returns {native:true, frames:[{name,at}]}; never opens
+    // an iframe/window.
+    nexusArea: ()             => (typeof nexusAreaState === "function" ? nexusAreaState()    : { native:false, frames:[] }),
     // the living world: the autonomous resident beings that wander + sign as
     // themselves. Each entry: {name, from (their OWN rappid), area, pos, lastAction}.
     residents: () => (typeof commonsResidents === "function" ? commonsResidents() : []),

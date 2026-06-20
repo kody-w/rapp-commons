@@ -285,6 +285,44 @@ async def run():
             else:
                 check("voxel_area", False, "window.commonsAgent.voxelState missing")
 
+            # nexus_native: the LAST link-out portal (Nexus Worlds) is now a
+            # NATIVE holographic-portals zone of the ONE scene. Entering it must
+            # NOT spawn any new visible iframe (the Nexus PATTERN ported in, not
+            # the external app embedded) and must expose a native frames surface.
+            # Record the visible-iframe count, enter('nexus'), then assert:
+            #   (i)  no NEW visible iframe was created,
+            #   (ii) nexusArea().native === true,
+            #   (iii) frames.length >= 1.
+            # A "visible iframe" = an <iframe> with a non-empty src that is shown
+            # (the inline surface panel uses one such iframe for link-out worlds;
+            # nexus must add ZERO of them).
+            vis_iframes = (
+                "()=>Array.from(document.querySelectorAll('iframe')).filter(f=>{"
+                "const s=f.getAttribute('src');"
+                "const cs=getComputedStyle(f);"
+                "return !!(s&&s.trim())&&cs.display!=='none'&&cs.visibility!=='hidden'"
+                "&&f.offsetParent!==null;}).length")
+            has_nexus = await ev("()=>typeof window.commonsAgent.nexusArea==='function'", False)
+            if has_nexus:
+                before = await ev(vis_iframes, 0)
+                await ev("()=>{try{window.commonsAgent.enter('nexus');}catch(e){}return 1}")
+                await page.wait_for_timeout(500)
+                after = await ev(vis_iframes, 0)
+                na = await ev(
+                    "()=>{try{const a=window.commonsAgent.nexusArea();"
+                    "return {native:a&&a.native===true,"
+                    "frames:(a&&a.frames&&a.frames.length)||0,"
+                    "sample:(a&&a.frames)?a.frames.slice(0,3):[]}}"
+                    "catch(e){return {native:false,frames:0,sample:[]}}}", None) or {}
+                check("nexus_native",
+                      (after - before) <= 0 and bool(na.get("native"))
+                      and (na.get("frames") or 0) >= 1,
+                      {"iframes_before": before, "iframes_after": after,
+                       "native": na.get("native"), "frames": na.get("frames"),
+                       "sample": na.get("sample")})
+            else:
+                check("nexus_native", False, "window.commonsAgent.nexusArea missing")
+
             # persistence: the world REMEMBERS across a reload. The persistence
             # layer is additive + read-only -- every signed action this session
             # is ALSO mirrored into a localStorage append-only log right after it
