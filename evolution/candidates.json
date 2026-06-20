@@ -1,0 +1,7 @@
+{
+  "schema": "rapp-commons-evolution-candidates/1.0",
+  "pool": [
+    "Build out the first-person voxel commons world (commons3d.html): richer village, streamed GLTF models from raw CDN, NPC pathing, enterable homes/worlds \u2014 A-Taste-of-AGI overnight self-improvement pattern",
+    "Co-op first-person action game in the commons world (Left 4 Dead style): multiplayer, signed, collaborative like voxel-world \u2014 waves/objectives players clear together, hosted by a kited vTwin, state streamed from raw CDN"
+  ]
+}

@@ -18,9 +18,10 @@
       "name": "Nexus Worlds",
       "blurb": "Step through portals between dimensions; scenes stream from the commons repo.",
       "kind": "portal-hub",
-      "surface_url": "https://kody-w.github.io/localFirstTools/NexusWorlds.html",
+      "surface_url": "worlds/nexus/index.html",
       "state_dir": "games/nexus-worlds/state/",
-      "state_index": "scenes.json"
+      "state_index": "scenes.json",
+      "ported": true
     },
     {
       "slug": "holo-companion",

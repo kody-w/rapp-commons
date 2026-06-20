@@ -3,57 +3,108 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🏠 Commons — a home</title>
+<title>🏠 Commons — a home (3D)</title>
 <style>
-  :root { --grass:#7bc47f; --floor:#e9d8b8; --wall:#c9a06a; --ink:#2b2118; }
   * { box-sizing:border-box; margin:0; padding:0 }
   html,body { height:100%; background:#0a0d14; color:#eaf0f7; font-family:-apple-system,Helvetica,Arial,sans-serif; overflow:hidden }
-  #wrap { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px }
+  #ui { position:fixed; top:0; left:0; right:0; padding:16px 20px; pointer-events:none; z-index:5;
+        background:linear-gradient(#0a0d14cc,transparent) }
   #greet { font-size:20px; font-weight:700 }
-  #greet small { display:block; color:#8b95a5; font-weight:400; font-size:13px; margin-top:4px }
-  #room { display:grid; gap:2px; background:var(--wall); padding:10px; border-radius:14px; box-shadow:0 18px 50px #000a }
-  .cell { width:46px; height:46px; background:var(--floor); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:26px; position:relative }
-  .cell .lbl { position:absolute; bottom:-2px; font-size:8px; color:#5a4a32; font-weight:700 }
-  #hint { color:#46506a; font-size:12px }
+  #greet small { display:block; color:#9aa6b3; font-weight:400; font-size:12.5px; margin-top:3px }
+  #hint { position:fixed; bottom:10px; left:0; right:0; text-align:center; color:#46506a; font-size:12px; z-index:5 }
+  canvas { display:block }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <div id="greet">a home in the commons</div>
-  <div id="room"></div>
-  <div id="hint">decorate it: PR <code>cubbies/&lt;you&gt;/home/room.json</code> — or ask the Commons agent to <code>decorate</code></div>
-</div>
+<div id="ui"><div id="greet">a home in the commons</div></div>
+<div id="hint">drag to orbit · scroll to zoom · decorate: PR <code>cubbies/&lt;you&gt;/home/room.json</code> or ask the Commons agent</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
-const ICON = { sign:"🪧", rug:"🟫", plant:"🪴", lamp:"💡", shelf:"📚", desk:"🖥️", bed:"🛏️", chair:"🪑",
-  table:"🪵", flower:"🌷", tv:"📺", cat:"🐈", egg:"🥚", default:"📦" };
-const W = 12, H = 11;
+const G = 12, H = 11, T = 1;                 // grid w, h, tile size
+const COL = { floor1:0xe9d8b8, floor2:0xe2cfa8, wall:0xc9a06a, post:0x8a6a44, board:0xf4f1ea,
+  green:0x4ade80, pot:0xb5651d, rugA:0x6c63ff, lamp:0xffe08a, shelf:0x7a5230, desk:0x39424f,
+  screen:0x101820, wood:0xa9763b, white:0xf3f5f8, pink:0xff7eb6, def:0x9aa6b3 };
 
-function render(room) {
-  document.getElementById("greet").innerHTML =
-    (room.greeting || "Welcome.") + "<small>" + (room.handle ? "@"+room.handle : "") +
-    (room.from ? " · " + room.from : "") + "</small>";
-  const grid = document.getElementById("room");
-  grid.style.gridTemplateColumns = `repeat(${W},46px)`;
-  const at = {};
-  (room.items || []).forEach(it => { at[(it.x|0)+","+(it.y|0)] = it; });
-  for (let y=0; y<H; y++) for (let x=0; x<W; x++) {
-    const c = document.createElement("div"); c.className = "cell";
-    const it = at[x+","+y];
-    if (it) {
-      c.textContent = ICON[it.kind] || ICON.default;
-      if (it.label) { const l=document.createElement("span"); l.className="lbl"; l.textContent=it.label; c.appendChild(l); }
-    }
-    grid.appendChild(c);
-  }
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0d14);
+scene.fog = new THREE.Fog(0x0a0d14, 18, 40);
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(G*0.75, G*0.9, H*1.25);
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0,0.5,0); controls.enableDamping = true; controls.maxPolarAngle = Math.PI*0.49;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x33384a, 0.85));
+const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(8,16,6); scene.add(sun);
+
+function box(w,h,d,color,em) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshLambertMaterial({ color, emissive: em||0x000000 }));
+  return m;
+}
+function gx(x){ return (x - G/2 + 0.5) * T; }
+function gz(y){ return (y - H/2 + 0.5) * T; }
+
+// floor (checker voxels) + low walls
+const floor = new THREE.Group();
+for (let x=0;x<G;x++) for (let y=0;y<H;y++){
+  const t = box(T*0.98, 0.4, T*0.98, (x+y)%2 ? COL.floor1 : COL.floor2);
+  t.position.set(gx(x), -0.2, gz(y)); floor.add(t);
+}
+for (let x=-1;x<=G;x++){ const w=box(T,1.2,T,COL.wall); w.position.set(gx(x),0.4,gz(-1)); floor.add(w);
+  const w2=box(T,1.2,T,COL.wall); w2.position.set(gx(x),0.4,gz(H)); floor.add(w2); }
+for (let y=0;y<H;y++){ const w=box(T,1.2,T,COL.wall); w.position.set(gx(-1),0.4,gz(y)); floor.add(w);
+  const w2=box(T,1.2,T,COL.wall); w2.position.set(gx(G),0.4,gz(y)); floor.add(w2); }
+scene.add(floor);
+
+function label(text, x, z, y){
+  const cv = document.createElement("canvas"); cv.width=256; cv.height=64;
+  const c = cv.getContext("2d"); c.fillStyle="#000a"; c.fillRect(0,0,256,64);
+  c.fillStyle="#fff"; c.font="bold 30px Helvetica"; c.textAlign="center"; c.fillText(text,128,42);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(cv), transparent:true }));
+  sp.scale.set(2.2,0.55,1); sp.position.set(x, (y||1.6), z); scene.add(sp);
 }
 
-(async function () {
-  // state dir comes from the portal: ?state=<raw url to cubbies/<h>/home/>
+// build one item as voxels
+function place(it){
+  const x = gx(it.x|0), z = gz(it.y|0), g = new THREE.Group(); g.position.set(x,0,z);
+  const k = it.kind;
+  if (k==="rug"){ const r=box(T*1.8,0.08,T*1.8,COL.rugA); r.position.y=0.04; g.add(r); }
+  else if (k==="plant"){ const p=box(0.5,0.5,0.5,COL.pot); p.position.y=0.25; g.add(p);
+    const f=box(0.7,0.7,0.7,COL.green); f.position.y=0.85; g.add(f); }
+  else if (k==="lamp"){ const pole=box(0.12,1.3,0.12,COL.post); pole.position.y=0.65; g.add(pole);
+    const b=box(0.45,0.45,0.45,COL.lamp,0x5a4a00); b.position.y=1.45; g.add(b);
+    const L=new THREE.PointLight(0xffe0a0,0.9,6); L.position.set(0,1.5,0); g.add(L); }
+  else if (k==="sign"){ const pole=box(0.12,0.9,0.12,COL.post); pole.position.y=0.45; g.add(pole);
+    const bd=box(0.95,0.55,0.1,COL.board); bd.position.y=1.0; g.add(bd); if(it.label) label(it.label,x,z,1.0); }
+  else if (k==="shelf"){ const s=box(0.95,1.1,0.4,COL.shelf); s.position.y=0.55; g.add(s); if(it.label) label(it.label,x,z,1.4); }
+  else if (k==="desk"){ const d=box(1.1,0.55,0.7,COL.desk); d.position.y=0.45; g.add(d);
+    const sc=box(0.6,0.45,0.08,COL.screen,0x0a1a2a); sc.position.set(0,0.95,-0.2); g.add(sc); if(it.label) label(it.label,x,z,1.5); }
+  else if (k==="bed"){ const b=box(1.1,0.4,1.6,COL.pink); b.position.y=0.3; g.add(b); }
+  else if (k==="table"||k==="chair"){ const t=box(0.7,0.6,0.7,COL.wood); t.position.y=0.35; g.add(t); }
+  else { const d=box(0.7,0.7,0.7,COL.def); d.position.y=0.4; g.add(d); if(it.label) label(it.label,x,z,1.1); }
+  scene.add(g);
+}
+
+function render(room){
+  document.getElementById("greet").innerHTML =
+    (room.greeting||"Welcome.") + "<small>" + (room.handle?"@"+room.handle:"") +
+    (room.from?" · "+room.from:"") + "</small>";
+  (room.items||[]).forEach(place);
+}
+
+addEventListener("resize", () => { camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); });
+(function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
+
+(async function(){
   const state = new URLSearchParams(location.search).get("state");
-  let room = null;
-  if (state) { try { room = await (await fetch(state.replace(/\/?$/,"/") + "room.json", {cache:"no-store"})).json(); } catch(e){} }
-  // also accept a postMessage'd state from the portal
-  window.addEventListener("message", e => { if (e.data && e.data.type==="rapp-portal/1.0" && e.data.state) render(e.data.state); });
+  let room=null;
+  if (state){ try { room = await (await fetch(state.replace(/\/?$/,"/")+"room.json",{cache:"no-store"})).json(); } catch(e){} }
+  addEventListener("message", e => { if (e.data && e.data.type==="rapp-portal/1.0" && e.data.state) render(e.data.state); });
   render(room || { greeting:"An empty home. Move in.", items:[{kind:"sign",x:5,y:5,label:"vacant"}] });
 })();
 </script>
