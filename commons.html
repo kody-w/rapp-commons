@@ -683,6 +683,188 @@ async function boot(){
   toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · ${(npcReg.npcs||[]).length} residents (streamed from raw CDN)`);
 }
 boot();
+
+/* ─────────────────────────────────────────────────────────────────────────
+   11. window.commonsAgent — programmatic avatar control API.
+
+   A headless browser tab can drive the REAL camera/avatar (the same
+   controls.getObject() that WASD moves) with coordinates, like a person.
+   Everything here is additive: it reuses the live camera/controls/scene/
+   interactables and the existing submitPost()/tryEnter() logic. It NEVER
+   requires pointer-lock — goto/enter set the proximity target (`nearest`)
+   directly so enter()/interact() work the same as a walk-up E press.
+
+   Every method returns a JSON-able snapshot of resulting state.
+   ───────────────────────────────────────────────────────────────────────── */
+(function installCommonsAgent(){
+  const player = () => controls.getObject();      // the yaw object == the avatar
+  const num = (v,d=0) => (typeof v==="number" && isFinite(v)) ? v : d;
+
+  // round for clean JSON without losing usefulness
+  const r3 = v => Math.round(v*1000)/1000;
+
+  function where(){
+    const p = player().position;
+    return { x:r3(p.x), y:r3(p.y), z:r3(p.z), facing:r3(player().rotation.y) };
+  }
+
+  // clamp to the same soft world bounds the move() loop enforces
+  function clampXZ(x,z){
+    const R = 90, d = Math.hypot(x,z);
+    if (d > R){ x *= R/d; z *= R/d; }
+    return [x,z];
+  }
+
+  function teleport(x,y,z){
+    const p = player().position;
+    let nx = num(x, p.x), nz = num(z, p.z);
+    [nx,nz] = clampXZ(nx,nz);
+    p.x = nx; p.z = nz;
+    p.y = DNA.cameraHeight;               // avatar stays at eye height like move()
+    updateProximity();
+    return where();
+  }
+
+  // walk relative to current facing, like pressing W/S/A/D for `steps` units.
+  function walk(dir, steps){
+    const o = player();
+    camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+    rgt.crossVectors(fwd, UP).normalize();
+    const n = num(steps, 1);
+    const move3 = new THREE.Vector3();
+    switch (String(dir||"forward").toLowerCase()){
+      case "forward": case "f": move3.copy(fwd).multiplyScalar( n); break;
+      case "back":    case "b": move3.copy(fwd).multiplyScalar(-n); break;
+      case "left":    case "l": move3.copy(rgt).multiplyScalar(-n); break;
+      case "right":   case "r": move3.copy(rgt).multiplyScalar( n); break;
+      default: return { error:"dir must be forward|back|left|right", facing:where().facing };
+    }
+    let nx = o.position.x + move3.x, nz = o.position.z + move3.z;
+    [nx,nz] = clampXZ(nx,nz);
+    o.position.x = nx; o.position.z = nz; o.position.y = DNA.cameraHeight;
+    updateProximity();
+    return where();
+  }
+
+  // set yaw (radians). The PointerLock yaw object owns y-rotation.
+  function face(yaw){
+    player().rotation.y = num(yaw, player().rotation.y);
+    updateProximity();
+    return where();
+  }
+
+  // every interactable + NPC, with kind/name/distance, sorted nearest-first.
+  function nearby(){
+    const p = player().position;
+    const out = [];
+    for (const it of interactables){
+      out.push({ kind:it.type, name:it.label, dist:r3(p.distanceTo(it.pos)),
+                 inRange: p.distanceTo(it.pos) < it.radius });
+    }
+    for (const n of npcs){
+      const np = n.group.position;
+      const d = Math.hypot(np.x - p.x, np.z - p.z);
+      out.push({ kind:"npc", name:(n.def && n.def.name) || "npc", dist:r3(d), inRange:false });
+    }
+    out.sort((a,b)=> a.dist - b.dist);
+    return out;
+  }
+
+  // every place you can name in goto/enter.
+  function list(){
+    const places = interactables.map(it => ({ kind:it.type, name:it.label, blurb:it.blurb||"" }));
+    npcs.forEach(n => places.push({ kind:"npc", name:(n.def && n.def.name) || "npc", blurb:(n.def && n.def.blurb)||"" }));
+    return places;
+  }
+
+  function findByName(name){
+    if (!name) return null;
+    const q = String(name).toLowerCase().trim();
+    // interactables (portals/homes) first
+    let hit = interactables.find(it => it.label && it.label.toLowerCase() === q)
+           || interactables.find(it => it.label && it.label.toLowerCase().includes(q));
+    if (hit) return { kind:hit.type, label:hit.label, pos:hit.pos.clone(), interactable:hit };
+    // NPCs
+    const n = npcs.find(n => ((n.def && n.def.name)||"").toLowerCase() === q)
+           || npcs.find(n => ((n.def && n.def.name)||"").toLowerCase().includes(q));
+    if (n) return { kind:"npc", label:(n.def && n.def.name)||"npc",
+                    pos:new THREE.Vector3(n.group.position.x, DNA.cameraHeight, n.group.position.z), npc:n };
+    return null;
+  }
+
+  // walk to a named portal/home/NPC: place the avatar just shy of it, face it,
+  // and set the proximity target so enter()/interact() fire its action.
+  function goto(name){
+    const target = findByName(name);
+    if (!target) return { error:"no place named "+JSON.stringify(name), places:list().map(p=>p.name) };
+
+    const o = player();
+    const tp = target.pos;
+    // stop a comfortable step short of the target so we're inside its radius.
+    const stand = target.interactable ? Math.max(target.interactable.radius - 1.5, 1.2) : 2.2;
+    const dirToTarget = new THREE.Vector3(tp.x - o.position.x, 0, tp.z - o.position.z);
+    let standX = tp.x, standZ = tp.z;
+    if (dirToTarget.lengthSq() > 1e-4){
+      dirToTarget.normalize();
+      standX = tp.x - dirToTarget.x * stand;
+      standZ = tp.z - dirToTarget.z * stand;
+    }
+    [standX, standZ] = clampXZ(standX, standZ);
+    o.position.x = standX; o.position.z = standZ; o.position.y = DNA.cameraHeight;
+
+    // face the target (yaw is atan2(dx,dz) in this scene's convention).
+    const fx = tp.x - o.position.x, fz = tp.z - o.position.z;
+    if (fx*fx + fz*fz > 1e-6) o.rotation.y = Math.atan2(fx, fz);
+
+    // drive the proximity logic, then force the target if we're a hair outside.
+    updateProximity();
+    if (target.interactable && (!nearest || nearest !== target.interactable)){
+      const d = o.position.distanceTo(target.interactable.pos);
+      if (d < target.interactable.radius) nearest = target.interactable;
+    }
+    return Object.assign(where(), {
+      arrived:target.label, kind:target.kind,
+      inRange: !!(target.interactable && nearest === target.interactable)
+    });
+  }
+
+  // goto + press E (trigger the destination's enter action).
+  function enter(name){
+    const g = goto(name);
+    if (g.error) return g;
+    const fired = !!(nearest && nearest.action);
+    if (fired) nearest.action();
+    return Object.assign(g, { entered: fired ? nearest.label : null,
+                              note: fired ? "action triggered (E)" : "arrived; nothing enterable here" });
+  }
+
+  // press E on whatever is nearest right now.
+  function interact(){
+    updateProximity();
+    if (nearest && nearest.action){
+      const label = nearest.label;
+      nearest.action();
+      return Object.assign(where(), { interacted:label });
+    }
+    return Object.assign(where(), { interacted:null, note:"nothing in range" });
+  }
+
+  // say into the commons via the existing signed-post path.
+  function say(text){
+    const t = String(text==null ? "" : text);
+    if (!t.trim()) return Object.assign(where(), { said:null, note:"empty" });
+    sayEl.value = t;
+    submitPost();                          // signs + feeds + broadcasts, exactly like a person
+    return Object.assign(where(), { said:t });
+  }
+
+  window.commonsAgent = {
+    where, teleport, walk, face, nearby, goto, enter, interact, say, list,
+    // convenience: identity + a one-shot full snapshot for headless callers.
+    me: () => ({ rappid: ME.rappid, fp: ME.fp }),
+    snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })
+  };
+})();
 </script>
 </body>
 </html>
