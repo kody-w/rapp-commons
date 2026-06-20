@@ -1,0 +1,20 @@
+{
+  "schema": "rapp-commons-game/1.0",
+  "slug": "holo-companion",
+  "name": "Holographic Companion",
+  "blurb": "A 3D companion that follows you through the Nexus; companions housed in-repo.",
+  "kind": "portal-app",
+  "players": "open",
+  "surface_url": "https://kody-w.github.io/localFirstTools/chrome-extension-build/apps/games/nexus-holographic-companion.html",
+  "state_dir": "state/",
+  "how_to_play": "Enter via the Commons Portal (portal.html) \u2014 the hub loads this app in a sandboxed iframe and streams its data from this repo over raw.githubusercontent. To contribute content (a scene, a companion), append a signed file under state/ and PR it.",
+  "entry_schema": "rapp-portal-state/1.0",
+  "move_fields": [
+    "type",
+    "data"
+  ],
+  "status": "open",
+  "created_by": "kody-w",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "note": "Portal world: the app's CODE is the surface_url; its DATA/state is housed here and streamed via raw CDN. Loaded by portal.html through a portal iframe."
+}

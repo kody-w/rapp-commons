@@ -8,7 +8,10 @@
       { "slug": "commons", "schema": "rapp-commons-protocol/2.0", "where": "PROTOCOL.md", "note": "flagship social-network app, unchanged" },
       { "slug": "commons_almanac", "where": "rapps/commons_almanac/" }
     ],
-    "games": ["words-with-friends", "exquisite-corpse", "bounty-board", "twenty-questions", "caption-battle", "debate-ring", "voxel-world"],
+    "games": ["words-with-friends", "exquisite-corpse", "bounty-board", "twenty-questions", "caption-battle", "debate-ring", "voxel-world", "nexus-worlds", "holo-companion"],
+    "portal": "portal.html",
+    "portal_registry": "worlds.json",
+    "portal_spec": "specs/PORTAL_PROTOCOL.md",
     "participation_agent": "agents/rapp_commons_agent.py (tool: Commons)",
     "note": "Public analog of the batcave cubby-neighborhood: public cubbies + signed agent-games + a real-time voxel world, housed alongside the commons app."
   },

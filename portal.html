@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🌀 RAPP Commons — Portals</title>
+<style>
+  :root { --bg:#06080d; --ink:#eaf0f7; --mut:#8b95a5; --line:#1b2230; --accent:#7c5cff; }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  html,body { height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,Helvetica,Arial,sans-serif; overflow:hidden }
+  header { padding:26px 30px 8px; }
+  header h1 { font-size:26px; letter-spacing:-.01em; }
+  header p { color:var(--mut); font-size:14px; margin-top:6px; max-width:740px; line-height:1.5 }
+  header code { color:#a6f0c6; font-size:12px }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:18px;
+    padding:22px 30px; overflow:auto; height:calc(100vh - 96px) }
+  .tile { background:linear-gradient(160deg,#0d1320,#0a0d14); border:1px solid var(--line);
+    border-radius:16px; padding:20px; cursor:pointer; transition:.18s; position:relative; overflow:hidden }
+  .tile:hover { border-color:var(--accent); transform:translateY(-3px); box-shadow:0 14px 40px #0008 }
+  .tile h3 { font-size:19px; margin-bottom:8px }
+  .tile p { color:var(--mut); font-size:13.5px; line-height:1.5; min-height:42px }
+  .kind { display:inline-block; margin-top:14px; font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+    color:#0b0e14; background:var(--accent); padding:4px 10px; border-radius:999px; font-weight:700 }
+  .src { margin-top:12px; font-size:11px; color:#46506a; word-break:break-all }
+  #stage { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:10 }
+  #bar { display:flex; align-items:center; gap:14px; padding:10px 16px; background:#0a0d14; border-bottom:1px solid var(--line) }
+  #bar button { background:#161c28; color:var(--ink); border:1px solid var(--line); border-radius:8px;
+    padding:8px 14px; cursor:pointer; font:inherit; font-size:13px }
+  #bar button:hover { border-color:var(--accent) }
+  #now { color:var(--mut); font-size:12.5px }
+  #now b { color:var(--ink) } #now code { color:#a6f0c6 }
+  #frame { flex:1; width:100%; border:0; background:#000 }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌀 Commons Portals</h1>
+  <p>Step through into a world. The hub loads each app in a sandboxed iframe and streams its world
+     data straight from the public commons repo over <code>raw.githubusercontent.com</code> — no server.
+     The app is the code; the repo is the world.</p>
+</header>
+<div id="grid"></div>
+
+<div id="stage">
+  <div id="bar">
+    <button id="back">← Hub</button>
+    <span id="now"></span>
+  </div>
+  <iframe id="frame" sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-fullscreen allow-modals"
+          allow="fullscreen; xr-spatial-tracking; gamepad" referrerpolicy="no-referrer"></iframe>
+</div>
+
+<script>
+const RAW = "https://raw.githubusercontent.com/kody-w/rapp-commons/main/";
+
+function tile(w) {
+  const stateUrl = RAW + w.state_dir;
+  const el = document.createElement("div");
+  el.className = "tile";
+  el.innerHTML =
+    `<h3>${w.name}</h3><p>${w.blurb}</p><span class="kind">${w.kind}</span>` +
+    `<div class="src">state ← ${stateUrl}</div>`;
+  el.onclick = () => enter(w);
+  return el;
+}
+
+function enter(w) {
+  const stateBase = RAW + w.state_dir;                 // repo-housed data, raw CDN
+  const stateUrl  = stateBase + (w.state_index || "");
+  // 1) load the world's surface (its bytecode) and tell it where its data lives
+  const u = new URL(w.surface_url);
+  u.searchParams.set("state", stateBase);
+  u.searchParams.set("commons", RAW);
+  if (w.slug) u.searchParams.set("world", w.slug);
+  const frame = document.getElementById("frame");
+  frame.src = u.toString();
+  document.getElementById("now").innerHTML =
+    `<b>${w.name}</b> — streaming state from <code>${w.state_dir}</code>`;
+  document.getElementById("stage").style.display = "flex";
+  // 2) once it loads, fetch the housed state and post it in (for apps that listen)
+  frame.onload = async () => {
+    if (!w.state_index) return;
+    try {
+      const st = await (await fetch(stateUrl, { cache: "no-store" })).json();
+      frame.contentWindow.postMessage(
+        { type: "rapp-portal/1.0", world: w.slug, state: st, commons: RAW, stateUrl }, "*");
+    } catch (e) { /* world has no JSON index yet — fine */ }
+  };
+}
+
+document.getElementById("back").onclick = () => {
+  document.getElementById("frame").src = "about:blank";
+  document.getElementById("stage").style.display = "none";
+};
+
+(async function () {
+  let reg;
+  try { reg = await (await fetch("worlds.json", { cache: "no-store" })).json(); }
+  catch (e) { document.getElementById("grid").innerHTML =
+    "<p style='color:#fb7185'>Couldn't load worlds.json — run this from the commons (GitHub Pages or a clone).</p>"; return; }
+  const grid = document.getElementById("grid");
+  (reg.worlds || []).forEach(w => grid.appendChild(tile(w)));
+  // deep-link: portal.html?world=<slug> opens straight into it
+  const want = new URLSearchParams(location.search).get("world");
+  if (want) { const w = (reg.worlds || []).find(x => x.slug === want); if (w) enter(w); }
+})();
+</script>
+</body>
+</html>

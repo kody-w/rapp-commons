@@ -1,0 +1,7 @@
+{
+  "schema": "rapp-portal-state/1.0",
+  "world": "nexus-worlds",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "sig": "pending-operator-signature",
+  "scenes": []
+}
