@@ -337,14 +337,27 @@ function makePortal(world, angle){
   // internal travel: walking through the portal teleports the camera to the
   // world's AREA spot inside THIS scene and streams its surface inline (no tab).
   const areaPos = new THREE.Vector3(x*0.62, DNA.cameraHeight, z*0.62);
+  // Voxel World is a NATIVE merged zone of THIS scene — entering it focuses the
+  // camera on the in-world buildable plot, never an iframe/link-out.
+  const isVoxel = String(world.slug||"").includes("voxel");
   interactables.push({
     group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:5.5, type:"portal",
     slug:world.slug, label:world.name, blurb:world.blurb, areaPos,
-    action:()=>{
+    action: isVoxel ? (async ()=>{
+      buildVoxelPlot();
+      travelTo(Object.assign(VOX.pos.clone(),{label:world.name}));  // focus the NATIVE plot (no iframe)
+      await loadVoxelWorld();
+      renderVoxelBlocks();
+      showRoomHud("Voxel Build",
+        `A native 16x16 plot — seed <b>${esc(String(VOX.seed))}</b>, ${VOX.blocks.size} blocks, ${VOX.ops.length} signed ops.<br>`+
+        `<span style="opacity:.6">voxel-world state wrapped, not rewritten — your edits are signed rapp-world-op/1.0 with your own rappid</span>`,
+        [ {label:"place a block (signed by you)", onClick:()=>voxelPlace(8,0,8,"gold")},
+          {label:"leave plot", onClick:()=>{ hideRoomHud(); }} ]);
+    }) : (()=>{
       travelTo(areaPos);
       const url = resolveUrl(world.surface_url);
       openSurface(world.name, "streaming inline from raw CDN — you stayed in the commons", url);
-    }
+    })
   });
 }
 
@@ -1106,6 +1119,160 @@ async function wwfPlay(word, at, dir, placements){
   return { ok:true, move:body };
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   VOXEL BUILD — a NATIVE in-world buildable plot inside THIS scene (no iframe).
+   A 16x16 patch of ground beside the Voxel World portal where the avatar can
+   PLACE and REMOVE colored blocks. Seeded from the EXISTING signed ops at
+   games/voxel-world/state/ops/ + state/world.json (same-origin first, raw CDN
+   fallback). Each place/mine APPENDS a signed rapp-world-op/1.0 op carrying the
+   player's OWN rappid — same shape as the existing voxel-world ops. We WRAP that
+   state shape (read the signed log, append to it); we never rewrite it.
+   ════════════════════════════════════════════════════════════════════════ */
+const VOX_N = 16;                       // a 16x16 buildable plot
+// colored block palette (block name -> hex). Unknown blocks fall back to stone.
+const VOX_COLORS = {
+  beacon:0x66ffe0, stone:0x8a8f99, grass:0x4caf50, dirt:0x8d6e4a,
+  wood:0xb5793a, glass:0x9fd8ff, gold:0xffd24a, ruby:0xe0405a,
+  sapphire:0x3f6fe0, obsidian:0x1b1430, snow:0xeef4ff
+};
+function voxColor(b){ return VOX_COLORS[b] != null ? VOX_COLORS[b] : VOX_COLORS.stone; }
+
+const VOX = {
+  pos:new THREE.Vector3(40, DNA.cameraHeight, 0),  // beside the voxel portal
+  WORLD:["games/voxel-world/state/world.json", RAW_BASE+"games/voxel-world/state/world.json"],
+  OPS:[                                            // existing signed ops (append-only log)
+    ["games/voxel-world/state/ops/0001-kody-w-2026-06-19T00-01-00Z.json",
+     RAW_BASE+"games/voxel-world/state/ops/0001-kody-w-2026-06-19T00-01-00Z.json"],
+    ["games/voxel-world/state/ops/0002-kody-w-2026-06-19T00-02-00Z.json",
+     RAW_BASE+"games/voxel-world/state/ops/0002-kody-w-2026-06-19T00-02-00Z.json"]
+  ],
+  built:false, loaded:false, seed:null,
+  blocks:new Map(),     // "x,y,z" -> {x,y,z,block,from}
+  ops:[],               // every signed rapp-world-op/1.0 (seed log + this session)
+  group:null, blockGroup:null
+};
+function voxKey(x,y,z){ return x+","+y+","+z; }
+
+function buildVoxelPlot(){
+  if (VOX.built) return;
+  const C = VOX.pos;
+  const g = new THREE.Group(); g.position.set(C.x,0,C.z); scene.add(g);
+  // the 16x16 buildable ground patch (a flat slab the blocks sit on top of).
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(VOX_N,0.5,VOX_N),
+    new THREE.MeshStandardMaterial({ color:0x223018, emissive:0x0a1606,
+      emissiveIntensity:0.4, roughness:0.95 }));
+  slab.position.y = 0.25; slab.receiveShadow = true; g.add(slab);
+  // grid lines on the plot so each 1x1 build cell is visible.
+  const lineMat = new THREE.LineBasicMaterial({ color:0x3a7a3a, transparent:true, opacity:0.5 });
+  for (let i=0;i<=VOX_N;i++){
+    const t = i - VOX_N/2;
+    const gv = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(t,0.52,-VOX_N/2),new THREE.Vector3(t,0.52,VOX_N/2)]);
+    const gh = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-VOX_N/2,0.52,t),new THREE.Vector3(VOX_N/2,0.52,t)]);
+    g.add(new THREE.Line(gv,lineMat)); g.add(new THREE.Line(gh,lineMat));
+  }
+  const warm = new THREE.PointLight(0x88ffaa, 1.1, 26); warm.position.set(0,6,0); g.add(warm);
+  g.add(makeLabel("Voxel Build", 0xaaffcc, 5.0));
+  VOX.group = g; VOX.built = true;
+}
+
+// (re)draw every block in VOX.blocks as a colored cube on the plot. Blocks are
+// positioned by their op (x,y,z) relative to the plot origin.
+function renderVoxelBlocks(){
+  if (!VOX.built) return;
+  if (!VOX.blockGroup){ VOX.blockGroup = new THREE.Group(); VOX.group.add(VOX.blockGroup); }
+  const grp = VOX.blockGroup;
+  while (grp.children.length){ const c=grp.children.pop();
+    if (c.material){ const m=[].concat(c.material); m.forEach(mm=>mm.dispose()); }
+    if (c.geometry) c.geometry.dispose(); }
+  for (const b of VOX.blocks.values()){
+    const col = voxColor(b.block);
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(0.95,0.95,0.95),
+      new THREE.MeshStandardMaterial({ color:col, emissive:col, emissiveIntensity:0.25, roughness:0.7 }));
+    // clamp huge seed y's (e.g. y=40) so they read as a tall column instead of off-screen.
+    const bx = (b.x % VOX_N) - VOX_N/2 + 0.5;
+    const bz = (b.z % VOX_N) - VOX_N/2 + 0.5;
+    cube.position.set(bx, 0.5 + (b.y||0)*0.0 + 1.0, bz);
+    cube.castShadow = true;
+    grp.add(cube);
+  }
+}
+
+// apply one signed op to the in-memory block map (place adds, mine removes).
+function voxApplyOp(op){
+  if (!op || (op.op!=="place" && op.op!=="mine")) return;
+  const k = voxKey(op.x|0, op.y|0, op.z|0);
+  if (op.op==="place") VOX.blocks.set(k, { x:op.x|0, y:op.y|0, z:op.z|0, block:op.block||"stone", from:op.from||null });
+  else VOX.blocks.delete(k);
+}
+
+// seed the plot from the EXISTING signed world (read-only surfacing of state/).
+async function loadVoxelWorld(){
+  if (VOX.loaded) return;
+  VOX.loaded = true;
+  const world = await fetchJSON(VOX.WORLD) || {};
+  VOX.seed = (world.seed!=null) ? world.seed : null;
+  for (const urls of VOX.OPS){
+    const op = await fetchJSON(urls);
+    if (op){ VOX.ops.push(op); voxApplyOp(op); }
+  }
+  renderVoxelBlocks();
+}
+
+/* ── Headless inspection surface: a JSON snapshot of the live voxel plot. Reads the
+      same VOX state the signed op log drives; never signs, never mutates. ──────── */
+function voxelState(){
+  return {
+    seed: VOX.seed,
+    blocks: [...VOX.blocks.values()].map(b=>({ x:b.x, y:b.y, z:b.z, block:b.block, from:b.from })),
+    ops: VOX.ops.map(o=>({ op:o.op, x:o.x, y:o.y, z:o.z, block:o.block, from:o.from, ts:o.ts, sig:o.sig })),
+    built: !!VOX.built
+  };
+}
+
+// append a signed rapp-world-op/1.0 — WRAPS the existing op shape (place|mine).
+async function voxelAppendOp(kind, x, y, z, block){
+  if (!ME.key) return { error:"cannot sign — no key; op not shipped" };
+  await loadVoxelWorld();              // ensure the seed log is loaded before we append
+  const body = {
+    schema:"rapp-world-op/1.0",
+    game:"voxel-world",
+    seq:(VOX.ops.length || 0) + 1,
+    player:"you",
+    from: ME.rappid,                   // signed by the player's OWN rappid (never a human stand-in)
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    op: kind,
+    x:x|0, y:y|0, z:z|0
+  };
+  if (kind==="place") body.block = block || "stone";
+  const sig = await signEvent(body);
+  body.sig = sig; body.pub = ME.pubJwk;
+  VOX.ops.push(body);
+  voxApplyOp(body);
+  renderVoxelBlocks();
+  return { ok:true, op:body };
+}
+function voxelPlace(x,y,z,block){ return voxelAppendOp("place", x, y, z, block); }
+function voxelMine(x,y,z){ return voxelAppendOp("mine", x, y, z, null); }
+
+function registerVoxelRoom(){
+  buildVoxelPlot();
+  makeAreaInteractable({
+    pos:VOX.pos, radius:8, type:"area", label:"Voxel Build", slug:"voxel-build",
+    blurb:"A NATIVE 16x16 buildable plot in this scene. Place/mine colored blocks; every edit is a signed rapp-world-op/1.0 wrapping the existing voxel-world state — no link-out.",
+    action: async ()=>{
+      travelTo(Object.assign(VOX.pos.clone(),{label:"Voxel Build"}));  // focus camera on the plot (NO iframe)
+      await loadVoxelWorld();
+      renderVoxelBlocks();
+      const demo = ()=>voxelPlace(8,0,8,"gold");
+      showRoomHud("Voxel Build",
+        `A native 16x16 plot — seed <b>${esc(String(VOX.seed))}</b>, ${VOX.blocks.size} blocks, ${VOX.ops.length} signed ops.<br>`+
+        `<span style="opacity:.6">existing voxel-world state wrapped, not rewritten — your edits are signed rapp-world-op/1.0 with your own rappid</span>`,
+        [ {label:"place a block (signed by you)", onClick:demo},
+          {label:"leave plot", onClick:()=>{ hideRoomHud(); }} ]);
+    }
+  });
+}
+
 function registerWordsRoom(){
   buildWordsTable();
   makeAreaInteractable({
@@ -1466,6 +1633,7 @@ async function boot(){
   buildSquare();
   registerPokerRoom();
   registerWordsRoom();
+  registerVoxelRoom();
 
   toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · poker + words rooms · ${(npcReg.npcs||[]).length} residents (one world, no link-outs)`);
 }
@@ -1651,6 +1819,12 @@ boot();
     pokerState: () => (typeof pokerState === "function" ? pokerState() : null),
     // live Words-with-Friends board snapshot (board grid + signed tiles + scores + turn).
     wwfState: () => (typeof wwfState === "function" ? wwfState() : null),
+    // NATIVE voxel-build plot: place/mine colored blocks (each a signed rapp-world-op/1.0
+    // with the player's OWN rappid) and inspect the live seeded plot. WRAPS the existing
+    // games/voxel-world/state/ shape; never opens an iframe/window.
+    voxelPlace: (x,y,z,block) => (typeof voxelPlace === "function" ? voxelPlace(x,y,z,block) : null),
+    voxelMine:  (x,y,z)       => (typeof voxelMine  === "function" ? voxelMine(x,y,z)        : null),
+    voxelState: ()            => (typeof voxelState === "function" ? voxelState()            : null),
     // convenience: identity + a one-shot full snapshot for headless callers.
     me: () => ({ rappid: ME.rappid, fp: ME.fp }),
     snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })

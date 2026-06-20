@@ -110,6 +110,41 @@ async def run():
                        "sample": tiles[:3]})
             else:
                 check("wwf_renders", False, "window.commonsAgent.wwfState missing")
+
+            # voxel_area: enter the NATIVE voxel-build zone (must NOT open an
+            # iframe/window — it's a merged plot of the ONE scene), place a block,
+            # and assert voxelState() shows the placed block carrying a rappid
+            # `from` (signed by the player's OWN rappid, never a human stand-in).
+            has_voxel = await ev("()=>typeof window.commonsAgent.voxelState==='function'", False)
+            if has_voxel:
+                await ev("()=>{try{window.commonsAgent.enter('voxel');}catch(e){}return 1}")
+                # the plot seeds from the existing signed ops asynchronously; poll.
+                st = None
+                for _ in range(40):
+                    st = await ev("()=>{try{return window.commonsAgent.voxelState()}catch(e){return null}}", None)
+                    if st and st.get("built"):
+                        break
+                    await page.wait_for_timeout(250)
+                # place a block via the player's own rappid, then re-read state.
+                placed = await ev(
+                    "()=>{try{return Promise.resolve(window.commonsAgent.voxelPlace(3,0,5,'ruby'))"
+                    ".then(()=>true)}catch(e){return false}}", False)
+                # voxelPlace is async (signs the op) — give it a tick to settle.
+                await page.wait_for_timeout(500)
+                st = await ev("()=>{try{return window.commonsAgent.voxelState()}catch(e){return null}}", None) or {}
+                blocks = st.get("blocks") or []
+                mine = [b for b in blocks
+                        if b.get("x") == 3 and b.get("y") == 0 and b.get("z") == 5
+                        and str(b.get("from", "")).startswith("rappid:")]
+                rappid_blocks = [b for b in blocks if str(b.get("from", "")).startswith("rappid:")]
+                check("voxel_area",
+                      bool(placed) and len(mine) >= 1 and len(blocks) >= 1
+                      and len(rappid_blocks) == len(blocks) and st.get("seed") is not None,
+                      {"placed": placed, "blocks": len(blocks),
+                       "rappid_blocks": len(rappid_blocks),
+                       "seed": st.get("seed"), "sample": blocks[:3]})
+            else:
+                check("voxel_area", False, "window.commonsAgent.voxelState missing")
         await b.close()
     print_summary()
 
