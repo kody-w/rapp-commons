@@ -485,6 +485,59 @@ async def run():
             else:
                 check("cohesion_hud", False,
                       "window.commonsAgent.minimap/feed missing")
+
+            # apex_coop: the headline venue — APEX is a NATIVE in-world CO-OP
+            # action zone (Left 4 Dead-style cooperative survival, but LOCAL AI
+            # co-op). The PLAYER + AI RESIDENT teammates defend escalating WAVES
+            # of enemies together; teammates can go DOWN and be REVIVED; clearing
+            # a wave advances. Each participant acts on its OWN rappid, and the key
+            # co-op events (wave_start/enemy_down/teammate_down/revive/wave_cleared)
+            # are SIGNED via the existing signAs path onto the existing append-only
+            # signed stream under schema rapp-commons-apex/1.0. enter('apex') focuses
+            # the native zone (NO iframe / NO window.open). LOCAL only — zero peer.
+            # Over a short poll assert:
+            #   • apexState() shows a squad of >=2 (player + >=1 AI teammate), each
+            #     carrying a rappid `from`, AND a wave in progress (wave>=1 or
+            #     enemiesAlive>=1), AND
+            #   • >=1 SIGNED rapp-commons-apex/1.0 co-op event lives on the same
+            #     append-only persist stream (localStorage), each with a rappid
+            #     `from` + a real signature.
+            has_apex = await ev("()=>typeof window.commonsAgent.apexState==='function'", False)
+            if has_apex:
+                # entering the arena focuses the camera + starts the native co-op loop.
+                await ev("()=>{try{window.commonsAgent.enter('apex');}catch(e){}return 1}")
+                asnap = lambda: ev("()=>{try{return window.commonsAgent.apexState()}catch(e){return null}}", None)
+                # a signed rapp-commons-apex/1.0 co-op event on the SAME append-only
+                # signed stream (read straight off the localStorage persist log).
+                signed_on_stream = lambda: ev(
+                    "()=>{try{const raw=localStorage.getItem('rapp-commons:persist:log/1');"
+                    "if(!raw)return false;const log=JSON.parse(raw);"
+                    "return log.some(r=>r.schema==='rapp-commons-apex/1.0'"
+                    "&&/^rappid:/.test(r.from||'')&&typeof r.sig==='string'&&r.sig.length>0);}"
+                    "catch(e){return false}}", False)
+                squad_ok = False
+                wave_ok = False
+                sig_ok = False
+                sample = {}
+                for _ in range(40):                  # ~12s of polling for a live defense
+                    st = await asnap() or {}
+                    squad = st.get("squad") or []
+                    rappid_squad = [m for m in squad if str(m.get("from", "")).startswith("rappid:")]
+                    # >=2 squad members (player + >=1 AI teammate), each a rappid `from`.
+                    squad_ok = len(squad) >= 2 and len(rappid_squad) == len(squad)
+                    wave_ok = (st.get("wave", 0) or 0) >= 1 or (st.get("enemiesAlive", 0) or 0) >= 1
+                    sig_ok = bool(await signed_on_stream())
+                    sample = {"wave": st.get("wave"), "status": st.get("status"),
+                              "squad": len(squad), "rappid_squad": len(rappid_squad),
+                              "enemiesAlive": st.get("enemiesAlive"),
+                              "sig_on_stream": sig_ok}
+                    if squad_ok and wave_ok and sig_ok:
+                        break
+                    await page.wait_for_timeout(300)
+                check("apex_coop",
+                      squad_ok and wave_ok and sig_ok, sample)
+            else:
+                check("apex_coop", False, "window.commonsAgent.apexState missing")
         await b.close()
     print_summary()
 

@@ -2279,6 +2279,11 @@ async function spawnResidents(){
   // the bounty board comes alive too: residents post + claim + complete signed
   // tasks on a slow heartbeat, so a visitor at breakfast finds a living market.
   startBountyAutoLoop();
+  // the APEX co-op arena comes alive: a live escalating wave runs and wandering
+  // residents JOIN the squad, each acting on its OWN rappid. Local AI co-op only.
+  try { await apexEnsureSquad(); } catch(e){}
+  startApexAutoLoop();
+  startApexRecruitLoop();
   return RESIDENTS.length;
 }
 
@@ -2749,6 +2754,351 @@ function animate(){
   renderer.render(scene, camera);
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   APEX PROTOCOL — a NATIVE in-world CO-OP action ZONE (the headline venue).
+
+   A Left 4 Dead-style cooperative survival loop, but LOCAL AI co-op: the
+   PLAYER + AI RESIDENT teammates defend a gritty/neon arena together against
+   escalating WAVES of enemies. Enemies SPAWN, ADVANCE on the squad, and get
+   DOWNED; a teammate can go DOWN and be REVIVED; clear a wave to advance.
+
+   Each participant (player + each AI teammate) acts on its OWN rappid. The key
+   co-op events — wave_start, enemy_down, teammate_down, revive, wave_cleared —
+   are SIGNED via the EXISTING signAs path and mirrored onto the EXISTING signed
+   append-only stream (renderEvent + persistAppend) under a new schema
+   rapp-commons-apex/1.0. Purely additive, rendered NATIVELY in THIS Three.js
+   scene (apex aesthetic ported, not the external app embedded).
+
+   LOCAL ONLY — player + AI-resident teammates, ZERO peer connection / PeerJS /
+   WebSocket / broker / new dependency. enter('apex') focuses the native zone
+   (no iframe, no new browser window/tab, no openSurface). Play only, no stakes.
+
+   PR-gate: a real human squadmate across DEVICES (true co-op multiplayer) would
+   require peer/broker sync of the squad + enemy state across machines. That is a
+   future multiplayer PR — do NOT build peer sync here; this zone is local AI
+   co-op only and must never auto-open a network connection.
+   ════════════════════════════════════════════════════════════════════════ */
+const APEX = {
+  pos:new THREE.Vector3(22, DNA.cameraHeight, 34),   // its own corner (mirror of the board)
+  built:false, group:null, enemyGroup:null,
+  wave:0,                       // current wave number (0 = not started)
+  status:"idle",                // idle | active | wiped | cleared
+  squad:[],                     // [{name, being, from, down, isPlayer, mesh, npc}]
+  enemies:[],                   // live enemies: {id, being, mesh, hp, x, z, alive}
+  toSpawn:0,                    // enemies still to spawn this wave
+  spawned:0,                    // enemies spawned this wave
+  killed:0,                     // enemies killed this wave
+  _seq:0, _timer:null, _started:false, _busy:false
+};
+
+// mint one APEX enemy as its OWN being so its down event can be signed by it.
+async function apexMintEnemy(){
+  const being = await mintBeing("Enemy-" + (++APEX._seq));
+  const ang = Math.random()*Math.PI*2, r = 14 + Math.random()*4;
+  return { id:APEX._seq, being, x:Math.cos(ang)*r, z:Math.sin(ang)*r,
+           hp:1, alive:true, mesh:null };
+}
+
+// compose + SIGN one co-op event as a being onto the EXISTING signed stream.
+// kind ∈ wave_start | enemy_down | teammate_down | revive | wave_cleared.
+// Mirrors every other venue: signAs (the existing path) -> renderEvent +
+// persistAppend (the existing append-only stream). null sig => not shipped.
+async function apexSignEvent(being, kind, fields){
+  if (!being) return null;
+  const body = Object.assign({
+    schema:"rapp-commons-apex/1.0",
+    kind,
+    from: being.rappid,                  // the actor's OWN rappid — never a human handle
+    wave: APEX.wave|0,
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z")
+  }, fields||{});
+  body.sig = await signAs(being, body);  // signed by the actor, or null
+  if (!body.sig) return null;            // can't sign -> not shipped (same rule everywhere)
+  body.pub = being.pubJwk || {};
+  const line =
+    kind === "wave_start"    ? "🌊 wave " + (body.wave) + " begins — hold the line" :
+    kind === "enemy_down"    ? "💥 enemy down (wave " + body.wave + ")" :
+    kind === "teammate_down" ? "🆘 " + (fields&&fields.who||"a teammate") + " is DOWN" :
+    kind === "revive"        ? "🧬 revived " + (fields&&fields.who||"a teammate") :
+    kind === "wave_cleared"  ? "✅ wave " + body.wave + " cleared" :
+                               "apex " + kind;
+  if (typeof renderEvent === "function")
+    renderEvent({ from:body.from, body:line, ts:body.ts, mine:false });
+  persistAppend(body);                   // remember this signed co-op event across reloads
+  return body;
+}
+
+/* ── 3D ARENA BUILD — a gritty/neon defend zone in THIS scene. Visual only:
+      a scarred dais, a hazard-striped perimeter, hot neon rim lights. ──────── */
+function buildApexArena(){
+  if (APEX.built) return;
+  const C = APEX.pos;
+  const g = new THREE.Group(); g.position.set(C.x,0,C.z); scene.add(g);
+  APEX.group = g;
+
+  // scarred steel dais (the defensible ground).
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(9,9.6,0.4,48),
+    new THREE.MeshStandardMaterial({ color:0x161013, emissive:0x401004,
+      emissiveIntensity:0.35, roughness:0.9, metalness:0.4 }));
+  dais.position.y = 0.2; dais.receiveShadow = true; g.add(dais);
+
+  // a hot neon containment ring (apex aesthetic — orange/red hazard glow).
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(9.0, 0.22, 14, 60),
+    new THREE.MeshStandardMaterial({ color:0xff3b1f, emissive:0xff3b1f,
+      emissiveIntensity:1.8, metalness:0.6, roughness:0.25 }));
+  ring.rotation.x = Math.PI/2; ring.position.y = 0.5; g.add(ring);
+
+  // hazard pylons around the perimeter (gritty industrial markers).
+  const pylonMat = new THREE.MeshStandardMaterial({ color:0x111111, emissive:0xffae00,
+    emissiveIntensity:0.5, roughness:0.7, metalness:0.5 });
+  for (let i=0;i<8;i++){
+    const a = (i/8)*Math.PI*2;
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.5,2.4,0.5), pylonMat);
+    p.position.set(Math.cos(a)*8.4, 1.2, Math.sin(a)*8.4); p.castShadow = true; g.add(p);
+  }
+  const rim1 = new THREE.PointLight(0xff5a2a, 1.4, 30); rim1.position.set(0,5,0); g.add(rim1);
+  const rim2 = new THREE.PointLight(0x2affd0, 0.6, 24); rim2.position.set(0,2,7); g.add(rim2);
+  g.add(makeLabel("APEX PROTOCOL", 0xff7a3a, 7.0));
+
+  APEX.enemyGroup = new THREE.Group(); g.add(APEX.enemyGroup);
+  APEX.built = true;
+  renderApexEnemies();
+}
+
+// (re)draw the live enemies as menacing neon husks advancing on the dais.
+function renderApexEnemies(){
+  if (!APEX.built || !APEX.enemyGroup) return;
+  const grp = APEX.enemyGroup;
+  while (grp.children.length){ const c=grp.children.pop();
+    if (c.material){ c.material.dispose && c.material.dispose(); }
+    if (c.geometry) c.geometry.dispose(); }
+  for (const e of APEX.enemies){
+    if (!e.alive) continue;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.8,1.6,0.8),
+      new THREE.MeshStandardMaterial({ color:0x2a0a0a, emissive:0xff2a1a,
+        emissiveIntensity:0.9, roughness:0.6 }));
+    m.position.set(e.x, 0.8, e.z); m.castShadow = true;
+    grp.add(m); e.mesh = m;
+  }
+}
+
+// the squad: the PLAYER (acting on ME's own rappid) + AI resident teammates
+// (each on its OWN rappid). Seed the player + a couple residents as teammates.
+function apexPlayerBeing(){
+  // the player acts on ME's own rappid; wrap ME in a being-shaped signer.
+  return { name:"You", rappid:ME.rappid, key:ME.key, pubJwk:ME.pubJwk };
+}
+async function apexEnsureSquad(){
+  if (!APEX.squad.some(m=>m.isPlayer)){
+    APEX.squad.push({ name:"You", being:apexPlayerBeing(), from:ME.rappid,
+                      down:false, isPlayer:true, npc:null });
+  }
+  // recruit up to 3 resident teammates (each its OWN rappid via the existing mint).
+  const want = 3;
+  for (const res of RESIDENTS){
+    if (APEX.squad.length >= 1 + want) break;
+    if (APEX.squad.some(m=>m.from === res.being.rappid)) continue;
+    APEX.squad.push({ name:res.name, being:res.being, from:res.being.rappid,
+                      down:false, isPlayer:false, npc:res.npc, res });
+  }
+  // if no residents minted yet, spin up a couple AI teammates directly.
+  while (APEX.squad.length < 2){
+    const b = await mintBeing("Ranger-" + (APEX.squad.length));
+    APEX.squad.push({ name:b.name, being:b, from:b.rappid, down:false, isPlayer:false, npc:null });
+  }
+  return APEX.squad;
+}
+
+// a wandering resident JOINS the squad (signed via its OWN rappid presence).
+async function apexJoinResident(res){
+  if (!res || APEX.squad.some(m=>m.from === res.being.rappid)) return null;
+  APEX.squad.push({ name:res.name, being:res.being, from:res.being.rappid,
+                    down:false, isPlayer:false, npc:res.npc, res });
+  return res.being.rappid;
+}
+
+// begin one wave: scale the enemy count, sign a wave_start by the player, spawn.
+async function apexStartWave(){
+  APEX.wave = (APEX.wave|0) + 1;
+  APEX.status = "active";
+  APEX.toSpawn = 3 + APEX.wave * 2;      // escalating count
+  APEX.spawned = 0; APEX.killed = 0;
+  await apexEnsureSquad();
+  const player = APEX.squad.find(m=>m.isPlayer);
+  if (player) await apexSignEvent(player.being, "wave_start", { count:APEX.toSpawn });
+  // spawn the first couple immediately so a visitor sees the fight at once.
+  await apexSpawnTick(); await apexSpawnTick();
+}
+
+// spawn ONE enemy if the wave still owes some.
+async function apexSpawnTick(){
+  if (APEX.status !== "active" || APEX.spawned >= APEX.toSpawn) return;
+  const e = await apexMintEnemy();
+  APEX.enemies.push(e); APEX.spawned++;
+  renderApexEnemies();
+}
+
+// advance living enemies toward the dais centre (they close on the squad).
+function apexAdvanceEnemies(){
+  for (const e of APEX.enemies){
+    if (!e.alive) continue;
+    const d = Math.hypot(e.x, e.z) || 1;
+    const step = 0.6;
+    e.x -= (e.x/d)*step; e.z -= (e.z/d)*step;
+  }
+  if (APEX.built) renderApexEnemies();
+}
+
+// a squadmate downs one advancing enemy — signed enemy_down by THAT member's
+// OWN rappid. Returns the signed record or null.
+async function apexMemberFires(member){
+  const target = APEX.enemies.find(e=>e.alive);
+  if (!target) return null;
+  target.alive = false; target.hp = 0;
+  APEX.killed++;
+  // the enemy itself co-signs its own down too (its being) so the stream carries
+  // a record from a distinct rappid; the killer's signed enemy_down is canonical.
+  const rec = await apexSignEvent(member.being, "enemy_down",
+    { enemy: target.being.rappid, by: member.from });
+  if (APEX.built) renderApexEnemies();
+  return rec;
+}
+
+// occasionally a teammate (never the player auto-down) goes DOWN under pressure —
+// signed teammate_down by that member; another upright member REVIVES (signed).
+async function apexMaybeDownAndRevive(){
+  const upright = APEX.squad.filter(m=>!m.down);
+  // down a non-player teammate if enough enemies are pressing and we have spares.
+  const pressing = APEX.enemies.filter(e=>e.alive && Math.hypot(e.x,e.z) < 5).length;
+  if (pressing >= 2 && upright.length >= 3){
+    const victim = upright.find(m=>!m.isPlayer);
+    if (victim){
+      victim.down = true;
+      await apexSignEvent(victim.being, "teammate_down", { who:victim.name });
+      return;
+    }
+  }
+  // revive a downed teammate: an upright member signs a revive for them.
+  const downed = APEX.squad.find(m=>m.down);
+  if (downed){
+    const reviver = APEX.squad.find(m=>!m.down);
+    if (reviver){
+      downed.down = false;
+      await apexSignEvent(reviver.being, "revive", { who:downed.name, by:reviver.from });
+    }
+  }
+}
+
+// the co-op heartbeat: spawn, advance, squad fires, down/revive, and on a clear
+// sign wave_cleared + advance to the next wave. LOCAL only; never networked.
+async function apexCombatBeat(){
+  if (APEX._busy) return; APEX._busy = true;
+  try {
+    if (APEX.status === "idle"){ await apexStartWave(); return; }
+    if (APEX.status !== "active"){ return; }
+    await apexSpawnTick();                      // top up spawns
+    apexAdvanceEnemies();                        // enemies close in
+    await apexEnsureSquad();
+    // each upright squad member takes a shot at an advancing enemy.
+    for (const m of APEX.squad){
+      if (m.down) continue;
+      if (APEX.enemies.some(e=>e.alive)) await apexMemberFires(m);
+    }
+    await apexMaybeDownAndRevive();              // pressure: a down + a revive
+    // wave cleared when everything owed has spawned and nothing's left alive.
+    if (APEX.spawned >= APEX.toSpawn && !APEX.enemies.some(e=>e.alive)){
+      APEX.status = "cleared";
+      const player = APEX.squad.find(m=>m.isPlayer) || APEX.squad[0];
+      if (player) await apexSignEvent(player.being, "wave_cleared", { killed:APEX.killed });
+      APEX.enemies = []; renderApexEnemies();
+      if (APEX.built) renderApexHud();
+      // brief beat, then escalate to the next wave.
+      setTimeout(()=>{ APEX.status = "active";
+        apexStartWave().catch(()=>{}); }, 1400);
+    }
+  } catch(e){ /* never let the loop die */ }
+  finally { APEX._busy = false; if (APEX.built) renderApexHud(); }
+}
+function startApexAutoLoop(){
+  if (APEX._started) return;
+  APEX._started = true;
+  const beat = async () => {
+    try { await apexCombatBeat(); } catch(e){}
+    APEX._timer = setTimeout(beat, 1100 + Math.random()*900);   // ~1.1-2s
+  };
+  // kick off the first wave promptly so a visitor sees a live fight in seconds.
+  APEX._timer = setTimeout(beat, 700 + Math.random()*600);
+}
+
+// live HUD: wave / status / squad / enemies alive (read-only of APEX state).
+function renderApexHud(){
+  if (!APEX.built) return;
+  const roomHud = document.getElementById("roomHud");
+  if (!roomHud || roomHud.style.display === "none" ||
+      document.getElementById("roomHudTitle").textContent.indexOf("APEX") < 0) return;
+  const alive = APEX.enemies.filter(e=>e.alive).length;
+  const squad = APEX.squad.map(m =>
+    (m.down?"🆘 ":"🟢 ") + esc(m.name) + " <span style='opacity:.5'>"+esc(String(m.from).slice(0,18))+"</span>").join("<br>");
+  document.getElementById("roomHudBody").innerHTML =
+    `Wave <b>${APEX.wave}</b> · <b>${esc(APEX.status)}</b> · ${alive} enemies advancing<br>`+
+    `<span style="opacity:.85">${squad}</span><br>`+
+    `<span style="opacity:.6">player + AI residents defend together — each co-op event signed by its own rappid on the rapp-commons-apex/1.0 stream. Local AI co-op; cross-device squadmates are a future multiplayer PR.</span>`;
+}
+
+// Enter the NATIVE apex zone: build it, fly the camera there (NO iframe/window),
+// ensure the squad + a live wave, and surface a HUD. Zero openSurface.
+function enterApexArena(label){
+  buildApexArena();
+  travelTo(Object.assign(APEX.pos.clone(), { label: label || "APEX Protocol" }));
+  startApexAutoLoop();
+  // ensure a squad + a wave is live the instant we arrive (don't wait a full beat).
+  (async ()=>{ try {
+    await apexEnsureSquad();
+    if (APEX.status === "idle") await apexStartWave();
+  } catch(e){} })();
+  showRoomHud("APEX PROTOCOL — co-op survival",
+    `Loading the defense…`,
+    [ {label:"leave the arena", onClick:()=>{ hideRoomHud(); }} ]);
+  setTimeout(renderApexHud, 300);
+}
+
+// headless inspection surface for the native co-op zone.
+//   { wave, status, squad:[{name,from,down}], enemiesAlive }
+function apexState(){
+  return {
+    wave: APEX.wave|0,
+    status: APEX.status,
+    squad: APEX.squad.map(m => ({ name:m.name, from:m.from, down:!!m.down })),
+    enemiesAlive: APEX.enemies.filter(e=>e.alive).length
+  };
+}
+
+function registerApexArena(){
+  buildApexArena();
+  makeAreaInteractable({
+    pos:APEX.pos, radius:9, type:"area", label:"APEX Protocol", slug:"apex",
+    blurb:"A NATIVE co-op survival arena in this scene — the player + AI resident teammates defend escalating waves together. Each co-op event (wave_start/enemy_down/teammate_down/revive/wave_cleared) is signed by its actor's own rappid on the rapp-commons-apex/1.0 stream. Local AI co-op, no link-out.",
+    action: ()=> enterApexArena("APEX Protocol")
+  });
+}
+
+/* ── APEX RECRUIT LOOP — wandering residents drifting near the arena JOIN the
+      squad on a slow heartbeat, so the defense fills out over breakfast. Each
+      join is the resident acting on its OWN rappid. LOCAL only. ────────────── */
+let _apexRecruitTimer = null;
+function startApexRecruitLoop(){
+  if (_apexRecruitTimer) return;
+  const beat = async () => {
+    try {
+      // a resident near the arena (or any spare resident) joins the squad.
+      const free = RESIDENTS.find(r => !APEX.squad.some(m=>m.from===r.being.rappid));
+      if (free && APEX.squad.length < 5) await apexJoinResident(free);
+    } catch(e){ /* keep the squad alive */ }
+    _apexRecruitTimer = setTimeout(beat, 3000 + Math.random()*3000);
+  };
+  _apexRecruitTimer = setTimeout(beat, 1500 + Math.random()*1500);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
@@ -2780,6 +3130,7 @@ async function boot(){
   registerBountyRoom();
   registerVoxelRoom();
   registerNexusArea();
+  registerApexArena();
 
   // RESIDENTS — spawn a few autonomous signing beings (Pip + Atlas among them)
   // that wander between the now-registered areas + homes on a slow heartbeat.
@@ -3218,6 +3569,13 @@ boot();
     // and claim/complete each other's on a slow heartbeat, each action a signed
     // rapp-commons-bounty/1.0 on the same append-only stream under its own rappid.
     bounties: () => (typeof commonsBounties === "function" ? commonsBounties() : []),
+    // the APEX co-op arena: the NATIVE Left-4-Dead-style cooperative survival zone.
+    // The player + AI resident teammates defend escalating waves together; each
+    // co-op event (wave_start/enemy_down/teammate_down/revive/wave_cleared) is
+    // signed by its actor's OWN rappid on the rapp-commons-apex/1.0 stream.
+    // Returns { wave, status, squad:[{name,from,down}], enemiesAlive }. Local AI
+    // co-op only — cross-device squadmates are a future multiplayer PR (no peer).
+    apexState: () => (typeof apexState === "function" ? apexState() : { wave:0, status:"idle", squad:[], enemiesAlive:0 }),
     // DURABLE MEMORY (additive, read-only): the world remembers across reloads.
     // persist() reports how many signed records the durable localStorage log holds
     // (every voxel op / post / move / resident action this session is mirrored
