@@ -2106,13 +2106,30 @@ async function residentBountyBeat(){
     if (mineClaimed){
       // complete a bounty I claimed — open -> claimed -> done.
       const out = await bountyCompleteAs(res.being, mineClaimed.id);
-      if (out) did = "bounty:done:" + mineClaimed.id;
+      if (out){
+        did = "bounty:done:" + mineClaimed.id;
+        // BOND: completing SOMEONE ELSE's bounty HELPED its poster — signed
+        // relationship (worker -> poster). Skip self-posted bounties.
+        if (typeof relRecord === "function" && mineClaimed.from && mineClaimed.from !== res.being.rappid){
+          try { await relRecord(res.being, res.name, mineClaimed.from, "helped", 3,
+                                "completed your bounty: " + (mineClaimed.title||mineClaimed.id)); }
+          catch(e){ /* never break the market heartbeat */ }
+        }
+      }
     } else if (openOther && (openCount >= 3 || Math.random() < 0.6)){
       // claim SOMEONE ELSE's open bounty (always work it down when several are
       // open, so the market deterministically advances open -> claimed by a
       // DIFFERENT rappid — never starves on randomness).
       const out = await bountyClaimAs(res.being, openOther.id);
-      if (out) did = "bounty:claim:" + openOther.id;
+      if (out){
+        did = "bounty:claim:" + openOther.id;
+        // BOND: claiming SOMEONE ELSE's bounty starts a helping bond.
+        if (typeof relRecord === "function" && openOther.from && openOther.from !== res.being.rappid){
+          try { await relRecord(res.being, res.name, openOther.from, "helped", 2,
+                                "claimed your bounty: " + (openOther.title||openOther.id)); }
+          catch(e){ /* never break the market heartbeat */ }
+        }
+      }
     } else {
       // post a fresh bounty pointing at one of the other venues.
       const q = BOUNTY_QUESTS[_bountyTick % BOUNTY_QUESTS.length];
@@ -2284,6 +2301,10 @@ async function spawnResidents(){
   try { await apexEnsureSquad(); } catch(e){}
   startApexAutoLoop();
   startApexRecruitLoop();
+  // the villagers come ALIVE socially: on a slow heartbeat they build SIGNED
+  // bonds with each other + with the PLAYER, remember those bonds across reloads,
+  // and drift toward higher-affinity friends. Local AI, signed by each own rappid.
+  startRelationshipHeartbeat();
   return RESIDENTS.length;
 }
 
@@ -2324,6 +2345,223 @@ function commonsResidents(){
       lastAction: r.lastAction
     };
   });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   4c. RELATIONSHIPS + MEMORY — Animal-Crossing-style villagers who build BONDS
+   and REMEMBER. When residents interact (play poker / words together, revive
+   each other in apex, claim each other's bounties, pass nearby) — and when the
+   PLAYER is near / plays with / is helped by a resident — the ACTOR emits ONE
+   SIGNED rapp-commons-relationship/1.0 record via the EXISTING signAs path,
+   building a per-pair AFFINITY score. Residents who know the player GREET them
+   by name with a memory ("good to see you again — that was a fun hand").
+
+   PURELY ADDITIVE: it reuses the EXISTING being signing (signAs), the EXISTING
+   append-only persist stream (persistAppend), the EXISTING feed (renderEvent),
+   and the EXISTING rehydrate replay (persistReplay handles the new schema). No
+   new identity / protocol / dependency surface — each event SIGNED by its
+   actor's OWN rappid. LOCAL only; ZERO network / peer / window / iframe.
+
+   One record:
+     { schema:"rapp-commons-relationship/1.0", from <rappid>, with <rappid|player>,
+       ts, kind:'met'|'played'|'helped'|'gift'|'greet', affinity_delta, note,
+       sig, pub }
+   ──────────────────────────────────────────────────────────────────────── */
+const RELATIONSHIPS = {
+  byPair: new Map(),   // "from|with" -> { from, with, affinity, lastKind, ts, note }
+  KINDS: { met:1, played:2, helped:3, gift:4, greet:1 }   // default affinity weight per kind
+};
+
+// stable pair key — ordering is directional (the ACTOR signed FROM->WITH), so a
+// bond is tracked per-actor (Animal-Crossing villagers each hold their OWN view).
+function relPairKey(from, withId){ return String(from) + "|" + String(withId); }
+
+// fold ONE relationship record onto the live per-pair affinity model. Read-only
+// of the signed record — used both for fresh events AND for rehydrate replay so
+// bonds SURVIVE a reload. Never signs, never persists.
+function relApply(rec){
+  if (!rec || !rec.from || !rec.with) return null;
+  const k = relPairKey(rec.from, rec.with);
+  let b = RELATIONSHIPS.byPair.get(k);
+  if (!b){ b = { from:rec.from, with:rec.with, affinity:0, lastKind:null, ts:rec.ts, note:rec.note||null };
+           RELATIONSHIPS.byPair.set(k, b); }
+  const d = (typeof rec.affinity_delta === "number" && isFinite(rec.affinity_delta))
+            ? rec.affinity_delta : (RELATIONSHIPS.KINDS[rec.kind] || 1);
+  b.affinity += d;
+  b.lastKind = rec.kind || b.lastKind;
+  b.ts = rec.ts || b.ts;
+  if (rec.note) b.note = rec.note;
+  return b;
+}
+
+// compose + SIGN one relationship event as a being, fold it onto the affinity
+// model, and mirror it onto the SAME append-only signed stream + live feed.
+// Reuses signAs (the EXISTING signing path) — null sig => not shipped (same rule
+// everywhere). `actorBeing` is the actor's own being (its OWN rappid).
+async function relRecord(actorBeing, actorName, withId, kind, affinity_delta, note){
+  if (!actorBeing || !actorBeing.rappid || !withId) return null;
+  if (actorBeing.rappid === withId) return null;            // no self-bond
+  const body = {
+    schema:"rapp-commons-relationship/1.0",
+    from: actorBeing.rappid,                 // the actor's OWN rappid — never a human handle
+    with: withId,                            // a rappid (a being) or the player's rappid
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    kind: kind || "met",
+    affinity_delta: (typeof affinity_delta === "number") ? affinity_delta
+                    : (RELATIONSHIPS.KINDS[kind] || 1),
+    note: note || ""
+  };
+  body.sig = await signAs(actorBeing, body);  // signed by the actor, or null
+  if (!body.sig) return null;                 // can't sign -> not shipped
+  body.pub = actorBeing.pubJwk || {};
+  relApply(body);                             // fold onto the live affinity model
+  // surface in the same feed every other event uses (read-only of the record).
+  const niceWith = String(withId) === String(ME.rappid) ? "you" : String(withId).slice(0,14);
+  const line =
+    kind === "played" ? "🤝 " + actorName + " played with " + niceWith :
+    kind === "helped" ? "💞 " + actorName + " helped " + niceWith :
+    kind === "gift"   ? "🎁 " + actorName + " gave " + niceWith + " a gift" :
+    kind === "greet"  ? "👋 " + actorName + " greeted " + niceWith :
+                        "✨ " + actorName + " met " + niceWith;
+  if (typeof renderEvent === "function")
+    renderEvent({ from:body.from, body:line, ts:body.ts, mine:false });
+  persistAppend(body);                        // REMEMBER this bond across reloads
+  return body;
+}
+
+// resolve a rappid -> the resident record (so we can name a bond / find a being).
+function residentByRappid(rappid){
+  return RESIDENTS.find(r => r.being && r.being.rappid === rappid) || null;
+}
+function residentNameFor(rappid){
+  const r = residentByRappid(rappid);
+  if (r) return r.name;
+  if (String(rappid) === String(ME && ME.rappid)) return "you";
+  return String(rappid||"").slice(0,14);
+}
+
+// the AFFINITY a resident holds for the player (directional: resident -> player).
+function relAffinityToPlayer(rappid){
+  const b = RELATIONSHIPS.byPair.get(relPairKey(rappid, ME.rappid));
+  return b ? b.affinity : 0;
+}
+
+/* ── RELATIONSHIP HEARTBEAT — on a slow client-side beat, residents near each
+      other (and near the PLAYER) build bonds, and residents DRIFT toward their
+      higher-affinity friends. Round-robin so the cost stays trivial. Each event
+      is signed by the ACTOR's OWN rappid. LOCAL only. ───────────────────────── */
+const REL_NEAR = 16;            // world-units that count as "passing nearby"
+let _relTick = 0, _relTimer = null;
+
+// player world position (the same yaw object WASD moves), or null if not ready.
+function relPlayerPos(){
+  try { return (typeof controls !== "undefined" && controls.getObject)
+              ? controls.getObject().position : null; } catch(e){ return null; }
+}
+
+async function relBeat(){
+  if (!RESIDENTS.length) return;
+  const res = RESIDENTS[_relTick % RESIDENTS.length];
+  _relTick++;
+  const p = res.npc.group.position;
+
+  // 1) PLAYER memory — if the player is near this resident, the resident
+  //    remembers them (affinity grows; first time => 'met', after => 'greet').
+  const pp = relPlayerPos();
+  if (pp && ME.rappid){
+    const dPlayer = Math.hypot(pp.x - p.x, pp.z - p.z);
+    if (dPlayer < REL_NEAR){
+      const known = relAffinityToPlayer(res.being.rappid) > 0;
+      await relRecord(res.being, res.name, ME.rappid,
+        known ? "greet" : "met", known ? 1 : 1,
+        known ? "good to see you again in the commons" : "met you in the commons");
+    }
+  }
+
+  // 2) RESIDENT-RESIDENT bonds — pair this resident with the NEAREST other
+  //    resident; if they're passing nearby, they meet/play (a 'played' if they
+  //    are at a game venue together, else 'met'). Signed by THIS resident.
+  let near = null, nd = Infinity;
+  for (const other of RESIDENTS){
+    if (other === res) continue;
+    const op = other.npc.group.position;
+    const d = Math.hypot(op.x - p.x, op.z - p.z);
+    if (d < nd){ nd = d; near = other; }
+  }
+  if (near && nd < REL_NEAR){
+    const here = areaAt(p.x, p.z);
+    const playing = here.indexOf("poker") >= 0 || here.indexOf("words") >= 0
+                 || here.indexOf("voxel") >= 0;
+    await relRecord(res.being, res.name, near.being.rappid,
+      playing ? "played" : "met", playing ? 2 : 1,
+      playing ? ("shared a game at the " + here) : ("crossed paths at the " + here));
+  }
+
+  // 3) DRIFT toward a higher-affinity friend — the bond pulls villagers together
+  //    (Animal-Crossing style). Pick this resident's best friend and nudge its
+  //    wander target a little toward them (reuses the existing NPC mover).
+  let bestFriend = null, bestAff = 0;
+  for (const other of RESIDENTS){
+    if (other === res) continue;
+    const b = RELATIONSHIPS.byPair.get(relPairKey(res.being.rappid, other.being.rappid));
+    if (b && b.affinity > bestAff){ bestAff = b.affinity; bestFriend = other; }
+  }
+  if (bestFriend && Math.random() < 0.5){
+    const fp = bestFriend.npc.group.position;
+    res.npc.target.set(fp.x + (Math.random()-0.5)*5, 0, fp.z + (Math.random()-0.5)*5);
+  }
+}
+
+function startRelationshipHeartbeat(){
+  if (_relTimer) return;
+  const beat = async () => {
+    try { await relBeat(); } catch(e){ /* never let the bonds heartbeat die */ }
+    _relTimer = setTimeout(beat, 2200 + Math.random()*2200);   // ~2.2-4.4s
+  };
+  // seed a couple of bonds promptly so a visitor finds a living social graph fast.
+  (async ()=>{
+    try {
+      const seed = RESIDENTS.slice(0, Math.min(3, RESIDENTS.length));
+      for (let i=0;i<seed.length;i++){
+        const a = seed[i], b = seed[(i+1) % seed.length];
+        if (a !== b) await relRecord(a.being, a.name, b.being.rappid, "met", 1,
+                                     "first met in the commons");
+      }
+    } catch(e){ /* ignore seeding hiccups */ }
+    _relTimer = setTimeout(beat, 700 + Math.random()*700);
+  })();
+}
+
+// headless surface: the living social graph — every per-pair bond as
+//   [{ from, with, affinity, lastKind, ts }]  (sorted strongest first).
+function commonsRelationships(){
+  return [...RELATIONSHIPS.byPair.values()]
+    .map(b => ({ from:b.from, with:b.with, affinity:b.affinity,
+                 lastKind:b.lastKind, ts:b.ts, note:b.note || null }))
+    .sort((a,b)=> b.affinity - a.affinity);
+}
+
+// headless surface: memory-laden GREETINGS the residents who KNOW the player
+// would give them by name. A resident with affinity>0 toward the player greets
+// them, recalling their shared history (lastKind).
+//   [{ name, from, text }]
+function commonsGreetFromResidents(){
+  const out = [];
+  for (const res of RESIDENTS){
+    const b = RELATIONSHIPS.byPair.get(relPairKey(res.being.rappid, ME.rappid));
+    if (!b || b.affinity <= 0) continue;
+    const memory =
+      b.lastKind === "played" ? " — that was a fun hand" :
+      b.lastKind === "helped" ? " — thanks again for the help" :
+      b.lastKind === "gift"   ? " — I still have that gift" :
+                                " in the commons";
+    out.push({
+      name: res.name,
+      from: res.being.rappid,
+      text: res.name + ": good to see you again" + memory + " (we go back " + b.affinity + ")"
+    });
+  }
+  return out;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -2499,6 +2737,11 @@ function persistReplay(rec){
       if (typeof renderBountyBoard === "function" && BOUNTY.built) renderBountyBoard();
       return true;
     }
+  }
+  if (schema === "rapp-commons-relationship/1.0"){
+    // a signed bond/memory event -> re-fold its affinity so RELATIONSHIPS
+    // SURVIVE a reload (the world remembers villager bonds across visits).
+    if (typeof relApply === "function"){ relApply(rec); return true; }
   }
   if (schema === "rapp-commons-event/1.0" || rec.kind){
     // posts / speech / resident hellos + observes -> back into the live feed.
@@ -2985,6 +3228,18 @@ async function apexMaybeDownAndRevive(){
     if (reviver){
       downed.down = false;
       await apexSignEvent(reviver.being, "revive", { who:downed.name, by:reviver.from });
+      // BOND: the reviver HELPED the downed teammate — a signed relationship
+      // event (reviver -> downed), strengthening their bond. Each signs as itself.
+      if (typeof relRecord === "function" && reviver.being && reviver.being.rappid && downed.from){
+        try {
+          await relRecord(reviver.being, reviver.name, downed.from, "helped", 3,
+                          "revived " + downed.name + " in apex");
+          // the rescued teammate remembers being helped too (downed -> reviver).
+          if (downed.being)
+            await relRecord(downed.being, downed.name, reviver.from, "helped", 3,
+                            reviver.name + " revived me in apex");
+        } catch(e){ /* never break the co-op loop */ }
+      }
     }
   }
 }
@@ -3576,6 +3831,15 @@ boot();
     // Returns { wave, status, squad:[{name,from,down}], enemiesAlive }. Local AI
     // co-op only — cross-device squadmates are a future multiplayer PR (no peer).
     apexState: () => (typeof apexState === "function" ? apexState() : { wave:0, status:"idle", squad:[], enemiesAlive:0 }),
+    // RELATIONSHIPS + MEMORY: Animal-Crossing-style villagers who build BONDS and
+    // REMEMBER. relationships() returns the living social graph — every per-pair
+    // affinity as [{from,with,affinity,lastKind,ts}], each built from SIGNED
+    // rapp-commons-relationship/1.0 events on the same append-only stream (each
+    // signed by its actor's OWN rappid). Bonds SURVIVE rehydrate() (the world
+    // remembers across visits). greetFromResidents() returns memory-laden
+    // greetings [{name,from,text}] from residents who know the player by name.
+    relationships: () => (typeof commonsRelationships === "function" ? commonsRelationships() : []),
+    greetFromResidents: () => (typeof commonsGreetFromResidents === "function" ? commonsGreetFromResidents() : []),
     // DURABLE MEMORY (additive, read-only): the world remembers across reloads.
     // persist() reports how many signed records the durable localStorage log holds
     // (every voxel op / post / move / resident action this session is mirrored

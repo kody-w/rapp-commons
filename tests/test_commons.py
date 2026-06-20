@@ -144,6 +144,83 @@ async def run():
             else:
                 check("residents_play", False, "window.commonsAgent.gamesLive missing")
 
+            # resident_relationships: the villagers build BONDS and REMEMBER
+            # (Animal-Crossing style). On a slow heartbeat residents emit SIGNED
+            # rapp-commons-relationship/1.0 events (signed by the ACTOR's OWN
+            # rappid via the existing signAs path) onto the EXISTING append-only
+            # persist stream, building a per-pair AFFINITY score; bonds SURVIVE a
+            # reload through the EXISTING rehydrate() replay. Over a short poll
+            # assert:
+            #   • commonsAgent.relationships() returns >=1 bond with a rappid
+            #     `from` + `with` and a NUMERIC affinity, AND
+            #   • a signed rapp-commons-relationship/1.0 event lives on the same
+            #     localStorage persist stream (rappid `from` + a real signature), AND
+            #   • after commonsAgent.rehydrate() the relationship SURVIVES (the
+            #     same bond is still present afterward, its `from`/`with` rappids).
+            has_rel = await ev(
+                "()=>typeof window.commonsAgent.relationships==='function'"
+                "&&typeof window.commonsAgent.greetFromResidents==='function'", False)
+            if has_rel:
+                relsnap = lambda: ev(
+                    "()=>{try{return (window.commonsAgent.relationships()||[]).map(b=>({"
+                    "from:b.from,with:b.with,affinity:b.affinity,lastKind:b.lastKind}))}"
+                    "catch(e){return[]}}", [])
+                # a signed relationship record on the SAME append-only signed stream,
+                # carrying a rappid `from` + a real signature (read straight off storage).
+                signed_on_stream = lambda: ev(
+                    "()=>{try{const raw=localStorage.getItem('rapp-commons:persist:log/1');"
+                    "if(!raw)return false;const log=JSON.parse(raw);"
+                    "return log.some(r=>r.schema==='rapp-commons-relationship/1.0'"
+                    "&&/^rappid:/.test(r.from||'')&&/^rappid:/.test(r.with||'')"
+                    "&&typeof r.sig==='string'&&r.sig.length>0);}"
+                    "catch(e){return false}}", False)
+                have_bond = False
+                sig_ok = False
+                sample = {}
+                for _ in range(40):                  # ~12s for the social graph to form
+                    cur = await relsnap() or []
+                    good = [bd for bd in cur
+                            if str(bd.get("from", "")).startswith("rappid:")
+                            and str(bd.get("with", "")).startswith("rappid:")
+                            and isinstance(bd.get("affinity"), (int, float))]
+                    have_bond = len(good) >= 1
+                    sig_ok = bool(await signed_on_stream())
+                    sample = {"count": len(cur), "rappid_bonds": len(good),
+                              "sig_on_stream": sig_ok, "bonds": good[:3]}
+                    if have_bond and sig_ok:
+                        break
+                    await page.wait_for_timeout(300)
+
+                # a specific bond fingerprint (from|with) we will look for again
+                # AFTER rehydrate to prove it SURVIVED a reload's replay.
+                target_bond = None
+                pre = await relsnap() or []
+                for bd in pre:
+                    if (str(bd.get("from", "")).startswith("rappid:")
+                            and str(bd.get("with", "")).startswith("rappid:")):
+                        target_bond = (bd["from"], bd["with"]); break
+
+                # rehydrate (simulating a reload's verified replay) and assert the
+                # bond is STILL present afterward — the world REMEMBERS the bond.
+                replayed = await ev(
+                    "()=>Promise.resolve(window.commonsAgent.rehydrate())"
+                    ".then(n=>n).catch(()=>-1)", -1)
+                await page.wait_for_timeout(300)
+                post = await relsnap() or []
+                survived = False
+                if target_bond:
+                    survived = any(bd.get("from") == target_bond[0]
+                                   and bd.get("with") == target_bond[1] for bd in post)
+                check("resident_relationships",
+                      have_bond and sig_ok and isinstance(replayed, (int, float))
+                      and replayed >= 1 and survived,
+                      {"have_bond": have_bond, "sig_on_stream": sig_ok,
+                       "replayed": replayed, "survived": survived,
+                       "target": target_bond, "sample": sample})
+            else:
+                check("resident_relationships", False,
+                      "window.commonsAgent.relationships/greetFromResidents missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
