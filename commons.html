@@ -848,11 +848,18 @@ function seatPokerBots(){
   if (POKER._seating) return POKER._seating;
   POKER._seating = (async ()=>{
   const botNames = ["Atlas","Pip","DealerDan","RiverRae","BluffBot","ChipsMcGee"];
-  // seat 0 = the human (you); seats 1..5 = bots
+  // seat 0 = the human (you); seats 1..5 = AI players.
   POKER.seats[0].being = { name:"you", rappid:ME.rappid, key:ME.key, pubJwk:ME.pubJwk };
   POKER.seats[0].occupied = true; POKER.seats[0].isHuman = true;
+  // the wandering RESIDENTS literally SIT here when they exist (each plays on its
+  // OWN minted rappid — the same being that signs its commons events), so the
+  // table is AI-vs-AI between the world's actual inhabitants. Fall back to fresh
+  // minted bots for any remaining seat. Either way each seat is a real being.
   for (let i=1;i<6;i++){
-    const b = await mintBeing(botNames[i % botNames.length]);
+    const resident = (typeof RESIDENTS !== "undefined" && RESIDENTS.length) ? RESIDENTS[(i-1) % RESIDENTS.length] : null;
+    const b = (resident && resident.being && resident.being.key)
+      ? { name: resident.name, rappid: resident.being.rappid, key: resident.being.key, pubJwk: resident.being.pubJwk }
+      : await mintBeing(botNames[i % botNames.length]);
     POKER.seats[i].being = b; POKER.seats[i].occupied = true;
     // floating name tag at the seat
     const tag = makeLabel(b.name+" · "+b.rappid.slice(0,18), 0xffe0a0, 0);
@@ -889,7 +896,18 @@ function botDecide(seat, toCall, board){
 //   (interactive) play PAUSES on the human's turn so they choose via pokerAct().
 async function pokerPlayHand(opts){
   POKER.autoHuman = !!(opts && opts.autoHuman);
-  if (!POKER.built) return { error:"table not built" };
+  // PR-gate: when a HUMAN drives a hand (interactive, not the autoHuman demo/loop)
+  // the seat-0 player OWNS the table — the AI-vs-AI auto-loop yields to them while
+  // POKER.humanActive is set. Two humans sharing one live table across devices is
+  // the future multiplayer PR (peer/human-to-human sync); do NOT build it here.
+  if (!POKER.autoHuman) POKER.humanActive = true;
+  if (!POKER.built){ POKER.humanActive = false; return { error:"table not built" }; }
+  // serialize against the AI-vs-AI auto-loop: if a continuous hand is mid-flight,
+  // wait for it to settle before a human-driven (or fresh demo) hand begins so the
+  // single shared POKER.hand is never driven by two loops at once. Local + cheap.
+  if (POKER._autoRunning){
+    for (let i=0; i<200 && POKER._autoRunning; i++) await new Promise(r=>setTimeout(r,50));
+  }
   if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
   // commit to a freshly shuffled deck (provably fair)
   const deck = shuffle(pokerFreshDeck());
@@ -942,6 +960,10 @@ async function pokerPlayHand(opts){
       // the signed record is already pushed for the human (via pokerAct); only bots sign here.
       if (!d._signed) await pokerAction(s, d.action, d.amount, { street });
       renderPokerScene();
+      // AI-vs-AI continuous hands ONLY: pace each seat's action so a visitor (and
+      // headless gamesLive() poller) actually SEES the hand mid-play instead of it
+      // flashing to showdown. Never set for the human-driven hand or the entry demo.
+      if (POKER.autoPace) await new Promise(r=>setTimeout(r, 280 + Math.random()*220));
     }
     POKER.toAct = null; POKER.pending = null; renderPokerScene();
   };
@@ -982,6 +1004,9 @@ async function pokerPlayHand(opts){
       [ {label:"deal another hand", onClick:()=>pokerPlayHand()},
         {label:"leave table", onClick:()=>{ hideRoomHud(); travelTo(Object.assign(new THREE.Vector3(0,DNA.cameraHeight,0),{label:"The Square"})); }} ]);
   }
+  // a human-driven hand is complete: release the table so the AI-vs-AI auto-loop
+  // resumes dealing continuous signed hands for the next visitor.
+  if (!POKER.autoHuman) POKER.humanActive = false;
   return result;
 }
 
@@ -1191,22 +1216,25 @@ function wwfState(){
   };
 }
 
-// append a signed rapp-wwf-move/1.0 — WRAPS the existing rules (same shape).
-async function wwfPlay(word, at, dir, placements){
-  if (!ME.key) return { error:"cannot sign — no key; move not shipped" };
+// append a signed rapp-wwf-move/1.0 AS a given being — the single signing path,
+// WRAPPING the existing rules (same shape). `wwfPlay` (the human) + the resident
+// tile-play both delegate here, so there is ONE signed-move code path. `hud`
+// toggles the room HUD (off for autonomous resident moves so they don't pop UI).
+async function wwfPlayAs(being, playerName, word, at, dir, placements, hud){
+  if (!being || !being.key) return { error:"cannot sign — no key; move not shipped" };
   const body = {
     schema:"rapp-wwf-move/1.0",
     game_id: WWF.match ? WWF.match.id : "unknown",
     seq: (WWF.moves.length || 0),
-    player: "you",
-    from: ME.rappid,                 // signed by the seated player's own rappid
+    player: playerName,
+    from: being.rappid,              // signed by THAT being's own rappid (you OR a resident)
     ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
     type: "play",
     word, at, dir, placements: placements || []
   };
-  const sig = await signAs(ME, body);
+  const sig = await signAs(being, body);
   if (!sig) return { error:"cannot sign — move not shipped" };
-  body.sig = sig; body.pub = ME.pubJwk;
+  body.sig = sig; body.pub = being.pubJwk;
   WWF.moves.push(body);
   persistAppend(body);                 // remember this signed move across reloads (read-only of the signed record)
   // re-derive the live board from the (now longer) signed move log — same path
@@ -1214,11 +1242,17 @@ async function wwfPlay(word, at, dir, placements){
   wwfRebuildTiles();
   wwfRecomputeState();
   renderWordsBoard();
-  showRoomHud("Words with Friends",
+  if (hud) showRoomHud("Words with Friends",
     `Played <b>${esc(word)}</b> at <b>${esc(at)}</b> (${esc(dir)}) — signed rapp-wwf-move/1.0 appended.<br>`+
     `<span style="opacity:.6">${WWF.moves.length} signed moves on the board · rules unchanged (wrapped, not rewritten)</span>`,
     [ {label:"leave board", onClick:()=>{ hideRoomHud(); }} ]);
   return { ok:true, move:body };
+}
+
+// the human's seated move (seat = ME). Unchanged behaviour: delegates to the one
+// signed path above, signing with the player's OWN rappid + showing the room HUD.
+async function wwfPlay(word, at, dir, placements){
+  return wwfPlayAs(ME, "you", word, at, dir, placements, true);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1593,6 +1627,82 @@ async function residentPlace(res){
   return "place:" + block + "@" + x + "," + z;
 }
 
+// ── RESIDENT GAME PLAY (AI-vs-AI, LOCAL, signed by each resident's own rappid) ──
+// A resident drifting to the WORDS board APPENDS one signed rapp-wwf-move/1.0
+// tile through the EXISTING signed path (wwfPlayAs) — we WRAP wwfPlay, never
+// fork it. It finds an empty cell adjacent to a tile already on the board (so the
+// board visibly GROWS), drops one letter there, signed by the resident's OWN
+// being. ZERO network, ZERO new dep — pure local AI play.
+const WWF_LETTERS = "AEIOURSTLNDGBCMPHFWYKVXZJQ";
+function wwfEmptyAdjacentCell(){
+  const occ = new Set(WWF.tiles.map(t => t.row + "," + t.col));
+  // candidate empties orthogonally adjacent to an existing tile (board grows out).
+  const cand = [];
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  for (const t of WWF.tiles){
+    for (const [dr,dc] of dirs){
+      const r = t.row + dr, c = t.col + dc;
+      if (r<0||r>=WWF_N||c<0||c>=WWF_N) continue;
+      if (occ.has(r+","+c)) continue;
+      cand.push([r,c]);
+    }
+  }
+  // fall back to the centre star if the board is somehow empty.
+  if (!cand.length) return [7,7];
+  return cand[Math.floor(Math.random()*cand.length)];
+}
+async function residentWwfTile(res){
+  if (typeof loadWordsMatch === "function"){ try { await loadWordsMatch(); } catch(e){} }
+  const [r,c] = wwfEmptyAdjacentCell();
+  const letter = WWF_LETTERS[(res.beat + RESIDENTS.indexOf(res)) % WWF_LETTERS.length];
+  const at = wwfCellLabel(r,c);
+  // reuse the EXISTING signed-move path; signed by the resident's OWN being, no HUD.
+  const out = await wwfPlayAs(res.being, res.name, letter, at, "across", [[r,c,letter]], false);
+  if (!out || out.error) return null;
+  return "wwf:" + letter + "@" + at;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   POKER AI-vs-AI AUTOPLAY — a continuous signed Hold'em hand runs at the table
+   so a visitor ALWAYS sees a live hand/pot. It is pure WRAP: it just keeps
+   calling the EXISTING pokerPlayHand({autoHuman:true}) loop (commit-reveal deck
+   + rapp-poker-action/1.0). Each occupied seat is a being with its OWN rappid
+   (residents take the bot seats — see seatPokerBots), so every deal/bet/fold is
+   signed by THAT seat's own key via the existing pokerAction() path. When one
+   hand ends, the next begins. LOCAL ONLY — zero peer connection, zero new dep.
+
+   PR-gate: the moment a HUMAN wants a real seat, this auto-loop yields (a human
+   interactive hand sets POKER.humanActive and we pause). Two HUMANS sharing a
+   live table across devices = a future multiplayer PR (peer/human-to-human
+   sync). Do NOT build peer sync here. ──────────────────────────────────────── */
+let _pokerAutoTimer = null;
+async function pokerAutoTick(){
+  try {
+    // a human interactive hand owns the table — yield the loop while one runs.
+    // PR-gate: human-vs-human across devices is the future multiplayer PR.
+    if (!POKER.built || POKER.humanActive){ schedulePokerAuto(); return; }
+    if (POKER._autoRunning){ schedulePokerAuto(); return; }      // a hand is in flight
+    if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
+    POKER._autoRunning = true;
+    POKER.autoPace = true;                                       // pace so the hand is visible mid-play
+    try { await pokerPlayHand({ autoHuman:true }); }            // EXISTING signed loop
+    catch(e){ /* one bad hand never stops the table */ }
+    finally { POKER._autoRunning = false; POKER.autoPace = false; }
+  } catch(e){ /* never let the heartbeat die */ }
+  schedulePokerAuto();
+}
+function schedulePokerAuto(){
+  if (_pokerAutoTimer) clearTimeout(_pokerAutoTimer);
+  // a brief beat between hands so a fresh hand is always within view.
+  _pokerAutoTimer = setTimeout(pokerAutoTick, 1500 + Math.random()*1500);
+}
+function startPokerAutoLoop(){
+  if (POKER._autoStarted) return;
+  POKER._autoStarted = true;
+  // kick the first hand promptly so a visitor sees a live pot within seconds.
+  schedulePokerAuto();
+}
+
 // one heartbeat for one resident: drift toward a (mostly new) area by setting
 // its NPC wander target, update which area it's in, and occasionally perform
 // the signed action that fits where it now is.
@@ -1621,7 +1731,8 @@ async function residentBeat(res){
   if (Math.random() < 0.55){
     let did = null;
     try {
-      if (here.indexOf("poker") >= 0)      did = await residentObserve(res);
+      if (here.indexOf("poker") >= 0)      did = await residentObserve(res);   // it's SEATED — the AI-vs-AI hand loop is playing it
+      else if (here.indexOf("words") >= 0) did = await residentWwfTile(res);    // append a signed tile so the board GROWS
       else if (here.indexOf("voxel") >= 0) did = await residentPlace(res);
       else                                 did = await residentHello(res, HELLOS[res.beat % HELLOS.length]);
     } catch(e){ did = null; }
@@ -1648,6 +1759,32 @@ function startResidentHeartbeat(){
   setTimeout(beatOnce, 1200 + Math.random()*1500);
 }
 
+// ── GAMES HEARTBEAT — make the world feel ALIVE with games in progress ────────
+// On top of the wander heartbeat (which RANDOMLY drifts residents), a dedicated
+// slow games heartbeat GUARANTEES a visitor always finds live play:
+//   • the poker table runs a continuous signed AI-vs-AI hand (startPokerAutoLoop)
+//   • a resident periodically appends a signed rapp-wwf-move/1.0 tile so the
+//     Words board visibly GROWS — round-robin so each resident plays as itself.
+// All LOCAL, all signed by each resident's OWN rappid, ZERO peer/network/new-dep.
+let _wwfTick = 0, _wwfTimer = null;
+function startWwfAutoLoop(){
+  if (_wwfTimer) return;
+  const beat = async () => {
+    try {
+      if (RESIDENTS.length){
+        const res = RESIDENTS[_wwfTick % RESIDENTS.length];
+        _wwfTick++;
+        const did = await residentWwfTile(res);          // signed tile via the EXISTING wwf path
+        if (did) res.lastAction = { kind:did, ts:Date.now(), area:"words board" };
+      }
+    } catch(e){ /* never let the heartbeat die */ }
+    _wwfTimer = setTimeout(beat, 2500 + Math.random()*2500);  // ~2.5-5s: the board grows steadily
+  };
+  // ensure the signed match is loaded, then start appending tiles promptly.
+  (async ()=>{ try { if (typeof loadWordsMatch === "function") await loadWordsMatch(); } catch(e){}
+    _wwfTimer = setTimeout(beat, 1000 + Math.random()*1200); })();
+}
+
 // spawn the resident cohort: Pip + Atlas always, plus a couple more, each a
 // being with its OWN rappid. Returns once minted (avatars + heartbeat live).
 async function spawnResidents(){
@@ -1655,7 +1792,37 @@ async function spawnResidents(){
   const n = 4; // 3-5; keep it cheap
   for (let i = 0; i < n; i++) await spawnResident(names[i], 100 + i);
   startResidentHeartbeat();
+  // the games come alive: residents SIT at the poker table (continuous AI-vs-AI
+  // signed hand) and keep the Words board GROWING with signed tiles. Local only.
+  try { if (typeof seatPokerBots === "function") await seatPokerBots(); } catch(e){}
+  startPokerAutoLoop();
+  startWwfAutoLoop();
   return RESIDENTS.length;
+}
+
+// headless surface: the LIVE games the world's residents are playing right now.
+// Reads the same POKER / WWF state the signed loops drive (never signs, never
+// mutates). Shape:
+//   { poker:{ inProgress, seats:[{name,from,chips}], pot, phase },
+//     wwf:{ moves, toMove } }
+// `inProgress` is true while a hand is dealt and not yet at showdown — the
+// AI-vs-AI auto-loop keeps a hand always live so a visitor sees a hand/pot.
+function commonsGamesLive(){
+  const ps = (typeof pokerState === "function") ? pokerState() : {};
+  const ws = (typeof wwfState === "function")   ? wwfState()   : {};
+  const phase = ps.phase || "unseated";
+  return {
+    poker: {
+      inProgress: !!(ps.community || ps.actions) && phase !== "showdown" && phase !== "unseated" && phase !== "seated",
+      seats: (ps.seats || []).map(s => ({ name: s.name, from: s.from, chips: s.chips|0 })),
+      pot: ps.pot|0,
+      phase
+    },
+    wwf: {
+      moves: ws.moves|0,
+      toMove: (ws.toMove==null ? null : ws.toMove)
+    }
+  };
 }
 
 // headless surface: who's living here and what they last did.
@@ -2328,6 +2495,11 @@ boot();
     // the living world: the autonomous resident beings that wander + sign as
     // themselves. Each entry: {name, from (their OWN rappid), area, pos, lastAction}.
     residents: () => (typeof commonsResidents === "function" ? commonsResidents() : []),
+    // the games are ALIVE: a continuous AI-vs-AI signed Hold'em hand at the poker
+    // table (residents sit on their OWN rappids) + a Words board that GROWS as
+    // residents append signed tiles. Returns a live snapshot:
+    //   { poker:{inProgress,seats:[{name,from,chips}],pot,phase}, wwf:{moves,toMove} }
+    gamesLive: () => (typeof commonsGamesLive === "function" ? commonsGamesLive() : { poker:{inProgress:false,seats:[],pot:0,phase:"unseated"}, wwf:{moves:0,toMove:null} }),
     // DURABLE MEMORY (additive, read-only): the world remembers across reloads.
     // persist() reports how many signed records the durable localStorage log holds
     // (every voxel op / post / move / resident action this session is mirrored

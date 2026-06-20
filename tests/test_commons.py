@@ -93,6 +93,57 @@ async def run():
             else:
                 check("residents_live", False, "window.commonsAgent.residents missing")
 
+            # residents_play: the world is not just inhabited -- it has GAMES IN
+            # PROGRESS, AI-vs-AI, LOCAL. The wandering residents SIT at the poker
+            # table and PLAY each other (a continuous signed Hold'em hand on the
+            # EXISTING pokerPlayHand loop + commit-reveal deck + rapp-poker-action/
+            # 1.0, each seat signed by THAT resident's OWN rappid), and a couple
+            # residents drift to the Words board and APPEND signed rapp-wwf-move/
+            # 1.0 tiles so the board GROWS. Over a short poll assert:
+            #   • gamesLive().poker shows a hand IN PROGRESS with >=2 seats whose
+            #     `from` are rappid ids, AND a non-empty signed action stream
+            #     (the live POKER.hand.log carries signed rapp-poker-action/1.0
+            #     records, each with a rappid `from` + signature), AND
+            #   • the WWF board's signed move/tile count INCREASES (a resident
+            #     played a signed tile while we watched).
+            # ZERO peer connection -- purely local AI-vs-AI on each being's rappid.
+            has_live = await ev("()=>typeof window.commonsAgent.gamesLive==='function'", False)
+            if has_live:
+                snap = lambda: ev("()=>{try{return window.commonsAgent.gamesLive()}catch(e){return null}}", None)
+                # baseline wwf move count.
+                base_live = await snap() or {}
+                base_wwf = (base_live.get("wwf") or {}).get("moves", 0) or 0
+                poker_ok = False
+                wwf_grew = False
+                sample = {}
+                for _ in range(60):                    # ~18s of polling for live play
+                    gl = await snap() or {}
+                    pk = gl.get("poker") or {}
+                    seats = pk.get("seats") or []
+                    rappid_seats = [s for s in seats if str(s.get("from", "")).startswith("rappid:")]
+                    # a non-empty SIGNED action stream on the live hand: every entry
+                    # is a rapp-poker-action/1.0 carrying a rappid `from` + a signature.
+                    signed_stream = await ev(
+                        "()=>{try{return (POKER.hand&&POKER.hand.log||[]).filter(a=>"
+                        "a.schema==='rapp-poker-action/1.0'&&/^rappid:/.test(a.from||'')"
+                        "&&typeof a.sig==='string'&&a.sig.length>0).length}catch(e){return 0}}", 0)
+                    if (pk.get("inProgress") and len(seats) >= 2
+                            and len(rappid_seats) >= 2 and (signed_stream or 0) >= 1):
+                        poker_ok = True
+                    cur_wwf = (gl.get("wwf") or {}).get("moves", 0) or 0
+                    if cur_wwf > base_wwf:
+                        wwf_grew = True
+                    sample = {"phase": pk.get("phase"), "pot": pk.get("pot"),
+                              "seats": len(seats), "rappid_seats": len(rappid_seats),
+                              "signed_stream": signed_stream,
+                              "wwf_base": base_wwf, "wwf_now": cur_wwf}
+                    if poker_ok and wwf_grew:
+                        break
+                    await page.wait_for_timeout(300)
+                check("residents_play", poker_ok and wwf_grew, sample)
+            else:
+                check("residents_play", False, "window.commonsAgent.gamesLive missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
