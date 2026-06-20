@@ -91,6 +91,27 @@
            font-size:12px; color:#cff; opacity:0; transition:opacity .3s; pointer-events:none; max-width:80vw; }
   #toast.show { opacity:1; }
   a { color:#5ff; }
+
+  /* NAVIGABILITY / COHESION HUD — minimap + live feed + fast-travel (additive). */
+  #cohesionHud { position:fixed; left:14px; top:120px; z-index:12; width:236px;
+                 background:rgba(2,10,22,.82); border:1px solid rgba(0,255,255,.30);
+                 border-radius:10px; padding:9px 10px; font-size:11px; line-height:1.4;
+                 box-shadow:0 0 22px rgba(0,255,255,.18); max-height:78vh; overflow:hidden;
+                 display:flex; flex-direction:column; gap:5px; }
+  #cohesionHud .ch-head { color:#5ff; font-weight:600; font-size:11px; letter-spacing:.3px; }
+  #cohesionHud .ch-sub { color:#789; font-weight:400; font-size:9px; margin-left:4px; }
+  #miniCanvas { width:220px; height:220px; border:1px solid rgba(0,255,255,.20);
+                border-radius:6px; cursor:pointer; background:#020a16; display:block; }
+  #miniAreas { max-height:84px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; }
+  #miniAreas .miniRow { color:#ffe79a; cursor:pointer; padding:1px 3px; border-radius:4px;
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #miniAreas .miniRow:hover { background:rgba(0,255,255,.12); color:#fff; }
+  #miniFeed { max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:3px; }
+  #miniFeed .miniEv { display:flex; gap:5px; align-items:baseline; font-size:10px; }
+  #miniFeed .miniEv .k { color:#0fc; font-weight:600; min-width:42px; }
+  #miniFeed .miniEv .t { color:#cde; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #miniFeed .miniEv .w { color:#678; font-size:9px; }
+  @media (max-width:760px){ #cohesionHud{ display:none; } }
 </style>
 </head>
 <body>
@@ -114,6 +135,18 @@
 
 <div id="feed"></div>
 <div id="toast"></div>
+
+<!-- NAVIGABILITY / COHESION HUD — top-down minimap + live "what's happening" feed +
+     fast-travel. Additive, read-only over commonsAgent.minimap()/feed(). 2D canvas +
+     DOM only: NO library, NO iframe, NO new tabs/windows. Click an area dot or list row to
+     fly there via the existing goto(). -->
+<div id="cohesionHud">
+  <div class="ch-head">🗺️ COMMONS MAP <span class="ch-sub">click an area to fast-travel</span></div>
+  <canvas id="miniCanvas" width="220" height="220" title="click an area to travel"></canvas>
+  <div id="miniAreas"></div>
+  <div class="ch-head">📡 WHAT'S HAPPENING <span class="ch-sub">signed stream</span></div>
+  <div id="miniFeed"></div>
+</div>
 
 <!-- in-world surface panel: streams a world/home surface INLINE (no new tab). -->
 <div id="surface" style="position:fixed; inset:6% 6% 12% 6%; z-index:25; display:none;
@@ -2940,8 +2973,218 @@ boot();
     return Object.assign(where(), { said:t });
   }
 
+  /* ───────────────────────────────────────────────────────────────────────
+     NAVIGABILITY / COHESION HUD — additive, READ-ONLY over existing state.
+     minimap(): every named area (square / game rooms / voxel / nexus / board /
+       homes) as a labeled dot at its world {x,z}, the player's position+heading,
+       and the live wandering residents. Pulls from interactables + the SAME
+       residentAreas() anchors the residents use + commonsResidents(); it signs
+       nothing, mutates nothing, and never opens a window/iframe.
+     feed(): the recent SIGNED stream events (posts/speech, poker actions, bounty
+       post/claim/done, voxel placements, wwf tiles) read straight off the
+       append-only persist log — normalised to {kind,from,text,ts}. Read-only.
+     ─────────────────────────────────────────────────────────────────────── */
+
+  // collect every named area as {name, at:{x,z}}. Built-in anchors come from the
+  // EXISTING residentAreas() (same coords residents drift between); portal/home/
+  // game interactables contribute their own labels+positions. De-duped by name.
+  function minimapAreas(){
+    const out = [], seen = new Set();
+    const add = (name, x, z) => {
+      const key = String(name||"").toLowerCase().trim();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ name:String(name), at:{ x:r3(x), z:r3(z) } });
+    };
+    // named anchor areas (town square / poker / voxel / words + homes), the very
+    // set the residents navigate — keeps the map in lockstep with the world.
+    try {
+      if (typeof residentAreas === "function")
+        for (const a of residentAreas()) add(a.area, a.x, a.z);
+    } catch(e){}
+    // every reachable interactable (portals incl. nexus, homes, game rooms, board).
+    for (const it of interactables){
+      if (it && it.pos && it.label) add(it.label, it.pos.x, it.pos.z);
+    }
+    return out;
+  }
+
+  // {areas, player, residents} — the read-only minimap snapshot.
+  function minimap(){
+    const w = where();
+    let residents = [];
+    try {
+      residents = (typeof commonsResidents === "function" ? commonsResidents() : [])
+        .map(r => ({ name:r.name,
+                     x:r3((r.pos && r.pos.x) || 0),
+                     z:r3((r.pos && r.pos.z) || 0),
+                     from:r.from, area:r.area }));
+    } catch(e){ residents = []; }
+    return {
+      areas: minimapAreas(),
+      player: { x:w.x, z:w.z, facing:w.facing },
+      residents
+    };
+  }
+
+  // fly to a named area via the EXISTING goto() (sets the proximity target). Used
+  // by the minimap click + the area list. Pure reuse of the navigation path.
+  function travelToArea(name){
+    try { return goto(name); }
+    catch(e){ return { error:String(e) }; }
+  }
+
+  // map a raw signed persist record onto the compact feed shape. text is a short
+  // human line describing the signed action; kind is the record's schema/kind.
+  function feedLineFor(rec){
+    if (!rec || typeof rec !== "object") return null;
+    const from = rec.from || "";
+    if (!String(from).startsWith("rappid:")) return null;   // signed beings only
+    const ts = rec.ts || "";
+    const schema = rec.schema || "";
+    let kind = schema || rec.kind || "event", text = "";
+    if (schema === "rapp-commons-event/1.0" || rec.kind === "hello" || rec.kind === "observe"){
+      kind = rec.kind || "say";
+      text = String(rec.body == null ? "" : rec.body);
+    } else if (schema === "rapp-poker-action/1.0"){
+      kind = "poker";
+      const amt = (rec.amount != null) ? (" " + rec.amount) : "";
+      text = String(rec.action || "acts") + amt + (rec.phase ? " (" + rec.phase + ")" : "");
+    } else if (schema === "rapp-wwf-move/1.0"){
+      kind = "wwf";
+      const tiles = Array.isArray(rec.tiles) ? rec.tiles.length : (rec.word ? 0 : 0);
+      text = rec.word ? ("played \"" + rec.word + "\"") : ("placed " + (tiles||1) + " tile(s)");
+    } else if (schema === "rapp-world-op/1.0"){
+      kind = "voxel";
+      const op = rec.op || (rec.block ? "place" : "mine");
+      text = op + " " + (rec.block || "block") + " @" + [rec.x, rec.y, rec.z].join(",");
+    } else if (schema === "rapp-commons-bounty/1.0"){
+      kind = "bounty";
+      const act = rec.action || rec.status || "bounty";
+      text = act + (rec.title ? (": " + rec.title) : "") + (rec.reward != null ? (" (" + rec.reward + ")") : "");
+    } else {
+      text = String(rec.body || rec.title || schema || "signed event");
+    }
+    return { kind, from, text, ts };
+  }
+
+  // the recent SIGNED stream, newest-last, normalised. Reads the SAME append-only
+  // persist log the rest of the world signs into — zero new write surface.
+  function feed(limit){
+    let log = [];
+    try { log = (typeof persistRead === "function" ? persistRead() : []) || []; }
+    catch(e){ log = []; }
+    const out = [];
+    for (const rec of log){
+      const line = feedLineFor(rec);
+      if (line) out.push(line);
+    }
+    const n = (typeof limit === "number" && limit > 0) ? limit : 24;
+    return out.slice(-n);
+  }
+
+  // ── HUD render: a top-down 2D minimap canvas + a live "what's happening" feed
+  //    panel. DOM/2D-canvas only (no libs, no iframe, no new tabs). Clicking an
+  //    area dot or list row fast-travels there via the existing goto(). ──
+  const HUD = { wired:false, span:120, lastFeedTs:null };
+  function hudWire(){
+    if (HUD.wired) return;
+    const cv = document.getElementById("miniCanvas");
+    const list = document.getElementById("miniAreas");
+    if (!cv || !list) return;
+    HUD.wired = true;
+    HUD.ctx = cv.getContext("2d");
+    // click on the minimap canvas -> nearest area dot fast-travel.
+    cv.addEventListener("click", (e)=>{
+      const rect = cv.getBoundingClientRect();
+      const px = (e.clientX - rect.left) / rect.width  * cv.width;
+      const py = (e.clientY - rect.top)  / rect.height * cv.height;
+      const m = minimap(); let best=null, bd=Infinity;
+      for (const a of m.areas){
+        const sx = (a.at.x / HUD.span + 0.5) * cv.width;
+        const sz = (a.at.z / HUD.span + 0.5) * cv.height;
+        const d = Math.hypot(sx-px, sz-py);
+        if (d < bd){ bd=d; best=a; }
+      }
+      if (best && bd < 26){ travelToArea(best.name); hudRender(); }
+    });
+  }
+  function hudRenderMap(){
+    const ctx = HUD.ctx; if (!ctx) return;
+    const cv = ctx.canvas, W = cv.width, H = cv.height, span = HUD.span;
+    const toX = x => (x / span + 0.5) * W, toZ = z => (z / span + 0.5) * H;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = "rgba(2,10,22,.86)"; ctx.fillRect(0,0,W,H);
+    // soft grid
+    ctx.strokeStyle = "rgba(0,255,255,.10)"; ctx.lineWidth = 1;
+    for (let g=0; g<=W; g+=W/6){ ctx.beginPath(); ctx.moveTo(g,0); ctx.lineTo(g,H); ctx.stroke(); }
+    for (let g=0; g<=H; g+=H/6){ ctx.beginPath(); ctx.moveTo(0,g); ctx.lineTo(W,g); ctx.stroke(); }
+    const m = minimap();
+    // area dots + labels
+    ctx.font = "9px ui-monospace, monospace"; ctx.textBaseline = "middle";
+    for (const a of m.areas){
+      const x = toX(a.at.x), y = toZ(a.at.z);
+      ctx.fillStyle = "#ffd98a";
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "rgba(255,231,154,.85)";
+      ctx.fillText(String(a.name).slice(0,12), x+5, y);
+    }
+    // resident dots (live, moving)
+    for (const r of m.residents){
+      const x = toX(r.x), y = toZ(r.z);
+      ctx.fillStyle = "#7df9ff";
+      ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI*2); ctx.fill();
+    }
+    // player + heading arrow
+    const px = toX(m.player.x), py = toZ(m.player.z);
+    ctx.fillStyle = "#00ff88";
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
+    const f = m.player.facing || 0;
+    ctx.strokeStyle = "#00ff88"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px, py);
+    ctx.lineTo(px + Math.sin(f)*10, py + Math.cos(f)*10); ctx.stroke();
+  }
+  function hudRenderAreas(){
+    const list = document.getElementById("miniAreas"); if (!list) return;
+    const m = minimap();
+    const html = m.areas.map(a =>
+      `<div class="miniRow" data-area="${esc(a.name)}">📍 ${esc(String(a.name).slice(0,22))}</div>`
+    ).join("");
+    if (list.dataset.sig !== html){
+      list.dataset.sig = html;
+      list.innerHTML = html;
+      list.querySelectorAll(".miniRow").forEach(row=>{
+        row.addEventListener("click", ()=>{ travelToArea(row.dataset.area); hudRender(); });
+      });
+    }
+  }
+  function hudRenderFeed(){
+    const fe = document.getElementById("miniFeed"); if (!fe) return;
+    const items = feed(14);
+    const html = items.slice().reverse().map(it =>
+      `<div class="miniEv"><span class="k k-${esc(it.kind).replace(/[^a-z]/gi,"")}">${esc(String(it.kind).slice(0,8))}</span>`+
+      `<span class="t">${esc(String(it.text).slice(0,60))}</span>`+
+      `<span class="w">${esc(String(it.from).slice(0,18))}</span></div>`
+    ).join("");
+    if (fe.dataset.sig !== html){ fe.dataset.sig = html; fe.innerHTML = html; }
+  }
+  function hudRender(){
+    hudWire();
+    try { hudRenderMap();   } catch(e){}
+    try { hudRenderAreas(); } catch(e){}
+    try { hudRenderFeed();  } catch(e){}
+  }
+  // keep the HUD live on a slow heartbeat (read-only sampling; no signing).
+  hudWire();
+  try { setInterval(hudRender, 700); hudRender(); } catch(e){}
+
   window.commonsAgent = {
     where, teleport, walk, face, nearby, goto, enter, interact, say, list,
+    // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
+    //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
+    //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)
+    //   travelTo(name) -> fast-travel to a named area via the existing goto().
+    minimap, feed, travelTo: travelToArea,
     // live poker-table snapshot for headless inspection (community/pot/seats/turn/phase).
     pokerState: () => (typeof pokerState === "function" ? pokerState() : null),
     // PLAYABLE seat 0: when it's your turn, act (check|call|bet|raise|fold). The

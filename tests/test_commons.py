@@ -427,6 +427,64 @@ async def run():
                       have_bounty and sig_ok and transitioned, sample)
             else:
                 check("bounty_board", False, "window.commonsAgent.bounties missing")
+
+            # cohesion_hud: the now-sprawling one-world commons is LEGIBLE at a
+            # glance via an additive, READ-ONLY navigability HUD. Assert:
+            #   • minimap() returns >=4 named areas (town square / game rooms /
+            #     voxel / nexus / board / homes), each with a world {x,z}, the
+            #     PLAYER's position+heading, and >=1 live RESIDENT dot;
+            #   • feed() returns >=1 recent SIGNED stream event normalised to
+            #     {kind,from,text,ts}, its `from` a rappid id (signed beings only);
+            #   • FAST-TRAVEL: teleport far away, then commonsAgent.goto(an area)
+            #     MOVES the player measurably TOWARD that area's {x,z}.
+            # Pure reuse of the existing list/residents + signed persist stream;
+            # signs nothing, opens zero windows/iframes.
+            has_hud = await ev(
+                "()=>typeof window.commonsAgent.minimap==='function'"
+                "&&typeof window.commonsAgent.feed==='function'", False)
+            if has_hud:
+                mm = await ev("()=>{try{return window.commonsAgent.minimap()}catch(e){return null}}", None) or {}
+                areas = mm.get("areas") or []
+                player = mm.get("player") or {}
+                residents = mm.get("residents") or []
+                areas_ok = (len(areas) >= 4
+                            and all(isinstance(a.get("name"), str) and a.get("name")
+                                    and a.get("at") and isinstance(a["at"].get("x"), (int, float))
+                                    and isinstance(a["at"].get("z"), (int, float)) for a in areas))
+                player_ok = (isinstance(player.get("x"), (int, float))
+                             and isinstance(player.get("z"), (int, float))
+                             and "facing" in player)
+                residents_ok = len(residents) >= 1
+                fd = await ev("()=>{try{return window.commonsAgent.feed()}catch(e){return null}}", None) or []
+                signed_feed = [e for e in fd
+                               if isinstance(e, dict) and str(e.get("from", "")).startswith("rappid:")
+                               and ("text" in e) and ("kind" in e) and ("ts" in e)]
+                feed_ok = len(signed_feed) >= 1
+                # fast-travel: jump far, pick an area, goto() it, assert we got closer.
+                def _dist2(p, a):
+                    return (p["x"] - a["at"]["x"]) ** 2 + (p["z"] - a["at"]["z"]) ** 2
+                # choose an area that is NOT the origin so a move is measurable.
+                target = None
+                for a in areas:
+                    if abs(a["at"]["x"]) + abs(a["at"]["z"]) > 8:
+                        target = a; break
+                travel_ok = False
+                if target:
+                    await ev("()=>{try{window.commonsAgent.teleport(-70,1.6,70)}catch(e){}return 1}")
+                    before = await ev("()=>{const w=window.commonsAgent.where();return{x:w.x,z:w.z}}", {"x": 0, "z": 0})
+                    await ev("()=>{try{window.commonsAgent.goto(" + repr(target["name"]) + ")}catch(e){}return 1}")
+                    after = await ev("()=>{const w=window.commonsAgent.where();return{x:w.x,z:w.z}}", {"x": 0, "z": 0})
+                    d_before = _dist2(before, target)
+                    d_after = _dist2(after, target)
+                    travel_ok = d_after < d_before - 1.0
+                check("cohesion_hud",
+                      areas_ok and player_ok and residents_ok and feed_ok and travel_ok,
+                      {"areas": len(areas), "player": player, "residents": len(residents),
+                       "signed_feed": len(signed_feed), "target": (target or {}).get("name"),
+                       "travel_ok": travel_ok, "feed_sample": signed_feed[:2]})
+            else:
+                check("cohesion_hud", False,
+                      "window.commonsAgent.minimap/feed missing")
         await b.close()
     print_summary()
 
