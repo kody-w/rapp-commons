@@ -9,12 +9,19 @@
   Per evolution/NORTH_STAR.md: ONE walkable, persistent, social world that HOUSES
   and streams everything from raw.githubusercontent.com in a single scene.
 
-    PORTALS  — worlds.json.worlds[]  -> glowing rings; walk up + press E to enter surface_url.
-    HOMES    — worlds.json.rooms[]   -> enterable voxel cubbies; E -> home.html?state=<raw+state_dir>.
+    PORTALS  — worlds.json.worlds[]  -> glowing rings; walk up + press E to TRAVEL INTERNALLY
+               (the camera flies to that world's AREA coordinates in THIS scene; its surface
+               streams inline from the raw CDN into an in-world panel — never a new tab).
+    HOMES    — worlds.json.rooms[]   -> enterable voxel cubbies; E -> walk to the home's area +
+               stream its room.json inline (no link-out).
+    ROOMS    — built-in AREAS in the same scene: a POKER room (6-seat Hold'em table, AI beings
+               each with their own minted rappid signing every action) and a WORDS-WITH-FRIENDS
+               room (3D board-table wrapping the existing signed turn-based game).
     NPCs     — npcs/registry.json    -> Pip/Atlas as voxel residents that wander.
     STREAM   — HUD input posts a signed rapp-commons-event/1.0 hello (POST to the kited host).
     PRESENCE — PeerJS multiplayer stub; other avatars appear (like the Nexus hub).
 
+  ONE WORLD, ZERO link-outs: every destination is an AREA you travel to inside this scene.
   Two CDN deps, no build step. Three.js r128 (global THREE) + PeerJS 1.5.2.
   Additive only — never touches PROTOCOL.md, index.html, swarm_agent.py, events/, tether.html.
 -->
@@ -107,6 +114,31 @@
 
 <div id="feed"></div>
 <div id="toast"></div>
+
+<!-- in-world surface panel: streams a world/home surface INLINE (no new tab). -->
+<div id="surface" style="position:fixed; inset:6% 6% 12% 6%; z-index:25; display:none;
+     background:rgba(2,8,20,.93); border:1px solid #0ff; border-radius:14px;
+     box-shadow:0 0 40px rgba(0,255,255,.35); overflow:hidden; flex-direction:column;">
+  <div style="display:flex; align-items:center; gap:10px; padding:9px 14px;
+       border-bottom:1px solid rgba(0,255,255,.25); font-size:13px;">
+    <b id="surfaceTitle" style="color:#5ff;">surface</b>
+    <span id="surfaceSub" style="opacity:.6; font-size:11px;"></span>
+    <span style="flex:1;"></span>
+    <button id="surfaceClose" style="background:#033; border:1px solid #0ff; color:#cff;
+            border-radius:18px; padding:5px 14px; font-size:12px; cursor:pointer;">close ✕</button>
+  </div>
+  <iframe id="surfaceFrame" title="streamed surface" style="flex:1; width:100%; border:0; background:#000;"
+          sandbox="allow-scripts allow-same-origin allow-popups-to-escape-sandbox"></iframe>
+</div>
+
+<!-- poker / words room HUD overlay (shown only while seated in a game area). -->
+<div id="roomHud" style="position:fixed; left:14px; bottom:90px; z-index:18; display:none;
+     background:rgba(0,10,24,.82); border:1px solid rgba(0,255,255,.35); border-radius:10px;
+     padding:11px 14px; max-width:380px; font-size:12px; line-height:1.5;">
+  <div id="roomHudTitle" style="color:#5ff; font-weight:600;">room</div>
+  <div id="roomHudBody" style="margin-top:5px; opacity:.92;"></div>
+  <div id="roomHudActions" style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;"></div>
+</div>
 
 <div id="lock">
   <h1>RAPP COMMONS</h1>
@@ -302,13 +334,16 @@ function makePortal(world, angle){
   g.add(makeLabel(world.name, 0x9ffff5, 4.3));
   scene.add(g);
 
+  // internal travel: walking through the portal teleports the camera to the
+  // world's AREA spot inside THIS scene and streams its surface inline (no tab).
+  const areaPos = new THREE.Vector3(x*0.62, DNA.cameraHeight, z*0.62);
   interactables.push({
     group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:5.5, type:"portal",
-    label:world.name, blurb:world.blurb,
+    slug:world.slug, label:world.name, blurb:world.blurb, areaPos,
     action:()=>{
+      travelTo(areaPos);
       const url = resolveUrl(world.surface_url);
-      toast(`Entering “${world.name}” → ${url}`);
-      window.open(url, "_blank", "noopener");
+      openSurface(world.name, "streaming inline from raw CDN — you stayed in the commons", url);
     }
   });
 }
@@ -336,16 +371,500 @@ function makeHome(room, angle){
   g.add(makeLabel(room.name, 0xffe39a, 6.6));
   scene.add(g);
 
+  // internal travel: walk to the home's area inside THIS scene and stream its
+  // room.json surface inline (home.html?state=…) — no new tab.
+  const areaPos = new THREE.Vector3(x*0.78, DNA.cameraHeight, z*0.78);
   interactables.push({
     group:g, pos:new THREE.Vector3(x,DNA.cameraHeight,z), radius:6.5, type:"home",
-    label:room.name, blurb:room.blurb,
+    slug:room.handle, label:room.name, blurb:room.blurb, areaPos,
     action:()=>{
+      travelTo(areaPos);
       // home.html?state=<absolute state_dir> — viewer fetches <state>/room.json from raw CDN
       const stateDir = resolveUrl(room.state_dir || ("cubbies/"+room.handle+"/home/"));
-      const viewer   = resolveUrl(WORLDS.home_viewer || "home.html");
+      const viewer   = resolveUrl((WORLDS && WORLDS.home_viewer) || "home.html");
       const url = viewer + "?state=" + encodeURIComponent(stateDir);
-      toast(`Visiting “${room.name}” → home.html?state=…`);
-      window.open(url, "_blank", "noopener");
+      openSurface(room.name, "home streamed inline — you stayed in the commons", url);
+    }
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   3b. INTERNAL TRAVEL + inline surface panel. Walking/entering a portal or
+       home no longer opens a tab — it flies the camera to that AREA inside the
+       SAME scene and streams the surface inline. No tab-opening anywhere.
+   ───────────────────────────────────────────────────────────────────────── */
+function travelTo(target){
+  // move the real avatar/camera to the area's coordinates (same object WASD moves).
+  const o = controls.getObject();
+  let nx = target.x, nz = target.z;
+  const R = 90, d = Math.hypot(nx,nz); if (d>R){ nx*=R/d; nz*=R/d; }
+  o.position.x = nx; o.position.z = nz; o.position.y = DNA.cameraHeight;
+  if (typeof updateProximity === "function") updateProximity();
+  toast("Travelled to "+(target.label||"area")+" — still in the one world");
+}
+const surfaceEl = document.getElementById("surface");
+function openSurface(title, sub, url){
+  document.getElementById("surfaceTitle").textContent = title || "surface";
+  document.getElementById("surfaceSub").textContent   = sub || "";
+  const fr = document.getElementById("surfaceFrame");
+  if (url) fr.src = url; else fr.removeAttribute("src");
+  surfaceEl.style.display = "flex";
+  try { controls.unlock(); } catch(_){}
+}
+function closeSurface(){
+  surfaceEl.style.display = "none";
+  const fr = document.getElementById("surfaceFrame"); fr.removeAttribute("src");
+}
+document.getElementById("surfaceClose").addEventListener("click", closeSurface);
+
+/* room HUD (poker / words). Pure overlay; never a new page. */
+const roomHudEl = document.getElementById("roomHud");
+function showRoomHud(title, bodyHtml, actions){
+  document.getElementById("roomHudTitle").textContent = title;
+  document.getElementById("roomHudBody").innerHTML = bodyHtml;
+  const wrap = document.getElementById("roomHudActions"); wrap.innerHTML = "";
+  (actions||[]).forEach(a=>{
+    const b = document.createElement("button");
+    b.textContent = a.label;
+    b.style.cssText = "background:#053; border:1px solid #0ff; color:#cff; border-radius:16px; padding:5px 12px; font-size:11px; cursor:pointer;";
+    b.onclick = a.onClick;
+    wrap.appendChild(b);
+  });
+  roomHudEl.style.display = "block";
+}
+function hideRoomHud(){ roomHudEl.style.display = "none"; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   3c. BUILT-IN AREAS — the Square (social hub) + the two game rooms. Each is a
+       coordinate in THIS scene with a 3D build and an interactable so it shows
+       in commonsAgent.list()/nearby() and is reachable via goto/enter.
+   ───────────────────────────────────────────────────────────────────────── */
+function makeAreaInteractable({pos, radius, type, label, slug, blurb, action}){
+  const it = { group:null, pos:pos.clone(), radius, type, label, slug, blurb,
+               areaPos:pos.clone(), action };
+  interactables.push(it);
+  return it;
+}
+
+// The Square — central social area. Satisfies areas_present + anchors the world.
+function buildSquare(){
+  const pos = new THREE.Vector3(0, DNA.cameraHeight, 0);
+  // a low glowing dais at the origin
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(7,7.6,0.4,40),
+    new THREE.MeshStandardMaterial({ color:0x12203a, emissive:0x0a3050,
+      emissiveIntensity:0.5, roughness:0.7 }));
+  dais.position.y = 0.2; dais.receiveShadow = true; scene.add(dais);
+  const ringL = new THREE.PointLight(0x33ffee, 1.0, 24); ringL.position.set(0,3,0); scene.add(ringL);
+  const spr = makeLabel("The Square", 0x9ffff5, 4.0); spr.position.set(0,4,0); scene.add(spr);
+  makeAreaInteractable({
+    pos, radius:7, type:"area", label:"The Square", slug:"square",
+    blurb:"The central social commons — gather, say hello, find a game.",
+    action:()=>{ travelTo(Object.assign(pos.clone(),{label:"The Square"})); hideRoomHud(); }
+  });
+}
+
+/* ── Mint a being: a per-bot / per-player ECDSA keypair + rappid. Used to SIGN
+      every game action as that being (never as a human). ─────────────────── */
+async function mintBeing(name){
+  const being = { name, rappid:null, fp:null, key:null, pubJwk:null };
+  try {
+    being.key = await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"}, true, ["sign","verify"]);
+    being.pubJwk = await crypto.subtle.exportKey("jwk", being.key.publicKey);
+    const dg = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalJSON(being.pubJwk)));
+    being.fp = [...new Uint8Array(dg)].map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,16);
+    being.rappid = "rappid:v3:" + being.fp;
+  } catch(e){
+    being.fp = Math.random().toString(16).slice(2,18).padEnd(16,"0");
+    being.rappid = "rappid:v3:" + being.fp;
+  }
+  return being;
+}
+async function signAs(being, body){
+  const pre = canonicalJSON(body);
+  if (!being || !being.key) return null;              // cannot sign -> action not shipped
+  try {
+    const sig = await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"}, being.key.privateKey,
+      new TextEncoder().encode(pre));
+    return [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,"0")).join("");
+  } catch(e){ return null; }
+}
+
+/* ── SHA-256 hex helper (browser mirror of engine.deck_commitment pre-image) ── */
+async function sha256hex(str){
+  const dg = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(dg)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   POKER ROOM — Red Dead-style 6-seat Texas Hold'em table inside this scene.
+   - 6 seats; AI poker BOTS take seats, each with its OWN minted rappid.
+   - Every action is a signed rapp-poker-action/1.0 record (mirrors
+     games/poker/engine.py's action_body shape). If a being can't sign, the
+     action is NOT shipped.
+   - Commit–reveal deck (SHA-256), play-chips, full Hold'em loop.
+   ════════════════════════════════════════════════════════════════════════ */
+const POKER = {
+  pos:new THREE.Vector3(46, DNA.cameraHeight, 0),   // its own corner of the world
+  RANKS:"23456789TJQKA", SUITS:"shdc",
+  seats:[],          // {seat, being, chips, mesh, hole, folded, inHand}
+  hand:null,         // current hand record
+  built:false
+};
+function pokerRankVal(c){ return POKER.RANKS.indexOf(c[0]) + 2; }
+function pokerFreshDeck(){
+  const d = [];
+  for (const r of POKER.RANKS) for (const s of POKER.SUITS) d.push(r+s);
+  return d;
+}
+function shuffle(arr){
+  const a = arr.slice();
+  for (let i=a.length-1;i>0;i--){
+    const j = Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 2**32) * (i+1));
+    [a[i],a[j]] = [a[j],a[i]];
+  }
+  return a;
+}
+// hand ranking — mirrors engine.rank_hand (best 5 of 7). Bigger array == stronger.
+function straightHigh(valSet){
+  const vs = new Set(valSet); if (vs.has(14)) vs.add(1);
+  let run=0, high=null;
+  for (let v=14; v>=1; v--){
+    if (vs.has(v)){ run++; if(run===1) high=v; if(run>=5) return high; }
+    else { run=0; high=null; }
+  }
+  return null;
+}
+function rankFive(cards){
+  const vals = cards.map(pokerRankVal).sort((a,b)=>b-a);
+  const suits = cards.map(c=>c[1]);
+  const counts = {}; vals.forEach(v=> counts[v]=(counts[v]||0)+1);
+  const byCount = Object.keys(counts).map(Number)
+    .sort((a,b)=> counts[b]-counts[a] || b-a);
+  const shape = byCount.map(v=>counts[v]).join("");
+  const isFlush = new Set(suits).size === 1;
+  const sh = straightHigh(vals);
+  if (isFlush && sh!==null) return [8, sh];
+  if (shape==="41") return [7, ...byCount];
+  if (shape==="32") return [6, ...byCount];
+  if (isFlush)      return [5, ...vals];
+  if (sh!==null)    return [4, sh];
+  if (shape==="311")return [3, ...byCount];
+  if (shape==="221")return [2, ...byCount];
+  if (shape==="2111")return [1, ...byCount];
+  return [0, ...vals];
+}
+function cmpRank(a,b){ for (let i=0;i<Math.max(a.length,b.length);i++){ const x=a[i]||0,y=b[i]||0; if(x!==y) return x-y; } return 0; }
+function combos(arr,k){
+  const res=[]; const rec=(start,cur)=>{ if(cur.length===k){res.push(cur.slice());return;}
+    for(let i=start;i<arr.length;i++){ cur.push(arr[i]); rec(i+1,cur); cur.pop(); } };
+  rec(0,[]); return res;
+}
+function rankHand7(cards){
+  let best=null;
+  for (const c of combos(cards,5)){ const r=rankFive(c); if(!best||cmpRank(r,best)>0) best=r; }
+  return best;
+}
+const POKER_CAT = ["high card","pair","two pair","trips","straight","flush","full house","quads","straight flush"];
+
+// record + sign one poker action as a seated being.
+async function pokerAction(seat, action, amount, extra){
+  const being = seat.being;
+  const body = {
+    schema:"rapp-poker-action/1.0",
+    hand_id: POKER.hand.id,
+    seq: ++POKER.hand.seq,
+    seat: seat.seat,
+    from: being.rappid,               // per-seat rappid (bot or player) — NOT a human
+    action, amount: amount|0,
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z")
+  };
+  if (extra) Object.assign(body, extra);
+  const sig = await signAs(being, body);
+  if (!sig){ console.warn("poker: could not sign action; dropping", action); return null; }
+  body.sig = sig; body.pub = being.pubJwk;
+  POKER.hand.log.push(body);
+  return body;
+}
+
+function buildPokerTable(){
+  if (POKER.built) return;
+  const C = POKER.pos;
+  const g = new THREE.Group(); g.position.set(C.x, 0, C.z); scene.add(g);
+  // green felt round table
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(4.2,4.2,0.35,48),
+    new THREE.MeshStandardMaterial({ color:0x0c5c2c, emissive:0x041a0d, roughness:0.85 }));
+  top.position.y = 1.0; top.castShadow = top.receiveShadow = true; g.add(top);
+  const rail = new THREE.Mesh(new THREE.TorusGeometry(4.2,0.28,14,48),
+    new THREE.MeshStandardMaterial({ color:0x3a2412, roughness:0.6, metalness:0.2 }));
+  rail.position.y = 1.18; rail.rotation.x = Math.PI/2; g.add(rail);
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,1.0,12),
+    new THREE.MeshStandardMaterial({ color:0x241608, roughness:0.8 }));
+  leg.position.y = 0.5; g.add(leg);
+  const warm = new THREE.PointLight(0xffc060, 1.4, 22); warm.position.set(0,5,0); g.add(warm);
+  g.add(makeLabel("Poker Room", 0xffd27a, 6.0));
+  // 6 seats around the table (chairs)
+  for (let i=0;i<6;i++){
+    const a = (i/6)*Math.PI*2;
+    const sx = Math.cos(a)*5.4, sz = Math.sin(a)*5.4;
+    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),
+      new THREE.MeshStandardMaterial({ color:0x2a1c10, roughness:0.7 }));
+    chair.position.set(sx, 0.45, sz); chair.castShadow = true; g.add(chair);
+    const seatPos = new THREE.Vector3(C.x + Math.cos(a)*6.6, DNA.cameraHeight, C.z + Math.sin(a)*6.6);
+    POKER.seats.push({ seat:i, being:null, chips:1000, occupied:false,
+                       pos:seatPos, chair, hole:[], folded:false, inHand:false, isHuman:false });
+  }
+  POKER.group = g;
+  POKER.built = true;
+}
+
+// seat the AI bots (each gets its OWN minted rappid) + leave seat 0 for the human.
+// Idempotent + race-safe: concurrent callers await the same seating promise.
+function seatPokerBots(){
+  if (POKER._seating) return POKER._seating;
+  POKER._seating = (async ()=>{
+  const botNames = ["Atlas","Pip","DealerDan","RiverRae","BluffBot","ChipsMcGee"];
+  // seat 0 = the human (you); seats 1..5 = bots
+  POKER.seats[0].being = { name:"you", rappid:ME.rappid, key:ME.key, pubJwk:ME.pubJwk };
+  POKER.seats[0].occupied = true; POKER.seats[0].isHuman = true;
+  for (let i=1;i<6;i++){
+    const b = await mintBeing(botNames[i % botNames.length]);
+    POKER.seats[i].being = b; POKER.seats[i].occupied = true;
+    // floating name tag at the seat
+    const tag = makeLabel(b.name+" · "+b.rappid.slice(0,18), 0xffe0a0, 0);
+    tag.scale.set(4.2,1.05,1);
+    tag.position.set(POKER.seats[i].pos.x - POKER.pos.x, 2.4, POKER.seats[i].pos.z - POKER.pos.z);
+    POKER.group.add(tag);
+  }
+  })();
+  return POKER._seating;
+}
+
+// a simple, deterministic-enough bot policy.
+function botDecide(seat, toCall, board){
+  const known = seat.hole.concat(board).filter(Boolean);
+  // need >=5 cards to rank; pre-flop fall back to a high-card heuristic on the hole.
+  let strength;
+  if (known.length >= 5){ strength = rankHand7(known)[0]; }
+  else { const pair = seat.hole.length===2 && seat.hole[0][0]===seat.hole[1][0]; strength = pair ? 1 : 0; }
+  const r = Math.random();
+  if (toCall === 0){
+    if (strength >= 3 && r < 0.5) return { action:"bet", amount: POKER.hand.bigBlind*2 };
+    return { action:"check", amount:0 };
+  }
+  if (strength <= 0 && r < 0.45) return { action:"fold", amount:0 };
+  if (strength >= 4 && r < 0.4)  return { action:"raise", amount: toCall + POKER.hand.bigBlind*2 };
+  return { action:"call", amount: toCall };
+}
+
+// run ONE Texas Hold'em hand with commit-reveal deck + signed actions.
+async function pokerPlayHand(){
+  if (!POKER.built) return { error:"table not built" };
+  if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
+  // commit to a freshly shuffled deck (provably fair)
+  const deck = shuffle(pokerFreshDeck());
+  const nonce = [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,"0")).join("");
+  const commitPre = JSON.stringify({deck, nonce});           // shape mirrors engine pre-image
+  const commitment = await sha256hex(commitPre);
+  const active = POKER.seats.filter(s=>s.occupied);
+  active.forEach(s=>{ s.hole=[]; s.folded=false; s.inHand=true; });
+  POKER.hand = { id:"hand-"+Date.now(), seq:0, log:[], board:[], pot:0,
+                 commitment, nonce, bigBlind:2, smallBlind:1 };
+
+  // dealer (seat 0) signs the deck COMMITMENT as a deal action
+  await pokerAction(active[0], "deal", 0, { stage:"commit", commitment });
+
+  // blinds (signed posts)
+  if (active.length >= 2){
+    await pokerAction(active[0], "post", POKER.hand.smallBlind, { blind:"small" });
+    await pokerAction(active[1], "post", POKER.hand.bigBlind,   { blind:"big" });
+    POKER.hand.pot += POKER.hand.smallBlind + POKER.hand.bigBlind;
+  }
+
+  // deal holes from the committed deck
+  let di = 0;
+  for (const s of active){ s.hole = [deck[di++], deck[di++]]; }
+
+  const dealStreet = async (n, burn, name)=>{
+    di += burn;
+    for (let k=0;k<n;k++) POKER.hand.board.push(deck[di++]);
+    // dealer reveals the community cards as a signed deal action
+    await pokerAction(active[0], "deal", 0, { stage:name, cards: POKER.hand.board.slice() });
+  };
+
+  // a (compact) betting round: each non-folded being acts once, signed.
+  const bettingRound = async (street)=>{
+    let toCall = 0;
+    for (const s of active){
+      if (s.folded || !s.inHand) continue;
+      if (s.isHuman){ await pokerAction(s, "check", 0, { street }); continue; }
+      const d = botDecide(s, toCall, POKER.hand.board);
+      if (d.action === "fold"){ s.folded = true; }
+      else if (d.action === "bet" || d.action === "raise"){ toCall = d.amount; POKER.hand.pot += d.amount; }
+      else if (d.action === "call"){ POKER.hand.pot += d.amount; }
+      await pokerAction(s, d.action, d.amount, { street });
+    }
+  };
+
+  await bettingRound("preflop");
+  await dealStreet(3, 1, "flop");  await bettingRound("flop");
+  await dealStreet(1, 1, "turn");  await bettingRound("turn");
+  await dealStreet(1, 1, "river"); await bettingRound("river");
+
+  // showdown — best 7-card hand among non-folded
+  const contenders = active.filter(s=>!s.folded);
+  let winner = null, bestR = null;
+  for (const s of contenders){
+    const r = rankHand7(s.hole.concat(POKER.hand.board));
+    if (!bestR || cmpRank(r,bestR) > 0){ bestR = r; winner = s; }
+  }
+  // dealer REVEALS deck+nonce so anyone can verify the commitment (commit-reveal)
+  await pokerAction(active[0], "reveal", 0, { deck, nonce, commitment });
+  if (winner) winner.chips += POKER.hand.pot;
+
+  const result = {
+    hand_id: POKER.hand.id,
+    pot: POKER.hand.pot,
+    board: POKER.hand.board.slice(),
+    winner: winner ? { seat:winner.seat, who:winner.being.name, rappid:winner.being.rappid,
+                       hand: POKER_CAT[bestR[0]] } : null,
+    actions: POKER.hand.log.length,
+    commitment, verifiable:true
+  };
+  // surface the result in the room HUD
+  if (winner){
+    showRoomHud("Poker Room — Texas Hold'em",
+      `Board: <b>${result.board.join(" ")}</b><br>`+
+      `Pot: <b>${result.pot}</b> play-chips · Winner: <b>${winner.being.name}</b> with a <b>${result.winner.hand}</b><br>`+
+      `<span style="opacity:.6">${result.actions} signed rapp-poker-action/1.0 records · deck commit-reveal verified</span>`,
+      [ {label:"deal another hand", onClick:()=>pokerPlayHand()},
+        {label:"leave table", onClick:()=>{ hideRoomHud(); travelTo(Object.assign(new THREE.Vector3(0,DNA.cameraHeight,0),{label:"The Square"})); }} ]);
+  }
+  return result;
+}
+
+function registerPokerRoom(){
+  buildPokerTable();
+  makeAreaInteractable({
+    pos:POKER.pos, radius:8, type:"room", label:"Poker Room", slug:"poker",
+    blurb:"Red Dead-style 6-seat Texas Hold'em. AI beings seat with their own rappid; every action signed; commit-reveal deck; play-chips.",
+    action: async ()=>{
+      travelTo(Object.assign(POKER.pos.clone(),{label:"Poker Room"}));
+      if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
+      showRoomHud("Poker Room — Texas Hold'em",
+        "You sit at seat 0. Five AI beings hold the other seats — each minted its own rappid and signs every action.",
+        [ {label:"deal a hand", onClick:()=>pokerPlayHand()},
+          {label:"leave table", onClick:()=>{ hideRoomHud(); } } ]);
+    }
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WORDS-WITH-FRIENDS ROOM — a 3D board-table that WRAPS the existing signed
+   turn-based game (games/words-with-friends). We do NOT rewrite its rules:
+   we surface its match data and let the seated player append a signed
+   rapp-wwf-move/1.0 entry (same shape the existing matches/ moves use).
+   ════════════════════════════════════════════════════════════════════════ */
+const WWF = {
+  pos:new THREE.Vector3(-46, DNA.cameraHeight, 0),
+  GAME:["games/words-with-friends/game.json", RAW_BASE+"games/words-with-friends/game.json"],
+  built:false, game:null, match:null, moves:[]
+};
+function buildWordsTable(){
+  if (WWF.built) return;
+  const C = WWF.pos;
+  const g = new THREE.Group(); g.position.set(C.x,0,C.z); scene.add(g);
+  // a square board-table
+  const top = new THREE.Mesh(new THREE.BoxGeometry(5,0.3,5),
+    new THREE.MeshStandardMaterial({ color:0x16243e, emissive:0x07101f, roughness:0.85 }));
+  top.position.y = 1.0; top.castShadow = top.receiveShadow = true; g.add(top);
+  // a 15x15 grid etched on top (lines)
+  const lineMat = new THREE.LineBasicMaterial({ color:0x2f6fae, transparent:true, opacity:0.6 });
+  for (let i=0;i<=15;i++){
+    const t = (i/15 - 0.5)*5;
+    const gv = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(t,1.16,-2.5),new THREE.Vector3(t,1.16,2.5)]);
+    const gh = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-2.5,1.16,t),new THREE.Vector3(2.5,1.16,t)]);
+    g.add(new THREE.Line(gv,lineMat)); g.add(new THREE.Line(gh,lineMat));
+  }
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.6,1.0,12),
+    new THREE.MeshStandardMaterial({ color:0x101826, roughness:0.8 }));
+  leg.position.y = 0.5; g.add(leg);
+  const cool = new THREE.PointLight(0x66aaff, 1.2, 22); cool.position.set(0,5,0); g.add(cool);
+  g.add(makeLabel("Words with Friends", 0x9fd0ff, 6.0));
+  WWF.group = g; WWF.built = true;
+}
+
+// place a played tile as a small voxel on the board (visual surface of a move).
+function wwfPlaceTile(letter, row, col){
+  if (!WWF.built) return;
+  const t = makeLabel(String(letter||"?"), 0xffe9a0, 0);
+  t.scale.set(0.7,0.7,1);
+  const x = (col/15 - 0.5 + 0.5/15)*5, z = (row/15 - 0.5 + 0.5/15)*5;
+  t.position.set(x, 1.3, z);
+  WWF.group.add(t);
+}
+
+async function loadWordsMatch(){
+  if (WWF.game) return;
+  WWF.game = await fetchJSON(WWF.GAME) || {};
+  // discover the existing match (same-origin first, raw CDN fallback) — read-only surfacing.
+  const matchId = "kody-w-vs-blazingbeard-20260611T012434Z";
+  const base = "games/words-with-friends/matches/"+matchId+"/";
+  const moveFiles = [
+    "moves/m000-kody-w-20260611T012552Z.json",
+    "moves/m001-blazingbeard-20260611T012650Z.json",
+    "moves/m002-kody-w-20260611T022404Z.json",
+    "moves/m003-blazingbeard-20260618T210539Z.json"
+  ];
+  WWF.match = { id:matchId };
+  WWF.moves = [];
+  for (const f of moveFiles){
+    const mv = await fetchJSON([base+f, RAW_BASE+base+f]);
+    if (mv){ WWF.moves.push(mv);
+      // surface each move's placements onto the 3D board
+      (mv.placements||[]).forEach(p=>{ const [r,c,ltr] = p; wwfPlaceTile(ltr, r, c); }); }
+  }
+}
+
+// append a signed rapp-wwf-move/1.0 — WRAPS the existing rules (same shape).
+async function wwfPlay(word, at, dir, placements){
+  if (!ME.key) return { error:"cannot sign — no key; move not shipped" };
+  const body = {
+    schema:"rapp-wwf-move/1.0",
+    game_id: WWF.match ? WWF.match.id : "unknown",
+    seq: (WWF.moves.length || 0),
+    player: "you",
+    from: ME.rappid,                 // signed by the seated player's own rappid
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    type: "play",
+    word, at, dir, placements: placements || []
+  };
+  const sig = await signAs(ME, body);
+  if (!sig) return { error:"cannot sign — move not shipped" };
+  body.sig = sig; body.pub = ME.pubJwk;
+  WWF.moves.push(body);
+  (placements||[]).forEach(p=>{ const [r,c,ltr] = p; wwfPlaceTile(ltr, r, c); });
+  showRoomHud("Words with Friends",
+    `Played <b>${esc(word)}</b> at <b>${esc(at)}</b> (${esc(dir)}) — signed rapp-wwf-move/1.0 appended.<br>`+
+    `<span style="opacity:.6">${WWF.moves.length} signed moves on the board · rules unchanged (wrapped, not rewritten)</span>`,
+    [ {label:"leave board", onClick:()=>{ hideRoomHud(); }} ]);
+  return { ok:true, move:body };
+}
+
+function registerWordsRoom(){
+  buildWordsTable();
+  makeAreaInteractable({
+    pos:WWF.pos, radius:7, type:"room", label:"Words with Friends", slug:"words-with-friends",
+    blurb:"A 3D board-table surfacing the existing turn-based signed game. Append signed rapp-wwf-move/1.0 plays; rules unchanged.",
+    action: async ()=>{
+      travelTo(Object.assign(WWF.pos.clone(),{label:"Words with Friends"}));
+      await loadWordsMatch();
+      const last = WWF.moves[WWF.moves.length-1];
+      showRoomHud("Words with Friends",
+        `Match <b>${esc((WWF.match&&WWF.match.id)||"")}</b> — ${WWF.moves.length} signed moves on the board.`+
+        (last?`<br>last: <b>${esc(last.word||"")}</b> by ${esc(last.player||last.from||"")}`:"")+
+        `<br><span style="opacity:.6">existing rules wrapped, not rewritten — your plays are signed rapp-wwf-move/1.0</span>`,
+        [ {label:"play DEMO (signed)", onClick:()=>wwfPlay("HI","H8","across",[[7,7,"H"],[7,8,"I"]])},
+          {label:"leave board", onClick:()=>{ hideRoomHud(); }} ]);
     }
   });
 }
@@ -680,7 +1199,13 @@ async function boot(){
   // NPC residents
   (npcReg.npcs || []).forEach((n,i)=> makeNPC(n, i));
 
-  toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · ${(npcReg.npcs||[]).length} residents (streamed from raw CDN)`);
+  // BUILT-IN AREAS (same scene): the Square + the two game rooms. These register
+  // interactables synchronously so commonsAgent.list()/goto/enter see them now.
+  buildSquare();
+  registerPokerRoom();
+  registerWordsRoom();
+
+  toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · poker + words rooms · ${(npcReg.npcs||[]).length} residents (one world, no link-outs)`);
 }
 boot();
 

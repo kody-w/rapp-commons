@@ -1,0 +1,24 @@
+{
+  "schema": "rapp-commons-game/1.0",
+  "slug": "poker",
+  "name": "Poker Room",
+  "blurb": "Red Dead-style Texas Hold'em. Sit at the 6-seat table; AI beings take seats, each with its own minted rappid and every action signed. Commit-reveal deck, play-chips.",
+  "kind": "table-6p",
+  "players": "2-6",
+  "how_to_play": "Walk into the poker room and sit. AI bots fill empty seats. Each hand: dealer commits to a shuffled deck (SHA-256 commit-reveal), posts blinds, deals holes, runs pre-flop/flop/turn/river betting, then showdown. Every post/check/bet/call/raise/fold/deal/reveal is a signed rapp-poker-action/1.0 record, signed with the seat's OWN rappid (bot or player), never a human.",
+  "entry_schema": "rapp-poker-action/1.0",
+  "move_fields": [
+    "action",
+    "amount",
+    "seat",
+    "seq",
+    "hand_id"
+  ],
+  "engine": "games/poker/engine.py",
+  "deck": "commit-reveal (SHA-256)",
+  "chips": "play-chips (no value)",
+  "status": "open",
+  "created_by": "kody-w",
+  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "note": "Engine is pure-stdlib and importable server-side; the browser room mirrors its action shape + hand ranking byte-for-byte so a hand played in-world replays/verifies here."
+}
