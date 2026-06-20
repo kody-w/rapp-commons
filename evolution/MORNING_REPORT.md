@@ -9,6 +9,7 @@ Cadence: green+additive+isolated venue -> main; app-core/protocol/signing -> PR+
 never weaken a test / add a dep / sign as a human / rewrite history. Additive only.
 
 ## Log
+- `9cbb8ff` -> main: **Poker room in 3D** — community cards on the felt, pot, 6 seats with chip stacks + bot avatars, whose-turn marker; `window.commonsAgent.pokerState()` for inspection; every action signed per-bot rappid. New gating test `poker_renders`. **Tests: 11/11 commons + 8/8 data GREEN.**
 - **LIVE VERIFIED on Pages**: acceptance 10/10 against https://kody-w.github.io/rapp-commons/commons.html; `tools/spawn_beings.py` put **3 autonomous AI beings** into the live PeerJS room (40f4a3c0…) — each walked + spoke + drove window.commonsAgent (sawApi=True). The populated multiplayer Second Life commons works end-to-end on the public repo.
 - `be68068` -> main: **Poker room** (6-seat Hold'em, each AI bot its own rappid, every action signed, commit-reveal deck, play-chips) + **Words-with-Friends room** (wraps the existing signed game) + **internal portal travel** (ZERO window.open). engine `games/poker/engine.py` self-test OK. **Tests: 18/18 GREEN** (data 8/8 + commons.html acceptance 10/10). Additive; sacred untouched; brainstem repo clean.
 - `3fe6910` published to main — unified commons.html world (window.commonsAgent coordinate/interaction API),
