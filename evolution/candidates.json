@@ -8,6 +8,7 @@
     "Inventory + simple economy: own/gift/place objects (eggs, items) signed by rappid",
     "MERGE all worlds/games into INTERNAL 3D rooms/areas of commons.html \u2014 portals teleport within the one scene (camera moves + load area inline from raw CDN), NO window.open link-outs",
     "Persistent shared world state streamed from raw CDN (homes, builds, presence trails) that survives all tabs closing",
+    "Poker BETTING UI (top priority for breakfast): let a human sit at the existing 3D poker table and play a full hand vs the signed AI bots \u2014 deal hole cards, show the board, and surface check/call/bet/raise/fold controls with a play-chip stack + pot. Reuse the existing commit-reveal deck and per-actor rappid signing; every human and bot action signed into the append-only stream. Play-chips ONLY, no real money. Must stay an additive, isolated venue (do not touch the sacred commons app core, protocol, or signing). Ship green and auto-merge.",
     "Red Dead Redemption-style POKER table room: walk up, sit, deal/bet/fold hands; players AND AI beings take seats; signed append-only, PeerJS multiplayer",
     "Spawn N independent AI beings as parallel headless avatar tabs (SecondLife agent x N) joining commons.html PeerJS room \u2014 a populated living world",
     "Words with Friends as a real-time 3D board-table ROOM you walk into and play (signed moves, players+AIs)",

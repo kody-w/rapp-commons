@@ -82,6 +82,57 @@ async def run():
             else:
                 check("poker_renders", False, "window.commonsAgent.pokerState missing")
 
+            # poker_play: the table is now PLAYABLE by the human at seat 0. Start a
+            # fresh INTERACTIVE hand and, whenever it is seat-0's turn
+            # (pokerCanAct().toAct===0), have the human act via
+            # window.commonsAgent.pokerAct(...) (check through, else call). Assert the
+            # human's own signed actions land in the hand log under a rappid id and
+            # the hand reaches showdown/result -- driven only via the public API.
+            has_act = await ev(
+                "()=>typeof window.commonsAgent.pokerAct==='function'"
+                "&&typeof window.commonsAgent.pokerCanAct==='function'", False)
+            if has_act:
+                # ensure we're at the poker table (idempotent) and the demo deal settled.
+                await ev("()=>{try{window.commonsAgent.enter('poker');}catch(e){}return 1}")
+                for _ in range(40):
+                    st = await ev("()=>{try{return window.commonsAgent.pokerState()}catch(e){return null}}", None)
+                    if st and (st.get("phase") == "showdown" or st.get("community")):
+                        break
+                    await page.wait_for_timeout(300)
+                # kick off a new hand that PAUSES on the human's turn (no autopilot).
+                await ev("()=>{try{pokerPlayHand();}catch(e){}return 1}")
+                human_acts = 0
+                reached = False
+                for _ in range(120):
+                    can = await ev("()=>{try{return window.commonsAgent.pokerCanAct()}catch(e){return null}}", None)
+                    if can and can.get("toAct") == 0:
+                        opts = can.get("options") or []
+                        choice = "check" if "check" in opts else "call"
+                        body = await ev(
+                            "()=>Promise.resolve(window.commonsAgent.pokerAct('" + choice + "'))"
+                            ".then(b=>({action:b.action,seat:b.seat,frm:b.from,sig:!!b.sig}))"
+                            ".catch(e=>({err:String(e)}))", None)
+                        if body and body.get("seat") == 0 and str(body.get("frm", "")).startswith("rappid:") and body.get("sig"):
+                            human_acts += 1
+                    pst = await ev("()=>{try{return window.commonsAgent.pokerState()}catch(e){return null}}", None)
+                    if pst and pst.get("phase") == "showdown":
+                        reached = True
+                        break
+                    await page.wait_for_timeout(150)
+                # the human's signed betting actions must appear in the live hand log,
+                # each carrying a rappid `from` + signature (never a bare human handle).
+                signed_human = await ev(
+                    "()=>{try{return (POKER.hand.log||[]).filter(a=>a.seat===0"
+                    "&&/^rappid:/.test(a.from||'')&&!!a.sig"
+                    "&&['check','call','bet','raise','fold'].includes(a.action)).length}catch(e){return -1}}", -1)
+                has_result = await ev("()=>{try{return !!POKER.lastResult}catch(e){return false}}", False)
+                check("poker_play",
+                      human_acts >= 1 and signed_human >= 1 and reached and bool(has_result),
+                      {"human_acts": human_acts, "signed_human": signed_human,
+                       "reached_showdown": reached, "has_result": has_result})
+            else:
+                check("poker_play", False, "window.commonsAgent.pokerAct/pokerCanAct missing")
+
             # wwf_renders: enter the Words-with-Friends room and assert the LIVE
             # 3D board is visible/inspectable -- it surfaces the EXISTING signed
             # match (tiles read straight off games/words-with-friends/matches/),

@@ -524,6 +524,7 @@ const POKER = {
   built:false,
   phase:"unseated",  // unseated | seated | preflop | flop | turn | river | showdown
   toAct:null,        // seat index whose turn it is (null between turns)
+  pending:null,      // live human turn: {seat, street, toCall, options, resolve} while seat-0 must act
   lastResult:null    // last showdown result (for the banner)
 };
 function pokerRankVal(c){ return POKER.RANKS.indexOf(c[0]) + 2; }
@@ -599,6 +600,96 @@ async function pokerAction(seat, action, amount, extra){
   if (!sig){ console.warn("poker: could not sign action; dropping", action); return null; }
   body.sig = sig; body.pub = being.pubJwk;
   POKER.hand.log.push(body);
+  return body;
+}
+
+/* ── HUMAN SEAT (seat 0) — the player now ACTS instead of auto-checking ───────
+   The betting loop awaits pokerHumanTurn(): it computes the legal options for
+   the human, opens the betting HUD, and parks a `resolve` on POKER.pending.
+   pokerAct() (button click OR headless caller) validates the choice, SIGNS the
+   action with the human's OWN rappid via the existing pokerAction() path, then
+   resolves the parked promise so the same hand loop resumes (bots respond,
+   streets advance, showdown). No auto-act, no engine rewrite — additive only. */
+
+// legal options + amounts for a seat facing `toCall`. Mirrors the engine's
+// LEGAL_ACTIONS subset that a player may choose on their turn.
+function pokerOptionsFor(seat, toCall){
+  const bb = (POKER.hand && POKER.hand.bigBlind) || 2;
+  const tc = toCall|0;
+  const opts = ["fold"];
+  if (tc === 0){ opts.push("check"); opts.push("bet"); }
+  else { opts.push("call"); opts.push("raise"); }
+  return { options: opts, toCall: tc, minBet: bb*2, minRaise: tc + bb*2, chips: seat.chips|0 };
+}
+
+// build the {action, amount} a player committed, normalizing default amounts.
+function pokerNormalize(seat, toCall, action, amount){
+  const o = pokerOptionsFor(seat, toCall);
+  if (!o.options.includes(action))
+    throw new Error("illegal action '"+action+"'; legal: "+o.options.join(","));
+  let amt = amount|0;
+  if (action === "check" || action === "fold") amt = 0;
+  else if (action === "call") amt = o.toCall;
+  else if (action === "bet")   amt = amt > 0 ? amt : o.minBet;
+  else if (action === "raise") amt = amt >= o.minRaise ? amt : o.minRaise;
+  return { action, amount: amt };
+}
+
+// open the betting HUD + park a promise the loop awaits; resolved by pokerAct().
+// In autoHuman (demo) mode the seat acts on its own (still signed under the
+// player's own rappid via the normal loop) so a board can render with no driver.
+function pokerHumanTurn(seat, toCall, street){
+  if (POKER.autoHuman){
+    // passive demo: check when free, else call. Loop signs it (no _signed flag).
+    return Promise.resolve((toCall|0) === 0 ? { action:"check", amount:0 }
+                                            : { action:"call",  amount: toCall|0 });
+  }
+  return new Promise(resolve=>{
+    const o = pokerOptionsFor(seat, toCall);
+    POKER.pending = { seat: seat.seat, street, toCall: o.toCall, options: o.options, resolve };
+    showPokerBetHud(seat, o, street);
+  });
+}
+
+// render the Check / Call / Bet / Raise+amount / Fold controls in the room HUD.
+function showPokerBetHud(seat, o, street){
+  const labelFor = a =>
+    a === "call"  ? "call "+o.toCall :
+    a === "bet"   ? "bet "+o.minBet :
+    a === "raise" ? "raise to "+o.minRaise : a;
+  const actions = o.options.map(a=>({
+    label: labelFor(a),
+    onClick: ()=>{ try { window.commonsAgent.pokerAct(a); } catch(e){ console.warn("pokerAct:", e); } }
+  }));
+  showRoomHud("Poker Room — your turn (seat 0)",
+    `Street: <b>${street}</b> · Pot: <b>${(POKER.hand&&POKER.hand.pot)|0}</b> · `+
+    `To call: <b>${o.toCall}</b> · Your stack: <b>${seat.chips|0}</b> play-chips<br>`+
+    `<span style="opacity:.6">Every action — including yours — is a signed rapp-poker-action/1.0 under your own rappid.</span>`,
+    actions);
+}
+
+/* ── HEADLESS + UI drive surface for the human seat ──────────────────────────
+   pokerCanAct() -> {toAct, options, toCall, chips} (toAct===0 means it's YOU).
+   pokerAct(action, amount) -> the SIGNED action body; advances the hand. */
+function pokerCanAct(){
+  const p = POKER.pending;
+  if (!p) return { toAct: null, options: [], toCall: 0, chips: 0 };
+  const seat = POKER.seats[p.seat];
+  return { toAct: p.seat, options: p.options.slice(), toCall: p.toCall|0, chips: (seat && seat.chips)|0 };
+}
+
+async function pokerAct(action, amount){
+  const p = POKER.pending;
+  if (!p) throw new Error("not your turn (no pending human action)");
+  const seat = POKER.seats[p.seat];
+  const norm = pokerNormalize(seat, p.toCall, action, amount);
+  // SIGN the human's action with their OWN rappid via the existing signed path.
+  const body = await pokerAction(seat, norm.action, norm.amount, { street: p.street });
+  if (!body) throw new Error("could not sign action (no human key)");
+  POKER.pending = null;             // close this turn before resuming the loop
+  hideRoomHud();
+  // hand body to the loop pre-signed so it applies chips/pot but does NOT re-sign.
+  p.resolve({ action: norm.action, amount: norm.amount, _signed: true });
   return body;
 }
 
@@ -792,7 +883,11 @@ function botDecide(seat, toCall, board){
 }
 
 // run ONE Texas Hold'em hand with commit-reveal deck + signed actions.
-async function pokerPlayHand(){
+// opts.autoHuman: the seat-0 player is auto-driven (passive demo dealt on room
+//   ENTRY so the felt renders a full board/showdown for inspection). Default
+//   (interactive) play PAUSES on the human's turn so they choose via pokerAct().
+async function pokerPlayHand(opts){
+  POKER.autoHuman = !!(opts && opts.autoHuman);
   if (!POKER.built) return { error:"table not built" };
   if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
   // commit to a freshly shuffled deck (provably fair)
@@ -836,15 +931,18 @@ async function pokerPlayHand(){
     for (const s of active){
       if (s.folded || !s.inHand) continue;
       POKER.toAct = s.seat; renderPokerScene();   // light up whose turn it is
-      if (s.isHuman){ await pokerAction(s, "check", 0, { street }); continue; }
-      const d = botDecide(s, toCall, POKER.hand.board);
+      // the human (seat 0) now CHOOSES — block until pokerAct() supplies a signed action.
+      const d = s.isHuman ? await pokerHumanTurn(s, toCall, street)
+                          : botDecide(s, toCall, POKER.hand.board);
+      // apply the action's chip/pot/toCall effects (identical for human + bot).
       if (d.action === "fold"){ s.folded = true; }
       else if (d.action === "bet" || d.action === "raise"){ toCall = d.amount; POKER.hand.pot += d.amount; s.chips -= d.amount; }
       else if (d.action === "call"){ POKER.hand.pot += d.amount; s.chips -= d.amount; }
-      await pokerAction(s, d.action, d.amount, { street });
+      // the signed record is already pushed for the human (via pokerAct); only bots sign here.
+      if (!d._signed) await pokerAction(s, d.action, d.amount, { street });
       renderPokerScene();
     }
-    POKER.toAct = null; renderPokerScene();
+    POKER.toAct = null; POKER.pending = null; renderPokerScene();
   };
 
   await bettingRound("preflop");
@@ -899,9 +997,11 @@ function registerPokerRoom(){
         "You sit at seat 0. Five AI beings hold the other seats — each minted its own rappid and signs every action.",
         [ {label:"deal a hand", onClick:()=>pokerPlayHand()},
           {label:"leave table", onClick:()=>{ hideRoomHud(); } } ]);
-      // play one live hand so the felt shows community cards / pot / showdown
-      // immediately on entry (also gives headless callers a live pokerState()).
-      if (!POKER.hand) { try { await pokerPlayHand(); } catch(e){ console.warn("poker auto-deal:", e); } }
+      // play one passive demo hand so the felt shows community cards / pot /
+      // showdown immediately on entry (also gives headless callers a live
+      // pokerState()). The player's OWN seat-0 deal button starts an INTERACTIVE
+      // hand where they choose each action via pokerAct().
+      if (!POKER.hand) { try { await pokerPlayHand({ autoHuman:true }); } catch(e){ console.warn("poker auto-deal:", e); } }
     }
   });
 }
@@ -1817,6 +1917,11 @@ boot();
     where, teleport, walk, face, nearby, goto, enter, interact, say, list,
     // live poker-table snapshot for headless inspection (community/pot/seats/turn/phase).
     pokerState: () => (typeof pokerState === "function" ? pokerState() : null),
+    // PLAYABLE seat 0: when it's your turn, act (check|call|bet|raise|fold). The
+    // action is signed with YOUR own rappid via the existing signed hand loop and
+    // the hand resumes (bots respond, streets advance, showdown).
+    pokerCanAct: () => (typeof pokerCanAct === "function" ? pokerCanAct() : { toAct: null, options: [], toCall: 0, chips: 0 }),
+    pokerAct: (action, amount) => (typeof pokerAct === "function" ? pokerAct(action, amount) : null),
     // live Words-with-Friends board snapshot (board grid + signed tiles + scores + turn).
     wwfState: () => (typeof wwfState === "function" ? wwfState() : null),
     // NATIVE voxel-build plot: place/mine colored blocks (each a signed rapp-world-op/1.0
