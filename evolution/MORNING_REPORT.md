@@ -9,6 +9,7 @@ Cadence: green+additive+isolated venue -> main; app-core/protocol/signing -> PR+
 never weaken a test / add a dep / sign as a human / rewrite history. Additive only.
 
 ## Log
+- `6785380` -> main: **Poker is PLAYABLE** — walk up, sit at seat 0, get dealt, and check/call/raise/fold against the signed AI bots (betting HUD; each human action signed by your own rappid; commit-reveal deck + engine unchanged; play-chips). New gating test poker_play. **Tests: 14/14 commons + 8/8 data = 22/22 GREEN (+1 test).** ♠️ Go play a hand at breakfast.
 - `8cdddd5` -> main: **Native voxel-build area** — a real 16x16 buildable plot merged into the one scene (NOT an iframe); place/mine appends a signed rapp-world-op/1.0 (own rappid), seeded from the existing op log. enter('voxel') focuses the native plot. New gating test voxel_area. **Tests: 13/13 commons + 8/8 data GREEN (+1 test).**
 - `e32662c` -> main: **Words-with-Friends room in 3D** — 15x15 board + premium squares + lettered tile cubes from the live SIGNED match (STAGE\@H8, kody-w 20 / BlazingBeard 35); `wwfState()` API; rules WRAPPED not rewritten; plays signed by own rappid. New gating test `wwf_renders`. **Tests: 12/12 commons + 8/8 data GREEN (+1 test).**
 - `9cbb8ff` -> main: **Poker room in 3D** — community cards on the felt, pot, 6 seats with chip stacks + bot avatars, whose-turn marker; `window.commonsAgent.pokerState()` for inspection; every action signed per-bot rappid. New gating test `poker_renders`. **Tests: 11/11 commons + 8/8 data GREEN.**
