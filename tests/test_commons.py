@@ -221,6 +221,24 @@ async def run():
                 check("resident_relationships", False,
                       "window.commonsAgent.relationships/greetFromResidents missing")
 
+            # daynight_cycle: a slow day-night clock tints the world (sky/fog/sun).
+            # DETERMINISTIC -- setTimeOfDay() jumps to a fraction of the day and the
+            # reported phase changes accordingly (no emergent timing / no polling).
+            has_dn = await ev("()=>typeof window.commonsAgent.setTimeOfDay==='function' && typeof window.commonsAgent.timeOfDay==='function'", False)
+            if has_dn:
+                night = await ev("()=>{try{return window.commonsAgent.setTimeOfDay(0.0)}catch(e){return null}}", None)
+                day   = await ev("()=>{try{return window.commonsAgent.setTimeOfDay(0.5)}catch(e){return null}}", None)
+                tod   = await ev("()=>{try{return window.commonsAgent.timeOfDay()}catch(e){return null}}", None)
+                night = night or {}; day = day or {}; tod = tod or {}
+                differ = bool(night.get("phase")) and bool(day.get("phase")) and night.get("phase") != day.get("phase")
+                check("daynight_cycle",
+                      differ and night.get("phase") == "night" and day.get("phase") == "day"
+                      and isinstance(tod.get("t"), (int, float)),
+                      {"night": night, "day": day, "now": tod})
+            else:
+                check("daynight_cycle", False,
+                      "window.commonsAgent.timeOfDay/setTimeOfDay missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).

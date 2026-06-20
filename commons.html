@@ -283,11 +283,69 @@ const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({
 scene.add(particles);
 
 // lighting
-scene.add(new THREE.AmbientLight(DNA.ambientColor, 0.9));
+const ambient = new THREE.AmbientLight(DNA.ambientColor, 0.9);
+scene.add(ambient);
 const sun = new THREE.DirectionalLight(0x88aaff, 0.7);
 sun.position.set(30,60,20); sun.castShadow = true;
 sun.shadow.mapSize.set(1024,1024);
 scene.add(sun);
+
+/* ─────────────────────────────────────────────────────────────────────────
+   1b. DAY-NIGHT CYCLE (additive) — a slow clock tints the sky dome, fog, sun,
+   and ambient through night → dawn → day → dusk and back. Palette interpolated
+   between keyframes; the sun arcs overhead. Purely visual + read-only over the
+   scene; deterministic + headless-inspectable via window.commonsAgent.timeOfDay()
+   / setTimeOfDay(t) / advanceTime(dt). t in [0,1) is the fraction of the day; a
+   full cycle ≈ DAYNIGHT.dayLength seconds of real time when auto.
+   ───────────────────────────────────────────────────────────────────────── */
+const DAYNIGHT = {
+  t: 0.42, dayLength: 600, auto: true,
+  keys: [
+    { t:0.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18 },
+    { t:0.22, top:0x243b6b, bot:0xd98a5a, fog:0x6a5a7a, amb:0.66, sun:0xffb070, sunI:0.55 },
+    { t:0.42, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95 },
+    { t:0.60, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95 },
+    { t:0.80, top:0x3a2f6b, bot:0xe07a4a, fog:0x6a4a5a, amb:0.60, sun:0xff8a50, sunI:0.48 },
+    { t:1.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18 }
+  ]
+};
+function _dnLerp(a, b, f){
+  const ar=(a>>16)&255, ag=(a>>8)&255, ab=a&255;
+  const br=(b>>16)&255, bg=(b>>8)&255, bb=b&255;
+  return ((Math.round(ar+(br-ar)*f)<<16) | (Math.round(ag+(bg-ag)*f)<<8) | Math.round(ab+(bb-ab)*f));
+}
+function dayNightPhase(t){
+  t = ((t%1)+1)%1;
+  if (t < 0.12 || t >= 0.88) return "night";
+  if (t < 0.32) return "dawn";
+  if (t < 0.68) return "day";
+  return "dusk";
+}
+function applyTimeOfDay(t){
+  t = ((t%1)+1)%1;
+  const ks = DAYNIGHT.keys;
+  let i = 0; while (i < ks.length-1 && ks[i+1].t <= t) i++;
+  const a = ks[i], b = ks[Math.min(i+1, ks.length-1)];
+  const span = (b.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t)/span));
+  sky.material.uniforms.top.value.setHex(_dnLerp(a.top, b.top, f));
+  sky.material.uniforms.bot.value.setHex(_dnLerp(a.bot, b.bot, f));
+  scene.fog.color.setHex(_dnLerp(a.fog, b.fog, f));
+  sun.color.setHex(_dnLerp(a.sun, b.sun, f));
+  sun.intensity = a.sunI + (b.sunI - a.sunI)*f;
+  ambient.intensity = a.amb + (b.amb - a.amb)*f;
+  // the sun arcs across the sky: noon (t≈0.5) overhead, low at dawn/dusk.
+  const ang = (t - 0.25) * Math.PI * 2;
+  sun.position.set(Math.cos(ang)*60, Math.max(2, Math.sin(ang)*70), Math.sin(ang)*40);
+}
+function dayNightTick(dt){
+  if (!DAYNIGHT.auto) return;
+  DAYNIGHT.t = (DAYNIGHT.t + dt/DAYNIGHT.dayLength) % 1;
+  applyTimeOfDay(DAYNIGHT.t);
+}
+function timeOfDay(){ return { phase: dayNightPhase(DAYNIGHT.t), t: +DAYNIGHT.t.toFixed(4), auto: DAYNIGHT.auto }; }
+function setTimeOfDay(t){ DAYNIGHT.auto = false; DAYNIGHT.t = ((((+t)||0)%1)+1)%1; applyTimeOfDay(DAYNIGHT.t); return timeOfDay(); }
+function advanceTime(dt){ DAYNIGHT.t = (((DAYNIGHT.t + ((+dt)||0))%1)+1)%1; applyTimeOfDay(DAYNIGHT.t); return timeOfDay(); }
+applyTimeOfDay(DAYNIGHT.t);
 
 /* ─────────────────────────────────────────────────────────────────────────
    2. PointerLockControls (CDN) — camera IS the player.
@@ -2979,6 +3037,7 @@ function animate(){
   for (const m of portalMats) m.uniforms.time.value = t;
   particles.rotation.y += dt*0.05;
   particles.position.y = Math.sin(t*0.3)*0.5;
+  dayNightTick(dt);   // slow day→night sky/fog/sun tint
 
   // animate the NATIVE nexus holographic zone (frame swirl + drifting halo).
   for (const m of NEXUS.mats) m.uniforms.time.value = t;
@@ -3786,6 +3845,12 @@ boot();
 
   window.commonsAgent = {
     where, teleport, walk, face, nearby, goto, enter, interact, say, list,
+    // DAY-NIGHT CYCLE (additive, visual): a slow clock tints sky/fog/sun/ambient
+    // through night→dawn→day→dusk. timeOfDay()->{phase,t,auto}; setTimeOfDay(t)
+    // jumps to a fraction-of-day in [0,1) (pauses auto); advanceTime(dt) nudges it.
+    timeOfDay:    () => (typeof timeOfDay    === "function" ? timeOfDay()      : null),
+    setTimeOfDay: (t)  => (typeof setTimeOfDay === "function" ? setTimeOfDay(t)  : null),
+    advanceTime:  (dt) => (typeof advanceTime  === "function" ? advanceTime(dt)  : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)
