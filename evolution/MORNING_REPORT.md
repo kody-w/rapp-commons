@@ -9,6 +9,7 @@ Cadence: green+additive+isolated venue -> main; app-core/protocol/signing -> PR+
 never weaken a test / add a dep / sign as a human / rewrite history. Additive only.
 
 ## Log
+- `be68068` -> main: **Poker room** (6-seat Hold'em, each AI bot its own rappid, every action signed, commit-reveal deck, play-chips) + **Words-with-Friends room** (wraps the existing signed game) + **internal portal travel** (ZERO window.open). engine `games/poker/engine.py` self-test OK. **Tests: 18/18 GREEN** (data 8/8 + commons.html acceptance 10/10). Additive; sacred untouched; brainstem repo clean.
 - `3fe6910` published to main — unified commons.html world (window.commonsAgent coordinate/interaction API),
   spawn_beings (N AI avatars on tabs), TDD suite (tests/). Baseline data tests 7/8 (poker engine pending).
   NEXT venues to green: (1) poker room + games/poker/engine.py, (2) WWF 3D room, (3) internal portals (kill window.open).
