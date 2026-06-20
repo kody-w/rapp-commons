@@ -56,6 +56,43 @@ async def run():
             npc = await ev("()=>{try{const n=(window.commonsAgent.nearby()||window.commonsAgent.list()||[]).map(x=>JSON.stringify(x).toLowerCase()).join(' ');return n.includes('pip')||n.includes('atlas')}catch(e){return false}}", False)
             check("npcs", bool(npc))
 
+            # residents_live: the world is INHABITED -- on load a few resident
+            # beings spawn (each with its OWN rappid via the existing being mint)
+            # and AUTONOMOUSLY wander/act on a slow client-side heartbeat. Assert
+            # commonsAgent.residents() returns >=2 residents, each carrying a
+            # rappid `from`, and that across a short poll at least one resident's
+            # position OR lastAction CHANGES (they actually move / sign actions).
+            has_res = await ev("()=>typeof window.commonsAgent.residents==='function'", False)
+            if has_res:
+                snap = lambda: ev(
+                    "()=>{try{return (window.commonsAgent.residents()||[]).map(r=>({"
+                    "name:r.name,from:r.from,"
+                    "pos:[Math.round((r.pos&&r.pos.x)||0),Math.round((r.pos&&r.pos.z)||0)],"
+                    "act:r.lastAction?JSON.stringify(r.lastAction):null}))}catch(e){return[]}}", [])
+                first = await snap() or []
+                # every resident is a real being: a rappid `from` (never a bare handle).
+                all_rappid = bool(first) and all(str(r.get("from", "")).startswith("rappid:") for r in first)
+                changed = False
+                base = {r["name"]: (tuple(r["pos"]), r["act"]) for r in first}
+                for _ in range(30):                 # ~9s of polling for movement/action
+                    await page.wait_for_timeout(300)
+                    cur = await snap() or []
+                    for r in cur:
+                        prev = base.get(r["name"])
+                        if prev is None:
+                            continue
+                        if (tuple(r["pos"]), r["act"]) != prev:
+                            changed = True
+                            break
+                    if changed:
+                        break
+                check("residents_live",
+                      len(first) >= 2 and all_rappid and changed,
+                      {"count": len(first), "all_rappid": all_rappid,
+                       "changed": changed, "sample": first[:3]})
+            else:
+                check("residents_live", False, "window.commonsAgent.residents missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).

@@ -1456,6 +1456,217 @@ function makeLabel(text, color, y){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   4b. RESIDENTS — a few autonomous beings that INHABIT the world so a lone
+   visitor at breakfast sees it living. Each resident is a real being: it
+   reuses the existing being mint (mintBeing -> its OWN rappid:v3) and the
+   existing NPC avatar (makeNPC), then on a slow client-side heartbeat
+   (~3-6s) drifts between the areas (Square / Poker / Voxel / homes), moving
+   its avatar smoothly via the existing wanderNPCs target loop, and now and
+   then performs ONE signed action appropriate to where it is — all reusing
+   the EXISTING signed shapes (rapp-commons-event/1.0, rapp-world-op/1.0) and
+   signed BY THAT RESIDENT'S OWN rappid (signAs), never a bare human handle.
+   Purely additive: no LLM, no network beyond the existing raw-CDN seeds.
+   ───────────────────────────────────────────────────────────────────────── */
+const RESIDENTS = [];
+
+// the named anchor areas a resident can drift between. Mirrors the same
+// world coords the rooms register at (Square origin, Poker/Voxel/Words
+// corners) plus every home interactable. Computed lazily so homes (added in
+// boot) are included.
+function residentAreas(){
+  const areas = [
+    { area:"town square", x:0,   z:0  },
+    { area:"poker room",  x:46,  z:0  },
+    { area:"voxel plot",  x:40,  z:0  },
+    { area:"words board", x:-46, z:0  }
+  ];
+  for (const it of interactables){
+    if (it.type === "home" && it.pos)
+      areas.push({ area:(it.label||"a home")+" (home)", x:it.pos.x*0.78, z:it.pos.z*0.78 });
+  }
+  return areas;
+}
+// which named area a point is currently in (nearest anchor).
+function areaAt(x,z){
+  let best=null, bd=Infinity;
+  for (const a of residentAreas()){
+    const d = Math.hypot(a.x-x, a.z-z);
+    if (d < bd){ bd=d; best=a; }
+  }
+  return best ? best.area : "the commons";
+}
+
+// mint a resident: its OWN rappid via the existing being mint, riding the
+// existing NPC avatar so it wanders with everyone else.
+async function spawnResident(name, i){
+  const being = await mintBeing(name);         // its OWN rappid:v3 (reused mint)
+  // reuse an EXISTING same-named NPC avatar (e.g. the registry's Pip/Atlas) so
+  // we don't double-spawn; otherwise mint a fresh NPC avatar for this resident.
+  let npc = npcs.find(n => ((n.def && n.def.name)||"").toLowerCase() === name.toLowerCase());
+  if (!npc){
+    makeNPC({ name, blurb:"a resident of the commons" }, i); // reuse the NPC avatar
+    npc = npcs[npcs.length - 1];               // the avatar we just added
+  }
+  const res = { name, being, npc, area:areaAt(npc.group.position.x, npc.group.position.z),
+                lastAction:null, beat:0 };
+  RESIDENTS.push(res);
+  return res;
+}
+
+// ── signed resident actions (reuse the EXISTING event/op shapes, signAs being) ──
+
+// a square hello: the same rapp-commons-event/1.0 'hello' shape submitPost
+// builds, but composed + signed by THIS resident's own rappid (never ME / a
+// human handle). Surfaced in the live feed + as an in-world speech bubble.
+async function residentHello(res, text){
+  const p = res.npc.group.position;
+  const ev = {
+    schema:"rapp-commons-event/1.0",
+    kind:"hello",
+    from: res.being.rappid,
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    body: text,
+    pos: { x: Math.round(p.x), y: Math.round(p.z) },
+    in_reply_to: null
+  };
+  ev.sig = await signAs(res.being, ev);        // signed by the resident, or null
+  ev.pub = res.being.pubJwk || {};
+  if (!ev.sig) return null;                     // can't sign -> not shipped (same rule as beings)
+  renderEvent({ from:ev.from, body:ev.body, ts:ev.ts, mine:false });
+  spawnSpeech(res.name + ": " + text, new THREE.Vector3(p.x, p.y, p.z));
+  return "say:" + text;
+}
+
+// observe/sit at the poker table: a signed rapp-commons-event/1.0 'observe'
+// (same shape, kind=observe) — a cheap presence beat, no engine mutation.
+async function residentObserve(res){
+  const p = res.npc.group.position;
+  const ev = {
+    schema:"rapp-commons-event/1.0",
+    kind:"observe",
+    from: res.being.rappid,
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    body: res.name + " sits at the table, watching the hand.",
+    pos: { x: Math.round(p.x), y: Math.round(p.z) },
+    in_reply_to: null
+  };
+  ev.sig = await signAs(res.being, ev);
+  ev.pub = res.being.pubJwk || {};
+  if (!ev.sig) return null;
+  renderEvent({ from:ev.from, body:ev.body, ts:ev.ts, mine:false });
+  return "sit:poker";
+}
+
+// place a block on the voxel plot: the SAME rapp-world-op/1.0 'place' shape
+// voxelAppendOp builds, but composed + signed by THIS resident's own rappid
+// and fed through the existing voxApplyOp / renderVoxelBlocks (we wrap the op
+// shape; we do not rewrite voxelAppendOp).
+async function residentPlace(res){
+  if (typeof loadVoxelWorld === "function"){ try { await loadVoxelWorld(); } catch(e){} }
+  const x = (res.beat * 3 + RESIDENTS.indexOf(res)) % VOX_N;
+  const z = (res.beat * 5 + 2) % VOX_N;
+  const palette = ["sapphire","ruby","gold","grass","snow","wood"];
+  const block = palette[res.beat % palette.length];
+  const body = {
+    schema:"rapp-world-op/1.0",
+    game:"voxel-world",
+    seq:(VOX.ops.length || 0) + 1,
+    player: res.name,
+    from: res.being.rappid,                    // the resident's OWN rappid
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z"),
+    op:"place",
+    x:x|0, y:0, z:z|0,
+    block
+  };
+  body.sig = await signAs(res.being, body);
+  if (!body.sig) return null;                   // can't sign -> not shipped
+  body.pub = res.being.pubJwk;
+  VOX.ops.push(body);
+  voxApplyOp(body);                             // reuse the existing apply
+  if (typeof renderVoxelBlocks === "function") renderVoxelBlocks();
+  return "place:" + block + "@" + x + "," + z;
+}
+
+// one heartbeat for one resident: drift toward a (mostly new) area by setting
+// its NPC wander target, update which area it's in, and occasionally perform
+// the signed action that fits where it now is.
+const HELLOS = ["morning, commons.", "anyone up for a game?", "fine day in the square.",
+                "wandering the world.", "hello from the homes.", "the world feels alive."];
+async function residentBeat(res){
+  res.beat++;
+  const areas = residentAreas();
+  // 70% drift to a fresh area, else amble nearby (still moves the avatar).
+  let dest;
+  if (Math.random() < 0.7 && areas.length){
+    dest = areas[Math.floor(Math.random()*areas.length)];
+  } else {
+    const p = res.npc.group.position;
+    const a = Math.random()*Math.PI*2, r = 3 + Math.random()*6;
+    dest = { area:areaAt(p.x,p.z), x:p.x+Math.cos(a)*r, z:p.z+Math.sin(a)*r };
+  }
+  // a little spread so residents don't stack on the exact anchor.
+  const jx = (Math.random()-0.5)*4, jz = (Math.random()-0.5)*4;
+  res.npc.target.set(dest.x + jx, 0, dest.z + jz);    // reuse the wanderNPCs mover
+
+  const here = areaAt(res.npc.group.position.x, res.npc.group.position.z);
+  res.area = here;
+
+  // ~55% of beats, perform a signed action appropriate to the current area.
+  if (Math.random() < 0.55){
+    let did = null;
+    try {
+      if (here.indexOf("poker") >= 0)      did = await residentObserve(res);
+      else if (here.indexOf("voxel") >= 0) did = await residentPlace(res);
+      else                                 did = await residentHello(res, HELLOS[res.beat % HELLOS.length]);
+    } catch(e){ did = null; }
+    if (did) res.lastAction = { kind:did, ts:Date.now(), area:here };
+  }
+  res.area = areaAt(res.npc.group.position.x, res.npc.group.position.z);
+}
+
+// the slow client-side heartbeat: every ~3-6s nudge ONE resident (round-robin
+// so the cost stays trivial and actions stagger naturally).
+let _residentTick = 0;
+function startResidentHeartbeat(){
+  const beatOnce = () => {
+    if (RESIDENTS.length){
+      const res = RESIDENTS[_residentTick % RESIDENTS.length];
+      _residentTick++;
+      residentBeat(res);                         // fire-and-forget (async, cheap)
+    }
+    setTimeout(beatOnce, 3000 + Math.random()*3000); // ~3-6s
+  };
+  // give every resident a gentle first drift target so the world moves promptly.
+  RESIDENTS.forEach(r => { const a = residentAreas(); if (a.length){
+    const d = a[Math.floor(Math.random()*a.length)]; r.npc.target.set(d.x, 0, d.z); } });
+  setTimeout(beatOnce, 1200 + Math.random()*1500);
+}
+
+// spawn the resident cohort: Pip + Atlas always, plus a couple more, each a
+// being with its OWN rappid. Returns once minted (avatars + heartbeat live).
+async function spawnResidents(){
+  const names = ["Pip", "Atlas", "Juno", "Mira", "Bex"];
+  const n = 4; // 3-5; keep it cheap
+  for (let i = 0; i < n; i++) await spawnResident(names[i], 100 + i);
+  startResidentHeartbeat();
+  return RESIDENTS.length;
+}
+
+// headless surface: who's living here and what they last did.
+function commonsResidents(){
+  return RESIDENTS.map(r => {
+    const p = r.npc.group.position;
+    return {
+      name: r.name,
+      from: r.being.rappid,
+      area: r.area,
+      pos: { x: Math.round(p.x*1000)/1000, y: Math.round(p.y*1000)/1000, z: Math.round(p.z*1000)/1000 },
+      lastAction: r.lastAction
+    };
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    5. Identity — your avatar IS your key. Mint an ECDSA P-256 keypair, derive
       the rappid fingerprint, sign events. (WebCrypto, browser-local.)
    ───────────────────────────────────────────────────────────────────────── */
@@ -1735,6 +1946,10 @@ async function boot(){
   registerWordsRoom();
   registerVoxelRoom();
 
+  // RESIDENTS — spawn a few autonomous signing beings (Pip + Atlas among them)
+  // that wander between the now-registered areas + homes on a slow heartbeat.
+  spawnResidents();
+
   toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · poker + words rooms · ${(npcReg.npcs||[]).length} residents (one world, no link-outs)`);
 }
 boot();
@@ -1930,6 +2145,9 @@ boot();
     voxelPlace: (x,y,z,block) => (typeof voxelPlace === "function" ? voxelPlace(x,y,z,block) : null),
     voxelMine:  (x,y,z)       => (typeof voxelMine  === "function" ? voxelMine(x,y,z)        : null),
     voxelState: ()            => (typeof voxelState === "function" ? voxelState()            : null),
+    // the living world: the autonomous resident beings that wander + sign as
+    // themselves. Each entry: {name, from (their OWN rappid), area, pos, lastAction}.
+    residents: () => (typeof commonsResidents === "function" ? commonsResidents() : []),
     // convenience: identity + a one-shot full snapshot for headless callers.
     me: () => ({ rappid: ME.rappid, fp: ME.fp }),
     snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })
