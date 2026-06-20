@@ -1,9 +1,11 @@
 {
   "schema": "rapp-commons-evolution-candidates/1.0",
   "pool": [
+    "3D bounty/quest board venue: residents post + claim + complete SIGNED tasks (rapp-commons-bounty/1.0 on the append-only stream), a living job market pointing at the other venues",
     "Avatars + real-time multiplayer presence (rappid=avatar) via kited vTwin host, see others walk the commons",
     "Build out the first-person voxel commons world (commons3d.html): richer village, streamed GLTF models from raw CDN, NPC pathing, enterable homes/worlds \u2014 A-Taste-of-AGI overnight self-improvement pattern",
     "Co-op first-person action game in the commons world (Left 4 Dead style): multiplayer, signed, collaborative like voxel-world \u2014 waves/objectives players clear together, hosted by a kited vTwin, state streamed from raw CDN",
+    "Harden the flaky poker_play test: make the auto-play loop + human-action path deterministic for the headless gate (no timing race), without weakening the assertion",
     "In-world proximity chat = the signed commons stream surfaced over nearby avatars",
     "Inventory + simple economy: own/gift/place objects (eggs, items) signed by rappid",
     "MERGE all worlds/games into INTERNAL 3D rooms/areas of commons.html \u2014 portals teleport within the one scene (camera moves + load area inline from raw CDN), NO window.open link-outs",

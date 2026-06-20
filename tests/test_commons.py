@@ -370,6 +370,63 @@ async def run():
             else:
                 check("persistence", False,
                       "window.commonsAgent.persist/rehydrate missing")
+
+            # bounty_board: the commons has a LIVING JOB MARKET. A board venue lets
+            # residents POST, CLAIM, and COMPLETE signed tasks on the EXISTING
+            # append-only signed stream (rapp-commons-bounty/1.0, signed via the
+            # existing signAs path — each action by its actor's OWN rappid). The
+            # wandering residents seed + work the board on a slow heartbeat, so a
+            # visitor at breakfast finds it alive. Over a short poll assert:
+            #   • commonsAgent.bounties() returns >=1 bounty whose `from` is a
+            #     rappid id, AND that bounty's signed record (on the append-only
+            #     persist stream / localStorage) carries a real signature, AND
+            #   • at least one bounty TRANSITIONS open->claimed (or ->done) where
+            #     the claimer/completer's rappid DIFFERS from the poster's `from`
+            #     (a resident worked SOMEONE ELSE's bounty, signed as itself).
+            has_bounty = await ev("()=>typeof window.commonsAgent.bounties==='function'", False)
+            if has_bounty:
+                # entering the board focuses the camera + builds the 3D cork (additive).
+                await ev("()=>{try{window.commonsAgent.enter('board');}catch(e){}return 1}")
+                bsnap = lambda: ev(
+                    "()=>{try{return (window.commonsAgent.bounties()||[]).map(b=>({"
+                    "id:b.id,from:b.from,status:b.status,claimedBy:b.claimedBy||null}))}"
+                    "catch(e){return[]}}", [])
+                # a signed bounty record (post|claim|done) carrying a rappid `from`
+                # + a real signature must exist on the SAME append-only signed stream
+                # (read straight off the localStorage persist log — not a new surface).
+                signed_on_stream = lambda: ev(
+                    "()=>{try{const raw=localStorage.getItem('rapp-commons:persist:log/1');"
+                    "if(!raw)return false;const log=JSON.parse(raw);"
+                    "return log.some(r=>r.schema==='rapp-commons-bounty/1.0'"
+                    "&&/^rappid:/.test(r.from||'')&&typeof r.sig==='string'&&r.sig.length>0);}"
+                    "catch(e){return false}}", False)
+                have_bounty = False
+                transitioned = False
+                sig_ok = False
+                sample = {}
+                for _ in range(40):                  # ~12s of polling for a live market
+                    cur = await bsnap() or []
+                    rappid_b = [bnt for bnt in cur if str(bnt.get("from", "")).startswith("rappid:")]
+                    have_bounty = len(rappid_b) >= 1
+                    sig_ok = bool(await signed_on_stream())
+                    # a claimed/done bounty whose worker rappid differs from the poster.
+                    for bnt in cur:
+                        if bnt.get("status") in ("claimed", "done"):
+                            worker = str(bnt.get("claimedBy") or "")
+                            poster = str(bnt.get("from") or "")
+                            if worker.startswith("rappid:") and poster.startswith("rappid:") and worker != poster:
+                                transitioned = True
+                                break
+                    sample = {"count": len(cur), "rappid_from": len(rappid_b),
+                              "sig_on_stream": sig_ok,
+                              "statuses": [bnt.get("status") for bnt in cur][:6]}
+                    if have_bounty and sig_ok and transitioned:
+                        break
+                    await page.wait_for_timeout(300)
+                check("bounty_board",
+                      have_bounty and sig_ok and transitioned, sample)
+            else:
+                check("bounty_board", False, "window.commonsAgent.bounties missing")
         await b.close()
     print_summary()
 

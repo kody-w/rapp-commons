@@ -906,20 +906,48 @@ function botDecide(seat, toCall, board){
 //   ENTRY so the felt renders a full board/showdown for inspection). Default
 //   (interactive) play PAUSES on the human's turn so they choose via pokerAct().
 async function pokerPlayHand(opts){
-  POKER.autoHuman = !!(opts && opts.autoHuman);
-  // PR-gate: when a HUMAN drives a hand (interactive, not the autoHuman demo/loop)
-  // the seat-0 player OWNS the table — the AI-vs-AI auto-loop yields to them while
-  // POKER.humanActive is set. Two humans sharing one live table across devices is
-  // the future multiplayer PR (peer/human-to-human sync); do NOT build it here.
-  if (!POKER.autoHuman) POKER.humanActive = true;
-  if (!POKER.built){ POKER.humanActive = false; return { error:"table not built" }; }
-  // serialize against the AI-vs-AI auto-loop: if a continuous hand is mid-flight,
-  // wait for it to settle before a human-driven (or fresh demo) hand begins so the
-  // single shared POKER.hand is never driven by two loops at once. Local + cheap.
-  if (POKER._autoRunning){
-    for (let i=0; i<200 && POKER._autoRunning; i++) await new Promise(r=>setTimeout(r,50));
+  const driven = !(opts && opts.autoHuman);   // a HUMAN-driven (interactive) hand
+  // ── DETERMINISM (poker_play) — generation-token single-writer ──────────────
+  // The table is ONE shared POKER.hand. The flaky window was two dealers (the
+  // AI-vs-AI auto-loop / entry demo, both autoHuman; and a human-driven hand)
+  // racing on it: an autoHuman hand could (a) keep advancing AFTER a human-driven
+  // hand took the table — corrupting the driven hand — or (b) deal a fresh hand
+  // right after the driven hand's showdown, overwriting POKER.hand / POKER.lastResult
+  // out from under a poll. Either way the human's own hand never deterministically
+  // reaches an observable showdown.
+  //
+  // We make EVERY hand carry a monotonically increasing GENERATION token. A hand
+  // only ever writes POKER.hand / POKER.lastResult while it is still the CURRENT
+  // generation (myGen === POKER._gen); the instant a newer hand begins, the older
+  // hand's betting loop bails out and stops touching shared state. A driven hand
+  // takes over the table SYNCHRONOUSLY (bumps the generation + asserts ownership
+  // before any await), so the human ALWAYS gets their turn on a hand they own, and
+  // any in-flight auto hand silently steps aside. A driven hand also KEEPS ownership
+  // (POKER._driven / POKER.humanActive) through showdown so no autoHuman deal can
+  // start a fresh hand over it — the showdown it reached stays put for the poll.
+  // Ownership is released only by releasePokerTable() (the human leaves the table).
+  //
+  // Additive + PR-gated: the auto-loop / demo are unchanged except they yield to a
+  // seated human (the documented PR-gate). No engine rewrite, no peer sync.
+  if (!driven){
+    // an autoHuman (auto-loop / demo) hand: never start over a human-owned table.
+    if (POKER._driven || POKER.humanActive) return { yielded:true };
+    if (!POKER.built) return { error:"table not built" };
+    POKER.autoHuman = true;
+  } else {
+    if (!POKER.built) return { error:"table not built" };
+    // take over the table SYNCHRONOUSLY: assert ownership + flip the shared mode so
+    // any later-scheduled autoHuman deal yields, and pokerHumanTurn pauses for us.
+    POKER._driven = true;
+    POKER.humanActive = true;
+    POKER.autoHuman = false;
   }
+  // claim a fresh generation BEFORE the first await — this is what invalidates any
+  // older in-flight hand (its myGen no longer matches POKER._gen, so it bails).
+  const myGen = (POKER._gen = (POKER._gen || 0) + 1);
+  const owns = () => POKER._gen === myGen;     // am I still the current hand?
   if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
+  if (!owns()) return { superseded:true };     // a newer hand took the table while we seated
   // commit to a freshly shuffled deck (provably fair)
   const deck = shuffle(pokerFreshDeck());
   const nonce = [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,"0")).join("");
@@ -947,6 +975,7 @@ async function pokerPlayHand(opts){
   for (const s of active){ s.hole = [deck[di++], deck[di++]]; }
 
   const dealStreet = async (n, burn, name)=>{
+    if (!owns()) return;                          // a newer hand took the table — bail (no shared writes)
     di += burn;
     for (let k=0;k<n;k++) POKER.hand.board.push(deck[di++]);
     // dealer reveals the community cards as a signed deal action
@@ -956,10 +985,12 @@ async function pokerPlayHand(opts){
 
   // a (compact) betting round: each non-folded being acts once, signed.
   const bettingRound = async (street)=>{
+    if (!owns()) return;                          // superseded by a newer hand — stop touching shared state
     POKER.phase = street;
     let toCall = 0;
     for (const s of active){
       if (s.folded || !s.inHand) continue;
+      if (!owns()) return;                         // bail mid-round the instant a newer hand begins
       POKER.toAct = s.seat; renderPokerScene();   // light up whose turn it is
       // the human (seat 0) now CHOOSES — block until pokerAct() supplies a signed action.
       const d = s.isHuman ? await pokerHumanTurn(s, toCall, street)
@@ -984,6 +1015,10 @@ async function pokerPlayHand(opts){
   await dealStreet(1, 1, "turn");  await bettingRound("turn");
   await dealStreet(1, 1, "river"); await bettingRound("river");
 
+  // if a newer hand superseded us anywhere above, do NOT write showdown / lastResult
+  // (that hand owns POKER.hand now). Step aside silently.
+  if (!owns()) return { superseded:true };
+
   // showdown — best 7-card hand among non-folded
   const contenders = active.filter(s=>!s.folded);
   let winner = null, bestR = null;
@@ -1006,6 +1041,12 @@ async function pokerPlayHand(opts){
     commitment, verifiable:true
   };
   POKER.lastResult = result; renderPokerScene();   // draw the showdown banner on the felt
+  // A driven hand deliberately KEEPS ownership (POKER._driven / POKER.humanActive
+  // asserted) past showdown: the human still owns the table, so every autoHuman
+  // deal keeps yielding and CANNOT start a fresh hand that overwrites the showdown /
+  // lastResult a poller is still reading. A new interactive pokerPlayHand() bumps
+  // the generation and supersedes cleanly; the auto-loop resumes only once the
+  // human truly leaves (releasePokerTable / "leave table" below).
   // surface the result in the room HUD
   if (winner){
     showRoomHud("Poker Room — Texas Hold'em",
@@ -1013,12 +1054,27 @@ async function pokerPlayHand(opts){
       `Pot: <b>${result.pot}</b> play-chips · Winner: <b>${winner.being.name}</b> with a <b>${result.winner.hand}</b><br>`+
       `<span style="opacity:.6">${result.actions} signed rapp-poker-action/1.0 records · deck commit-reveal verified</span>`,
       [ {label:"deal another hand", onClick:()=>pokerPlayHand()},
-        {label:"leave table", onClick:()=>{ hideRoomHud(); travelTo(Object.assign(new THREE.Vector3(0,DNA.cameraHeight,0),{label:"The Square"})); }} ]);
+        {label:"leave table", onClick:releasePokerTable} ]);
   }
-  // a human-driven hand is complete: release the table so the AI-vs-AI auto-loop
-  // resumes dealing continuous signed hands for the next visitor.
-  if (!POKER.autoHuman) POKER.humanActive = false;
+  // NOTE: a driven hand intentionally leaves POKER.humanActive ASSERTED here (the
+  // human still owns the table) so the AI-vs-AI auto-loop cannot overwrite this
+  // freshly-reached showdown. The table is released — and the auto-loop resumes
+  // continuous signed hands for the next visitor — only when the human explicitly
+  // leaves via releasePokerTable() (the "leave table" button) or starts a new
+  // interactive hand (which re-asserts the mutex above).
   return result;
+}
+
+// release the poker table back to the AI-vs-AI auto-loop: the human is done, so
+// drop humanActive (and any stray lock) and let startPokerAutoLoop's tick resume
+// dealing continuous signed hands. Idempotent; pure flag/HUD/camera, no signing.
+function releasePokerTable(){
+  POKER.humanActive = false;
+  POKER._driven = false;
+  POKER._autoRunning = false;
+  POKER.pending = null;
+  hideRoomHud();
+  travelTo(Object.assign(new THREE.Vector3(0,DNA.cameraHeight,0),{label:"The Square"}));
 }
 
 function registerPokerRoom(){
@@ -1774,6 +1830,285 @@ async function residentWwfTile(res){
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   BOUNTY / QUEST BOARD — a venue where residents POST, CLAIM, and COMPLETE
+   signed tasks, turning the append-only stream into a living job market. A
+   bounty is one rapp-commons-bounty/1.0 record:
+     { schema, id, from <rappid>, ts, title, reward, status:'open'|'claimed'
+       |'done', claimedBy?, sig, pub }
+   signed via the EXISTING signAs path and mirrored onto the SAME append-only
+   signed stream (renderEvent + persistAppend), exactly like every other event.
+   Posting mints a fresh signed record; claim/complete each append ANOTHER
+   signed record (a status-transition body) carrying the SAME id, each signed
+   by THAT actor's OWN rappid — so the board's whole history is on one stream,
+   one rappid per action. Bounties can point at the other venues (poker hand,
+   voxels, a word play). Purely additive: no new identity/protocol/dependency,
+   play-chips / kudos only, ZERO network beyond the existing raw-CDN seeds.
+   ════════════════════════════════════════════════════════════════════════ */
+const BOUNTY = {
+  pos:new THREE.Vector3(-22, DNA.cameraHeight, 34),   // its own corner of the world
+  built:false, group:null, render:null,
+  list:[],            // live bounties (newest signed state), keyed by id below
+  byId:new Map()      // id -> bounty object (the same objects as in `list`)
+};
+
+// the flavor of work a resident posts — each points at one of the OTHER venues,
+// so the board is a real cross-venue job market (not busywork).
+const BOUNTY_QUESTS = [
+  { title:"win a poker hand at the table", reward:50, target:"poker" },
+  { title:"place 5 voxels on the build plot", reward:30, target:"voxel" },
+  { title:"play a word on the board", reward:25, target:"words" },
+  { title:"say hello in the square", reward:10, target:"square" },
+  { title:"sit a hand at the poker table", reward:20, target:"poker" },
+  { title:"build a tower on the voxel plot", reward:40, target:"voxel" }
+];
+
+let _bountySeq = 0;
+function bountyNewId(){
+  // a stable-ish per-session id (rappid-independent; the signed `from` carries
+  // identity). Mirrors the hand-/match-id shape used elsewhere.
+  return "bounty-" + Date.now().toString(36) + "-" + (++_bountySeq);
+}
+
+// register/merge one bounty record into the live board state. Read-only of the
+// signed record; just folds its (post|claim|done) effect onto the board model.
+function bountyApply(rec){
+  if (!rec || !rec.id) return null;
+  let b = BOUNTY.byId.get(rec.id);
+  if (!b){
+    // first time we see this id: it must be (or be treated as) the POST.
+    b = { id:rec.id, from:rec.from, title:rec.title||"(untitled)",
+          reward:rec.reward|0, target:rec.target||null,
+          status:"open", claimedBy:null, ts:rec.ts };
+    BOUNTY.byId.set(rec.id, b);
+    BOUNTY.list.push(b);
+  }
+  // fold the transition. open->claimed (records claimedBy) ->done. Never regress.
+  const st = rec.status;
+  if (st === "claimed" && b.status === "open"){ b.status = "claimed"; b.claimedBy = rec.from; }
+  else if (st === "done" && (b.status === "claimed" || b.status === "open")){
+    b.status = "done"; if (rec.from && !b.claimedBy) b.claimedBy = rec.from;
+  } else if (st === "open" && rec.title){
+    // a (re)post carrying fuller fields — keep title/reward/target authoritative.
+    b.title = rec.title; b.reward = rec.reward|0; if (rec.target) b.target = rec.target;
+  }
+  return b;
+}
+
+// compose + SIGN one bounty stream record as a being (post|claim|done). Reuses
+// signAs (the EXISTING signing path) and mirrors it onto the SAME append-only
+// stream via renderEvent + persistAppend — never a new write surface.
+async function bountySignRecord(being, fields){
+  const body = Object.assign({
+    schema:"rapp-commons-bounty/1.0",
+    from: being.rappid,                  // the actor's OWN rappid — never a human handle
+    ts: new Date().toISOString().replace(/\.\d+Z$/,"Z")
+  }, fields);
+  body.sig = await signAs(being, body);  // signed by the actor, or null
+  if (!body.sig) return null;            // can't sign -> not shipped (same rule everywhere)
+  body.pub = being.pubJwk || {};
+  const b = bountyApply(body);           // fold onto the live board
+  // mirror onto the SAME append-only signed stream + live feed (read-only of the record).
+  const feedLine =
+    body.status === "open"    ? "📋 posted bounty: " + body.title + " (" + (body.reward|0) + " chips)" :
+    body.status === "claimed" ? "🙋 claimed bounty: " + ((b&&b.title)||body.id) :
+    body.status === "done"    ? "✅ completed bounty: " + ((b&&b.title)||body.id) :
+                                "bounty " + body.id;
+  if (typeof renderEvent === "function")
+    renderEvent({ from:body.from, body:feedLine, ts:body.ts, mine:false });
+  persistAppend(body);                   // remember this signed bounty action across reloads
+  if (BOUNTY.built) renderBountyBoard();
+  return body;
+}
+
+// PUBLIC-ish helpers used by residents (each passes its OWN being).
+async function bountyPostAs(being, quest){
+  const id = bountyNewId();
+  return bountySignRecord(being, {
+    id, status:"open", title:quest.title, reward:quest.reward|0, target:quest.target||null
+  });
+}
+async function bountyClaimAs(being, id){
+  const b = BOUNTY.byId.get(id);
+  if (!b || b.status !== "open") return null;
+  if (b.from === being.rappid) return null;       // can't claim your OWN bounty
+  return bountySignRecord(being, { id, status:"claimed" });
+}
+async function bountyCompleteAs(being, id){
+  const b = BOUNTY.byId.get(id);
+  if (!b || b.status !== "claimed") return null;
+  if (b.claimedBy !== being.rappid) return null;  // only the claimer completes it
+  return bountySignRecord(being, { id, status:"done" });
+}
+
+// headless surface: the open + recent bounties as a living job market.
+//   [{ id, from, title, reward, status, claimedBy }]
+function commonsBounties(){
+  return BOUNTY.list.map(b => ({
+    id:b.id, from:b.from, title:b.title, reward:b.reward|0,
+    status:b.status, claimedBy:b.claimedBy || null, target:b.target || null
+  }));
+}
+
+/* ── 3D BOARD BUILD — a kiosk-style board in the scene; OPEN bounties render as
+      floating 3D posting cards on the cork. Visualization only: reads BOUNTY.*,
+      never signs, never mutates a record. ──────────────────────────────────── */
+function buildBountyBoard(){
+  if (BOUNTY.built) return;
+  const C = BOUNTY.pos;
+  const g = new THREE.Group(); g.position.set(C.x,0,C.z); scene.add(g);
+  BOUNTY.group = g;
+
+  // a grounding dais.
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(6,6.5,0.35,40),
+    new THREE.MeshStandardMaterial({ color:0x241a10, emissive:0x3a2810,
+      emissiveIntensity:0.4, roughness:0.8 }));
+  dais.position.y = 0.17; dais.receiveShadow = true; g.add(dais);
+
+  // two posts + a cork board panel (the kiosk).
+  const woodMat = new THREE.MeshStandardMaterial({ color:0x6b4a2a, roughness:0.85 });
+  for (const dx of [-3.4, 3.4]){
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.4,5,0.4), woodMat);
+    post.position.set(dx, 2.5, 0); post.castShadow = true; g.add(post);
+  }
+  const cork = new THREE.Mesh(new THREE.BoxGeometry(7.4,3.6,0.25),
+    new THREE.MeshStandardMaterial({ color:0x9c6b3a, emissive:0x3a2410,
+      emissiveIntensity:0.25, roughness:0.95 }));
+  cork.position.set(0,4.1,0); cork.castShadow = true; g.add(cork);
+
+  const lamp = new THREE.PointLight(0xffd27a, 1.0, 22); lamp.position.set(0,5.5,2); g.add(lamp);
+  g.add(makeLabel("Bounty Board", 0xffd98a, 6.4));
+
+  BOUNTY.render = new THREE.Group(); g.add(BOUNTY.render);
+  BOUNTY.built = true;
+  renderBountyBoard();
+}
+
+// a single posting-card sprite for an open bounty.
+function bountyCardSprite(b){
+  const cv = document.createElement("canvas"); cv.width=360; cv.height=220;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#fdf6e3"; ctx.fillRect(0,0,360,220);
+  ctx.strokeStyle = "#b08850"; ctx.lineWidth=6; ctx.strokeRect(4,4,352,212);
+  // a "pin"
+  ctx.fillStyle = "#c2182b"; ctx.beginPath(); ctx.arc(180,20,9,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#2a2114"; ctx.textAlign="center"; ctx.textBaseline="top";
+  ctx.font = "bold 26px -apple-system,Segoe UI,sans-serif";
+  // wrap the title across up to 3 lines.
+  const words = String(b.title||"").split(" "); let line="", y=48;
+  for (const w of words){
+    const test = line ? line+" "+w : w;
+    if (ctx.measureText(test).width > 330 && line){ ctx.fillText(line,180,y); y+=32; line=w; }
+    else line = test;
+    if (y > 120) break;
+  }
+  if (line && y<=140) ctx.fillText(line,180,y);
+  ctx.font = "bold 30px -apple-system,Segoe UI,sans-serif"; ctx.fillStyle = "#1d6b2e";
+  ctx.fillText("◉ " + (b.reward|0) + " chips", 180, 152);
+  ctx.font = "16px -apple-system,Segoe UI,sans-serif"; ctx.fillStyle = "#7a6a48";
+  ctx.fillText((b.status==="open"?"OPEN":b.status.toUpperCase()) + " · " + String(b.from||"").slice(0,18), 180, 190);
+  const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthWrite:false }));
+  spr.scale.set(2.0, 1.22, 1);
+  return spr;
+}
+
+// (re)draw the OPEN bounties as floating cards pinned across the cork board.
+function renderBountyBoard(){
+  if (!BOUNTY.built || !BOUNTY.render) return;
+  const grp = BOUNTY.render;
+  while (grp.children.length){ const c=grp.children.pop();
+    if (c.material){ if(c.material.map) c.material.map.dispose(); c.material.dispose(); }
+    if (c.geometry) c.geometry.dispose(); }
+  const open = BOUNTY.list.filter(b => b.status === "open").slice(-6);
+  open.forEach((b,i)=>{
+    const col = i % 3, row = Math.floor(i/3);
+    const spr = bountyCardSprite(b);
+    spr.position.set((col-1)*2.3, 4.9 - row*1.4, 0.2);
+    grp.add(spr);
+  });
+}
+
+// Enter the board venue: build it, fly the camera there (NO iframe/window), and
+// surface a HUD listing the open bounties. Focuses the camera on the board.
+function enterBountyBoard(label){
+  buildBountyBoard();
+  travelTo(Object.assign(BOUNTY.pos.clone(), { label: label || "Bounty Board" }));
+  renderBountyBoard();
+  const open = BOUNTY.list.filter(b=>b.status==="open");
+  const rows = open.slice(0,6).map(b=>`<b>${esc(b.title)}</b> — ${b.reward|0} chips`).join("<br>") || "—";
+  const claimed = BOUNTY.list.filter(b=>b.status==="claimed").length;
+  const done = BOUNTY.list.filter(b=>b.status==="done").length;
+  showRoomHud("Bounty Board — the commons job market",
+    `${BOUNTY.list.length} signed bounties · <b>${open.length}</b> open · ${claimed} claimed · ${done} done<br>`+
+    `<span style="opacity:.85">${rows}</span><br>`+
+    `<span style="opacity:.6">residents post / claim / complete tasks here — each action a signed rapp-commons-bounty/1.0 on the same append-only stream, signed by its actor's own rappid.</span>`,
+    [ {label:"leave the board", onClick:()=>{ hideRoomHud(); }} ]);
+}
+
+function registerBountyRoom(){
+  buildBountyBoard();
+  makeAreaInteractable({
+    pos:BOUNTY.pos, radius:8, type:"area", label:"Bounty Board", slug:"bounty",
+    blurb:"A signed job market: residents POST, CLAIM, and COMPLETE rapp-commons-bounty/1.0 tasks on the same append-only stream, each signed by its own rappid. Bounties point at the other venues — no link-out.",
+    action: ()=> enterBountyBoard("Bounty Board")
+  });
+}
+
+/* ── BOUNTY AUTO-LOOP — the board is ALIVE at breakfast. On a slow client-side
+      heartbeat the wandering residents autonomously POST a few bounties and
+      CLAIM/COMPLETE each other's (never their own), each action signed by that
+      resident's OWN rappid. Round-robin so cost stays trivial. LOCAL only. ──── */
+let _bountyTick = 0, _bountyTimer = null;
+async function residentBountyBeat(){
+  if (!RESIDENTS.length) return;
+  const res = RESIDENTS[_bountyTick % RESIDENTS.length];
+  _bountyTick++;
+  let did = null;
+  try {
+    // prefer to advance the market: complete a bounty I claimed, else claim an
+    // open one posted by SOMEONE ELSE, else post a fresh bounty.
+    const mineClaimed = BOUNTY.list.find(b => b.status === "claimed" && b.claimedBy === res.being.rappid);
+    const openOther   = BOUNTY.list.find(b => b.status === "open" && b.from !== res.being.rappid);
+    const openCount   = BOUNTY.list.filter(b => b.status === "open").length;
+    if (mineClaimed){
+      // complete a bounty I claimed — open -> claimed -> done.
+      const out = await bountyCompleteAs(res.being, mineClaimed.id);
+      if (out) did = "bounty:done:" + mineClaimed.id;
+    } else if (openOther && (openCount >= 3 || Math.random() < 0.6)){
+      // claim SOMEONE ELSE's open bounty (always work it down when several are
+      // open, so the market deterministically advances open -> claimed by a
+      // DIFFERENT rappid — never starves on randomness).
+      const out = await bountyClaimAs(res.being, openOther.id);
+      if (out) did = "bounty:claim:" + openOther.id;
+    } else {
+      // post a fresh bounty pointing at one of the other venues.
+      const q = BOUNTY_QUESTS[_bountyTick % BOUNTY_QUESTS.length];
+      const out = await bountyPostAs(res.being, q);
+      if (out) did = "bounty:post:" + q.target;
+    }
+  } catch(e){ /* never let the heartbeat die */ }
+  if (did) res.lastAction = { kind:did, ts:Date.now(), area:"bounty board" };
+}
+function startBountyAutoLoop(){
+  if (_bountyTimer) return;
+  const beat = async () => {
+    try { await residentBountyBeat(); } catch(e){ /* keep the board alive */ }
+    _bountyTimer = setTimeout(beat, 2200 + Math.random()*2200);   // ~2.2-4.4s
+  };
+  // seed the market promptly so a visitor at breakfast finds open bounties fast:
+  // post one bounty from each of the first couple residents, then start the loop.
+  (async ()=>{
+    try {
+      const seed = RESIDENTS.slice(0, Math.min(3, RESIDENTS.length));
+      for (let i=0;i<seed.length;i++){
+        await bountyPostAs(seed[i].being, BOUNTY_QUESTS[i % BOUNTY_QUESTS.length]);
+      }
+    } catch(e){ /* ignore seeding hiccups */ }
+    _bountyTimer = setTimeout(beat, 800 + Math.random()*800);
+  })();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    POKER AI-vs-AI AUTOPLAY — a continuous signed Hold'em hand runs at the table
    so a visitor ALWAYS sees a live hand/pot. It is pure WRAP: it just keeps
    calling the EXISTING pokerPlayHand({autoHuman:true}) loop (commit-reveal deck
@@ -1908,6 +2243,9 @@ async function spawnResidents(){
   try { if (typeof seatPokerBots === "function") await seatPokerBots(); } catch(e){}
   startPokerAutoLoop();
   startWwfAutoLoop();
+  // the bounty board comes alive too: residents post + claim + complete signed
+  // tasks on a slow heartbeat, so a visitor at breakfast finds a living market.
+  startBountyAutoLoop();
   return RESIDENTS.length;
 }
 
@@ -2114,6 +2452,15 @@ function persistReplay(rec){
       if (!dup) POKER.hand.log.push(rec);
     }
     return true;
+  }
+  if (schema === "rapp-commons-bounty/1.0"){
+    // bounty post/claim/done -> fold back onto the live board model (read-only of
+    // the signed record), and redraw the cork if it's built.
+    if (typeof bountyApply === "function"){
+      bountyApply(rec);
+      if (typeof renderBountyBoard === "function" && BOUNTY.built) renderBountyBoard();
+      return true;
+    }
   }
   if (schema === "rapp-commons-event/1.0" || rec.kind){
     // posts / speech / resident hellos + observes -> back into the live feed.
@@ -2397,6 +2744,7 @@ async function boot(){
   buildSquare();
   registerPokerRoom();
   registerWordsRoom();
+  registerBountyRoom();
   registerVoxelRoom();
   registerNexusArea();
 
@@ -2622,6 +2970,11 @@ boot();
     // residents append signed tiles. Returns a live snapshot:
     //   { poker:{inProgress,seats:[{name,from,chips}],pot,phase}, wwf:{moves,toMove} }
     gamesLive: () => (typeof commonsGamesLive === "function" ? commonsGamesLive() : { poker:{inProgress:false,seats:[],pot:0,phase:"unseated"}, wwf:{moves:0,toMove:null} }),
+    // the BOUNTY BOARD job market: every signed bounty (post/claim/done folded into
+    // its live state) as [{id,from,title,reward,status,claimedBy}]. Residents post
+    // and claim/complete each other's on a slow heartbeat, each action a signed
+    // rapp-commons-bounty/1.0 on the same append-only stream under its own rappid.
+    bounties: () => (typeof commonsBounties === "function" ? commonsBounties() : []),
     // DURABLE MEMORY (additive, read-only): the world remembers across reloads.
     // persist() reports how many signed records the durable localStorage log holds
     // (every voxel op / post / move / resident action this session is mirrored
