@@ -600,6 +600,7 @@ async function pokerAction(seat, action, amount, extra){
   if (!sig){ console.warn("poker: could not sign action; dropping", action); return null; }
   body.sig = sig; body.pub = being.pubJwk;
   POKER.hand.log.push(body);
+  persistAppend(body);                 // remember this signed poker action across reloads (read-only of the signed record)
   return body;
 }
 
@@ -1207,6 +1208,7 @@ async function wwfPlay(word, at, dir, placements){
   if (!sig) return { error:"cannot sign — move not shipped" };
   body.sig = sig; body.pub = ME.pubJwk;
   WWF.moves.push(body);
+  persistAppend(body);                 // remember this signed move across reloads (read-only of the signed record)
   // re-derive the live board from the (now longer) signed move log — same path
   // the existing matches use; we only WRAP the rules, never rewrite them.
   wwfRebuildTiles();
@@ -1349,6 +1351,7 @@ async function voxelAppendOp(kind, x, y, z, block){
   VOX.ops.push(body);
   voxApplyOp(body);
   renderVoxelBlocks();
+  persistAppend(body);                 // mirror this signed op into the durable log (read-only of the signed record)
   return { ok:true, op:body };
 }
 function voxelPlace(x,y,z,block){ return voxelAppendOp("place", x, y, z, block); }
@@ -1533,6 +1536,7 @@ async function residentHello(res, text){
   ev.pub = res.being.pubJwk || {};
   if (!ev.sig) return null;                     // can't sign -> not shipped (same rule as beings)
   renderEvent({ from:ev.from, body:ev.body, ts:ev.ts, mine:false });
+  persistAppend(ev);                            // remember this resident's signed hello across reloads
   spawnSpeech(res.name + ": " + text, new THREE.Vector3(p.x, p.y, p.z));
   return "say:" + text;
 }
@@ -1554,6 +1558,7 @@ async function residentObserve(res){
   ev.pub = res.being.pubJwk || {};
   if (!ev.sig) return null;
   renderEvent({ from:ev.from, body:ev.body, ts:ev.ts, mine:false });
+  persistAppend(ev);                            // remember this resident's signed observe across reloads
   return "sit:poker";
 }
 
@@ -1584,6 +1589,7 @@ async function residentPlace(res){
   VOX.ops.push(body);
   voxApplyOp(body);                             // reuse the existing apply
   if (typeof renderVoxelBlocks === "function") renderVoxelBlocks();
+  persistAppend(body);                          // remember this resident's signed block across reloads
   return "place:" + block + "@" + x + "," + z;
 }
 
@@ -1699,6 +1705,169 @@ async function signEvent(ev){
   return [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,"0")).join("");
 }
 
+/* ═════════════════════════════════════════════════════════════════════════
+   5b. PERSISTENCE — durable memory so the world REMEMBERS across a reload.
+
+   ADDITIVE + READ-ONLY by construction. This layer does NOT change how
+   anything is signed: signAs / signEvent / mintIdentity / mintBeing are
+   untouched. It only OBSERVES records that the existing sign paths have
+   ALREADY produced (each carrying `from`, `ts`, `sig`, `pub`) and:
+
+     • append() — mirrors each freshly-signed record into a localStorage
+       append-only log (the ONLY new write surface; no network, no broker,
+       no git, no repo write path). Keyed by from+ts+schema so a record is
+       stored once. The canonical repo files keep streaming from the raw CDN
+       exactly as before — this is a SECOND, local source merged on top.
+
+     • rehydrate() — on (re)load, REPLAYS the persisted append-only stream
+       back through the EXISTING apply functions (voxApplyOp + renderVoxelBlocks,
+       wwfRebuildTiles/wwfRecomputeState/renderWordsBoard, renderEvent, the
+       poker hand log) so a refresh PRESERVES this session's signed actions.
+       Every persisted record is signature-VERIFIED first (read-only ECDSA
+       verify against its own embedded `pub`); unsigned / tampered records are
+       skipped and never applied.
+
+   PR-gate: true cross-DEVICE persistence (sharing this log with other
+   players) would require committing the records back into the canonical
+   repo (the events and per-game state directories) via the signed write
+   path. That touches the sacred repo write path, so it is intentionally NOT
+   built here — it PR-gates and must never auto-merge.
+   ───────────────────────────────────────────────────────────────────────── */
+const PERSIST = {
+  KEY: "rapp-commons:persist:log/1",   // single append-only log key (localStorage)
+  seen: new Set(),                     // from+ts+schema fingerprints already in the log
+  replayed: 0                          // records re-applied on the last rehydrate()
+};
+
+// stable identity of a record within the append-only log. The signature is the
+// true discriminator (a distinct signed body => a distinct sig; an identical
+// replay => the same sig), so two records the SAME being signs in the SAME second
+// (e.g. two voxel ops) never collide, while a true re-replay still dedupes.
+function persistFp(rec){
+  return String(rec && rec.from) + "|" + String(rec && rec.ts)
+       + "|" + String(rec && (rec.schema || rec.kind || ""))
+       + "|" + String(rec && rec.sig);
+}
+
+// read the raw localStorage log (array of signed records). Never throws.
+function persistRead(){
+  try {
+    if (typeof localStorage === "undefined") return [];
+    const raw = localStorage.getItem(PERSIST.KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch(e){ return []; }
+}
+
+// overwrite the log with `arr`. Returns true on success. localStorage only.
+function persistWrite(arr){
+  try {
+    if (typeof localStorage === "undefined") return false;
+    localStorage.setItem(PERSIST.KEY, JSON.stringify(arr));
+    return true;
+  } catch(e){ return false; }
+}
+
+// append ONE already-signed record to the durable log (idempotent by fingerprint).
+// Called right AFTER the existing sign paths produce a record — it neither signs
+// nor mutates the record; it only mirrors a copy into localStorage.
+function persistAppend(rec){
+  try {
+    if (!rec || !rec.from || !rec.sig || !rec.ts) return false;   // only signed records
+    const fp = persistFp(rec);
+    const log = persistRead();
+    // refresh `seen` from disk so we dedupe across this + earlier sessions.
+    for (const r of log) PERSIST.seen.add(persistFp(r));
+    if (PERSIST.seen.has(fp)) return false;
+    log.push(rec);
+    if (!persistWrite(log)) return false;
+    PERSIST.seen.add(fp);
+    return true;
+  } catch(e){ return false; }
+}
+
+// READ-ONLY signature verify of a persisted record. Strips sig+pub, canonicalises
+// the remaining body (the exact pre-image the sign paths signed), imports the
+// record's OWN embedded P-256 public JWK, and verifies the hex ECDSA signature.
+// Returns false for anything unsigned / missing a key / tampered.
+async function persistVerify(rec){
+  try {
+    if (!rec || typeof rec.sig !== "string" || !rec.sig || rec.sig === "unsigned") return false;
+    if (!rec.pub || typeof rec.pub !== "object" || !rec.pub.x) return false;
+    const body = {};
+    for (const k of Object.keys(rec)) if (k !== "sig" && k !== "pub") body[k] = rec[k];
+    const pre = canonicalJSON(body);
+    let sigBytes;
+    try { sigBytes = new Uint8Array(rec.sig.match(/.{1,2}/g).map(h=>parseInt(h,16))); }
+    catch(e){ return false; }
+    const key = await crypto.subtle.importKey("jwk", rec.pub,
+      { name:"ECDSA", namedCurve:"P-256" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name:"ECDSA", hash:"SHA-256" }, key,
+      sigBytes, new TextEncoder().encode(pre));
+  } catch(e){ return false; }
+}
+
+// re-apply ONE verified record through the EXISTING apply path for its schema.
+// Pure replay: it reuses voxApplyOp / wwf derivation / renderEvent / poker log —
+// it does NOT re-sign and does NOT re-persist (rehydrate seeds `seen` first).
+function persistReplay(rec){
+  const schema = rec.schema || "";
+  if (schema === "rapp-world-op/1.0" && typeof voxApplyOp === "function"){
+    // merge into the live op log (dedupe) + apply to the block map.
+    const dup = VOX.ops.some(o => persistFp(o) === persistFp(rec));
+    if (!dup) VOX.ops.push(rec);
+    voxApplyOp(rec);
+    if (typeof renderVoxelBlocks === "function") renderVoxelBlocks();
+    return true;
+  }
+  if (schema === "rapp-wwf-move/1.0" && typeof wwfRebuildTiles === "function"){
+    const dup = WWF.moves.some(m => persistFp(m) === persistFp(rec));
+    if (!dup) WWF.moves.push(rec);
+    wwfRebuildTiles();
+    if (typeof wwfRecomputeState === "function") wwfRecomputeState();
+    if (typeof renderWordsBoard === "function") renderWordsBoard();
+    return true;
+  }
+  if (schema === "rapp-poker-action/1.0"){
+    // session poker actions: surface into the live hand log if a hand is open.
+    if (POKER && POKER.hand && Array.isArray(POKER.hand.log)){
+      const dup = POKER.hand.log.some(a => persistFp(a) === persistFp(rec));
+      if (!dup) POKER.hand.log.push(rec);
+    }
+    return true;
+  }
+  if (schema === "rapp-commons-event/1.0" || rec.kind){
+    // posts / speech / resident hellos + observes -> back into the live feed.
+    if (typeof renderEvent === "function"){
+      renderEvent({ from: rec.from, body: rec.body, ts: rec.ts, mine:false });
+      return true;
+    }
+  }
+  return false;
+}
+
+// REHYDRATE — replay the whole persisted, signature-verified stream back into
+// the durable snapshot state so a reload REMEMBERS this session. Read-only:
+// verifies each record and skips unsigned/tampered ones; re-applies the rest
+// through the existing apply functions. Returns the count actually replayed.
+async function persistRehydrate(){
+  const log = persistRead();
+  // seed dedupe so replay never re-persists or double-applies a record.
+  PERSIST.seen = new Set(log.map(persistFp));
+  let n = 0;
+  for (const rec of log){
+    const ok = await persistVerify(rec);   // read-only verify; skip tampered/unsigned
+    if (!ok) continue;
+    try { if (persistReplay(rec)) n++; } catch(e){ /* one bad record never aborts replay */ }
+  }
+  PERSIST.replayed = n;
+  return n;
+}
+
+// how many signed records the durable snapshot currently holds (persist surface).
+function persistCount(){ return persistRead().length; }
+
 /* ─────────────────────────────────────────────────────────────────────────
    6. The signed stream — post a rapp-commons-event/1.0 hello to the commons.
       Builds + signs the canonical event; would POST it to the kited host
@@ -1725,6 +1894,7 @@ async function submitPost(){
   ev.pub = ME.pubJwk || {};
 
   renderEvent({ from:ev.from, body:ev.body, ts:ev.ts, mine:true });
+  persistAppend(ev);                   // remember this signed post across reloads (read-only of the signed record)
   spawnSpeech(text, p);
 
   // Broadcast to nearby avatars (proximity chat) over the presence mesh.
@@ -1950,6 +2120,16 @@ async function boot(){
   // that wander between the now-registered areas + homes on a slow heartbeat.
   spawnResidents();
 
+  // MEMORY — replay this device's persisted, signature-verified signed stream so
+  // a reload REMEMBERS this session's voxel ops / posts / moves on TOP of the
+  // canonical repo state already streamed from the raw CDN. Read-only rehydrate;
+  // tampered/unsigned records are skipped. (Seed the voxel/wwf logs first so the
+  // replayed ops merge into a populated state.)
+  try { await loadVoxelWorld(); } catch(e){}
+  try { const replayed = await persistRehydrate();
+        if (replayed) toast(`Remembered ${replayed} signed action${replayed===1?"":"s"} from this device`); }
+  catch(e){ console.warn("rehydrate:", e); }
+
   toast(`Commons online — ${ws.length} worlds · ${rs.length} homes · poker + words rooms · ${(npcReg.npcs||[]).length} residents (one world, no link-outs)`);
 }
 boot();
@@ -2148,6 +2328,16 @@ boot();
     // the living world: the autonomous resident beings that wander + sign as
     // themselves. Each entry: {name, from (their OWN rappid), area, pos, lastAction}.
     residents: () => (typeof commonsResidents === "function" ? commonsResidents() : []),
+    // DURABLE MEMORY (additive, read-only): the world remembers across reloads.
+    // persist() reports how many signed records the durable localStorage log holds
+    // (every voxel op / post / move / resident action this session is mirrored
+    // there right after it's signed — signing itself is untouched). rehydrate()
+    // re-replays that signature-verified stream through the existing apply paths
+    // (voxApplyOp / wwf derivation / renderEvent / poker log) so a refresh keeps
+    // this session's signed actions; it returns the count replayed. Both are
+    // testable surfaces; neither signs, mutates identity, or writes to the repo.
+    persist:   () => (typeof persistCount     === "function" ? persistCount()     : 0),
+    rehydrate: () => (typeof persistRehydrate  === "function" ? persistRehydrate() : Promise.resolve(0)),
     // convenience: identity + a one-shot full snapshot for headless callers.
     me: () => ({ rappid: ME.rappid, fp: ME.fp }),
     snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })

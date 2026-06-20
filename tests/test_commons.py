@@ -233,6 +233,54 @@ async def run():
                        "seed": st.get("seed"), "sample": blocks[:3]})
             else:
                 check("voxel_area", False, "window.commonsAgent.voxelState missing")
+
+            # persistence: the world REMEMBERS across a reload. The persistence
+            # layer is additive + read-only -- every signed action this session
+            # is ALSO mirrored into a localStorage append-only log right after it
+            # is signed (signing itself is untouched). Place a signed voxel block,
+            # confirm the SIGNED op now lives in localStorage, then call
+            # window.commonsAgent.rehydrate() (simulating a reload's replay, which
+            # signature-verifies + re-applies the stream through voxApplyOp) and
+            # assert the block is STILL present in voxelState() afterward, its
+            # `from` a rappid -- i.e. it survived rehydration as a signed record.
+            has_persist = await ev(
+                "()=>typeof window.commonsAgent.persist==='function'"
+                "&&typeof window.commonsAgent.rehydrate==='function'", False)
+            if has_persist:
+                await ev("()=>{try{window.commonsAgent.enter('voxel');}catch(e){}return 1}")
+                # place a uniquely-located signed block via the player's own rappid.
+                await ev(
+                    "()=>{try{return Promise.resolve(window.commonsAgent.voxelPlace(7,0,11,'sapphire'))"
+                    ".then(()=>true)}catch(e){return false}}", False)
+                await page.wait_for_timeout(500)
+                # the freshly-signed op must now be in the localStorage append-only log,
+                # carrying a rappid `from` + a real signature (read straight from storage).
+                in_storage = await ev(
+                    "()=>{try{const raw=localStorage.getItem('rapp-commons:persist:log/1');"
+                    "if(!raw)return false;const log=JSON.parse(raw);"
+                    "return log.some(r=>r.schema==='rapp-world-op/1.0'&&r.x===7&&r.y===0&&r.z===11"
+                    "&&/^rappid:/.test(r.from||'')&&typeof r.sig==='string'&&r.sig.length>0);}"
+                    "catch(e){return false}}", False)
+                # simulate a reload's replay: rehydrate re-verifies + re-applies the
+                # persisted stream. Returns the count of records replayed (>=1 here).
+                replayed = await ev(
+                    "()=>Promise.resolve(window.commonsAgent.rehydrate())"
+                    ".then(n=>n).catch(()=>-1)", -1)
+                await page.wait_for_timeout(300)
+                # after rehydration the block is STILL on the plot, still signed.
+                st = await ev("()=>{try{return window.commonsAgent.voxelState()}catch(e){return null}}", None) or {}
+                blocks = st.get("blocks") or []
+                survived = [b for b in blocks
+                            if b.get("x") == 7 and b.get("y") == 0 and b.get("z") == 11
+                            and str(b.get("from", "")).startswith("rappid:")]
+                check("persistence",
+                      bool(in_storage) and isinstance(replayed, (int, float)) and replayed >= 1
+                      and len(survived) >= 1,
+                      {"in_storage": in_storage, "replayed": replayed,
+                       "survived": len(survived), "blocks": len(blocks)})
+            else:
+                check("persistence", False,
+                      "window.commonsAgent.persist/rehydrate missing")
         await b.close()
     print_summary()
 
