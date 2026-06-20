@@ -197,6 +197,21 @@ const RAW_BASE   = "https://raw.githubusercontent.com/kody-w/rapp-commons/main/"
 const WORLDS_URL = ["worlds.json", RAW_BASE + "worlds.json"];
 const NPCS_URL   = ["npcs/registry.json", RAW_BASE + "npcs/registry.json"];
 
+// FRACTAL nesting — a commons can house ANOTHER commons inside an in-world screen (not a
+// link-out: a world CONTAINED in the world, visible through a surface). depth=N in the URL is
+// how deep this instance is; instances at depth>0 run LIGHT (no residents/games/heartbeats) so
+// the recursion stays cheap, and nesting is capped at MAX_DEPTH. Each level is a full, self-
+// similar commons with its own signed stream/frames — fractal save-states all the way down.
+// A nested fractal instance is the SAME client BYTECODE injected into an in-world iframe via
+// srcdoc, with its depth + the frozen frame's signed log injected directly as globals (the "frame
+// bytecode injected into the player"). So depth/light/seed come from injected globals first, URL
+// second. The client is self-similar at every level — identical bytecode, different injected frame.
+const URLP      = new URLSearchParams(location.search);
+const DEPTH     = (typeof window.__FRACTAL_DEPTH__ === "number") ? window.__FRACTAL_DEPTH__
+                  : Math.max(0, parseInt(URLP.get("depth") || "0", 10) || 0);
+const MAX_DEPTH = 2;
+const LIGHT     = window.__FRACTAL_LIGHT__ === 1 || URLP.get("light") === "1" || DEPTH > 0;
+
 // kited vTwin host — the static commons gateway that relays signed events.
 const COMMONS_HOST = "https://kody-w.github.io/rapp-commons/";
 const EVENT_POST   = COMMONS_HOST + "events/"; // would POST rapp-commons-event/1.0 here
@@ -2386,6 +2401,7 @@ function startWwfAutoLoop(){
 // spawn the resident cohort: Pip + Atlas always, plus a couple more, each a
 // being with its OWN rappid. Returns once minted (avatars + heartbeat live).
 async function spawnResidents(){
+  if (LIGHT) return 0;   // nested/fractal instances run light — no residents/games/heartbeats
   const names = ["Pip", "Atlas", "Juno", "Mira", "Bex"];
   const n = 4; // 3-5; keep it cheap
   for (let i = 0; i < n; i++) await spawnResident(names[i], 100 + i);
@@ -2754,7 +2770,10 @@ async function signEvent(ev){
    built here — it PR-gates and must never auto-merge.
    ───────────────────────────────────────────────────────────────────────── */
 const PERSIST = {
-  KEY: "rapp-commons:persist:log/1",   // single append-only log key (localStorage)
+  // single append-only log key (localStorage). Nested fractal instances (depth>0) use a
+  // depth-namespaced key so a world-within-the-world keeps its OWN signed stream and never
+  // clobbers the parent's — each fractal level is an isolated, self-similar commons.
+  KEY: "rapp-commons:persist:log/1" + (DEPTH > 0 ? (":d" + DEPTH) : ""),
   seen: new Set(),                     // from+ts+schema fingerprints already in the log
   replayed: 0                          // records re-applied on the last rehydrate()
 };
@@ -3529,6 +3548,89 @@ function buildSignpost(){
 const SIGNPOST = { built:false };
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9d. FRACTAL WINDOW (additive) — an in-world screen that houses ANOTHER commons:
+   a world WITHIN the world. NOT a link-out — it reuses the existing in-world surface
+   iframe to render the nested commons INLINE (commons.html?depth=N+1&light=1), capped
+   at MAX_DEPTH so the recursion is bounded. Each nested level is a full, self-similar
+   commons with its OWN (depth-namespaced) signed stream — fractal frames all the way
+   down. commonsAgent.fractal() reports the structure.
+   ───────────────────────────────────────────────────────────────────────── */
+const FRACTAL = { mounted: false, src: null, html: null, pos: new THREE.Vector3(8, 0, -12) };
+function fractalNestedSrc(){
+  if (DEPTH >= MAX_DEPTH) return null;                 // base case — the deepest world is a leaf
+  // the nested world is the SAME client BYTECODE injected via srcdoc, seeded with this frame.
+  return "srcdoc:bytecode@depth=" + (DEPTH + 1) + "&light=1";
+}
+// fetch THIS client's own source (the bytecode running the top frame), and inject the next depth +
+// the frozen frame's signed log directly into the player as globals — so the nested iframe runs the
+// identical client, self-similar, seeded with the current frame.
+async function fractalBytecode(){
+  if (FRACTAL.html) return FRACTAL.html;
+  let html = null;
+  try { html = await (await fetch(location.pathname, { cache: "no-store" })).text(); } catch (e) {}
+  if (!html) { try { html = "<!doctype html>" + document.documentElement.outerHTML; } catch (e) {} }
+  FRACTAL.html = html;
+  return html;
+}
+function fractalInject(html, depth, seedLog){
+  // bootstrap injected as the FIRST thing in <head>, so it runs before the client's main script:
+  // sets the nested depth/light and the frozen FRAME BYTECODE (the signed log) for the player.
+  const boot = "<script>window.__FRACTAL_DEPTH__=" + depth + ";window.__FRACTAL_LIGHT__=1;" +
+               "window.__FRACTAL_SEED__=" + JSON.stringify(seedLog || "[]") + ";<\/script>";
+  return html.replace(/<head([^>]*)>/i, "<head$1>" + boot);
+}
+function buildFractalScreen(){
+  const g = new THREE.Group(); g.position.copy(FRACTAL.pos);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.4, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0x141a26, metalness: 0.4, roughness: 0.5, emissive: 0x0a1830 }));
+  frame.position.y = 2.4; g.add(frame);
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(5.0, 3.0),
+    new THREE.MeshStandardMaterial({ color: 0x0a1020, emissive: 0x2a55aa, emissiveIntensity: 0.7,
+      transparent: true, opacity: 0.92 }));
+  glass.position.set(0, 2.4, 0.12); g.add(glass);
+  scene.add(g);
+}
+async function enterFractal(){
+  if (DEPTH >= MAX_DEPTH){
+    showRoomHud("FRACTAL WINDOW — the deepest world",
+      "You're at depth " + DEPTH + " of " + MAX_DEPTH + " — a leaf. No further nesting. Every level above "
+      + "houses this exact commons inside an in-world screen.", [{ label: "step back", onClick: hideRoomHud }]);
+    return;
+  }
+  // reuse the EXISTING in-world surface iframe (zero new iframes). Inject THIS client's own bytecode
+  // + the frozen frame's signed log directly into the nested player via srcdoc — the SAME client,
+  // self-similar, one level deeper, seeded with the current frame.
+  openSurface("A world within the world — depth " + (DEPTH + 1),
+              "the SAME client bytecode injected inline, seeded with this frame — you never left this one", null);
+  const fr = document.getElementById("surfaceFrame");
+  const html = await fractalBytecode();
+  let seed = "[]";
+  try { seed = localStorage.getItem(PERSIST.KEY) || "[]"; } catch (e) {}
+  if (fr && html){
+    fr.removeAttribute("src");
+    fr.setAttribute("srcdoc", fractalInject(html, DEPTH + 1, seed));   // frame bytecode -> the player
+    FRACTAL.mounted = true; FRACTAL.src = "srcdoc:bytecode@depth=" + (DEPTH + 1);
+  }
+}
+function registerFractalViewport(){
+  buildFractalScreen();
+  makeAreaInteractable({
+    pos: FRACTAL.pos, radius: 5, type: "area", label: "Fractal Window", slug: "fractal",
+    blurb: "An in-world screen that houses ANOTHER commons — a world within the world, rendered inline (not a "
+      + "link-out). Capped at depth " + MAX_DEPTH + "; each nested level is a full, self-similar commons with its "
+      + "own signed stream. Fractal frames all the way down.",
+    action: () => enterFractal()
+  });
+}
+function fractalState(){
+  const fr = document.getElementById("surfaceFrame");
+  const hasDoc = !!(fr && fr.getAttribute("srcdoc"));
+  return { depth: DEPTH, maxDepth: MAX_DEPTH, light: LIGHT, canNest: DEPTH < MAX_DEPTH,
+           mode: "bytecode-injection", nestedSrc: fractalNestedSrc(),
+           seededFromFrame: true, mounted: !!(hasDoc && FRACTAL.mounted) };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -3564,6 +3666,9 @@ async function boot(){
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
   // directory post at spawn that points the way to each (compass-accurate).
   buildSignpost();
+
+  // FRACTAL WINDOW — a screen that houses another commons inside this one (bounded recursion).
+  registerFractalViewport();
 
   // RESIDENTS — spawn a few autonomous signing beings (Pip + Atlas among them)
   // that wander between the now-registered areas + homes on a slow heartbeat.
@@ -3979,6 +4084,9 @@ boot();
     // RESIDENT SCHEDULE: the villagers' daily rhythm tied to the clock — they head
     // HOME at night, ROAM by day. residentSchedule() -> [{name,from,mode,home,target}].
     residentSchedule: () => (typeof residentSchedule === "function" ? residentSchedule() : []),
+    // FRACTAL WINDOW: a world within the world (bounded recursion via an in-world screen).
+    // fractal() -> {depth, maxDepth, light, canNest, nestedSrc, mounted}.
+    fractal:      () => (typeof fractalState === "function" ? fractalState() : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

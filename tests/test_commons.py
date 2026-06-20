@@ -298,6 +298,31 @@ async def run():
             else:
                 check("resident_schedule", False, "window.commonsAgent.residentSchedule missing")
 
+            # fractal_frames: an in-world screen houses ANOTHER commons (a world within the
+            # world) -- NOT a link-out (reuses the in-world surface iframe), self-similar, and
+            # depth-capped. DETERMINISTIC: enter('fractal') mounts the nested commons inline.
+            has_fr = await ev("()=>typeof window.commonsAgent.fractal==='function'", False)
+            if has_fr:
+                fr0 = await ev("()=>{try{return window.commonsAgent.fractal()}catch(e){return null}}", None) or {}
+                await ev("()=>{try{window.commonsAgent.enter('fractal')}catch(e){}return 1}")
+                frm = None
+                for _ in range(12):
+                    frm = await ev("()=>{try{return window.commonsAgent.fractal()}catch(e){return null}}", None)
+                    if frm and frm.get("mounted"):
+                        break
+                    await page.wait_for_timeout(400)
+                frm = frm or {}
+                src = str(fr0.get("nestedSrc") or "")
+                check("fractal_frames",
+                      fr0.get("depth") == 0 and fr0.get("maxDepth", 0) >= 1 and fr0.get("canNest") is True
+                      and "depth=1" in src and "light=1" in src and frm.get("mounted") is True,
+                      {"fr0": fr0, "mounted": frm.get("mounted"), "nestedSrc": src})
+                # unmount the nested world so it doesn't compete with later timing-sensitive tests
+                await ev("()=>{const f=document.getElementById('surfaceFrame');if(f){f.removeAttribute('srcdoc');f.removeAttribute('src');}return 1}")
+                await page.wait_for_timeout(300)
+            else:
+                check("fractal_frames", False, "window.commonsAgent.fractal missing")
+
             # poker_renders: enter the poker room and assert the LIVE table is
             # visible/inspectable -- community cards on the felt + seats whose
             # actions are signed under per-bot rappids (never a human).
