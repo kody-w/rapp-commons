@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🏠 Commons — a home</title>
+<style>
+  :root { --grass:#7bc47f; --floor:#e9d8b8; --wall:#c9a06a; --ink:#2b2118; }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  html,body { height:100%; background:#0a0d14; color:#eaf0f7; font-family:-apple-system,Helvetica,Arial,sans-serif; overflow:hidden }
+  #wrap { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px }
+  #greet { font-size:20px; font-weight:700 }
+  #greet small { display:block; color:#8b95a5; font-weight:400; font-size:13px; margin-top:4px }
+  #room { display:grid; gap:2px; background:var(--wall); padding:10px; border-radius:14px; box-shadow:0 18px 50px #000a }
+  .cell { width:46px; height:46px; background:var(--floor); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:26px; position:relative }
+  .cell .lbl { position:absolute; bottom:-2px; font-size:8px; color:#5a4a32; font-weight:700 }
+  #hint { color:#46506a; font-size:12px }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="greet">a home in the commons</div>
+  <div id="room"></div>
+  <div id="hint">decorate it: PR <code>cubbies/&lt;you&gt;/home/room.json</code> — or ask the Commons agent to <code>decorate</code></div>
+</div>
+<script>
+const ICON = { sign:"🪧", rug:"🟫", plant:"🪴", lamp:"💡", shelf:"📚", desk:"🖥️", bed:"🛏️", chair:"🪑",
+  table:"🪵", flower:"🌷", tv:"📺", cat:"🐈", egg:"🥚", default:"📦" };
+const W = 12, H = 11;
+
+function render(room) {
+  document.getElementById("greet").innerHTML =
+    (room.greeting || "Welcome.") + "<small>" + (room.handle ? "@"+room.handle : "") +
+    (room.from ? " · " + room.from : "") + "</small>";
+  const grid = document.getElementById("room");
+  grid.style.gridTemplateColumns = `repeat(${W},46px)`;
+  const at = {};
+  (room.items || []).forEach(it => { at[(it.x|0)+","+(it.y|0)] = it; });
+  for (let y=0; y<H; y++) for (let x=0; x<W; x++) {
+    const c = document.createElement("div"); c.className = "cell";
+    const it = at[x+","+y];
+    if (it) {
+      c.textContent = ICON[it.kind] || ICON.default;
+      if (it.label) { const l=document.createElement("span"); l.className="lbl"; l.textContent=it.label; c.appendChild(l); }
+    }
+    grid.appendChild(c);
+  }
+}
+
+(async function () {
+  // state dir comes from the portal: ?state=<raw url to cubbies/<h>/home/>
+  const state = new URLSearchParams(location.search).get("state");
+  let room = null;
+  if (state) { try { room = await (await fetch(state.replace(/\/?$/,"/") + "room.json", {cache:"no-store"})).json(); } catch(e){} }
+  // also accept a postMessage'd state from the portal
+  window.addEventListener("message", e => { if (e.data && e.data.type==="rapp-portal/1.0" && e.data.state) render(e.data.state); });
+  render(room || { greeting:"An empty home. Move in.", items:[{kind:"sign",x:5,y:5,label:"vacant"}] });
+})();
+</script>
+</body>
+</html>

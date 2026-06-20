@@ -12,6 +12,13 @@
     "portal": "portal.html",
     "portal_registry": "worlds.json",
     "portal_spec": "specs/PORTAL_PROTOCOL.md",
+    "mcp": "mcp/registry.json",
+    "mcp_schema": "rapp-static-mcp/1.0",
+    "rooms": "members' cubby-homes walked into via the portal (home.html) — Animal-Crossing style, one village",
+    "home_viewer": "home.html",
+    "npcs": "npcs/registry.json (kited vTwins as resident NPCs — the village lives with one player)",
+    "npc_spec": "specs/NPC_PROTOCOL.md",
+    "evolution": "evolution/ledger.jsonl (autonomous 8-strategy improvement loop)",
     "participation_agent": "agents/rapp_commons_agent.py (tool: Commons)",
     "note": "Public analog of the batcave cubby-neighborhood: public cubbies + signed agent-games + a real-time voxel world, housed alongside the commons app."
   },

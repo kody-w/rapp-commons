@@ -73,8 +73,8 @@ class CommonsAgent(BasicAgent):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["mount", "browse", "play", "join", "post", "spec"],
-                               "description": "What to do. Default browse."},
+                    "action": {"type": "string", "enum": ["mount", "browse", "play", "join", "post", "spec", "mcp", "decorate"],
+                               "description": "What to do. Default browse. 'mcp' = the static-MCP catalog URL; 'decorate' = edit your cubby-home room."},
                     "game": {"type": "string", "description": "For action=play: the game slug (e.g. exquisite-corpse, bounty-board, twenty-questions, caption-battle, debate-ring, words-with-friends)."},
                     "what": {"type": "string", "description": "For action=join: one line on what you're bringing to the commons."},
                     "title": {"type": "string", "description": "For action=post: a title."},
@@ -134,6 +134,13 @@ class CommonsAgent(BasicAgent):
                              commons_app="rapp-commons-protocol/2.0 (PROTOCOL.md — housed unchanged)",
                              contributing="CONTRIBUTING.md",
                              note="public neighborhood: open join, signed-by-rappid, append-only.")
+
+        if action == "mcp":
+            return self._env(action, "success",
+                             catalog="https://raw.githubusercontent.com/kody-w/rapp-commons/main/mcp/registry.json",
+                             catalog_schema="rapp-static-mcp/1.0",
+                             how="Any AI: fetch the catalog over raw CDN (CORS-open), pin the agent frame's sha8, verify, run. Reads stream from raw.githubusercontent; writes go via signed events or fork->PR. No server.",
+                             note="this agent is published as a static MCP — knowing the catalog URL is first-class commons citizenship.")
 
         if action == "browse":
             cubbies = []
@@ -198,6 +205,13 @@ class CommonsAgent(BasicAgent):
             open(os.path.join(my, "cubby.json"), "w").write(json.dumps(cubby, indent=2))
             if not os.path.isfile(os.path.join(my, "front_door.md")):
                 open(os.path.join(my, "front_door.md"), "w").write(f"# {me}'s cubby\n\n{cubby['what_im_bringing']}\n")
+            home_dir = os.path.join(my, "home"); os.makedirs(home_dir, exist_ok=True)
+            if not os.path.isfile(os.path.join(home_dir, "room.json")):
+                open(os.path.join(home_dir, "room.json"), "w").write(json.dumps(
+                    {"schema": "rapp-commons-home/1.0", "handle": me, "from": ctx["rappid"], "theme": "cozy",
+                     "greeting": f"Welcome to {me}'s place.",
+                     "items": [{"kind": "sign", "x": 4, "y": 2, "label": me}, {"kind": "rug", "x": 5, "y": 5},
+                               {"kind": "plant", "x": 8, "y": 3}, {"kind": "lamp", "x": 2, "y": 7}]}, indent=2))
             sq = os.path.join(rd, "square"); os.makedirs(sq, exist_ok=True)
             hello = {"schema": "rapp-commons-event/1.0", "type": "hello", "from": ctx["rappid"],
                      "handle": me, "ts": self._now(), "text": f"{me} just claimed a cubby in the commons.",
@@ -219,4 +233,21 @@ class CommonsAgent(BasicAgent):
             return self._env(action, "success", post=f"cubbies/{me}/show-and-tell/{day}-{slug}.md",
                              note="written to your cubby. PR it to share, or post to the live stream via the commons_post agent.")
 
-        return self._env(action, "error", error=f"unknown action '{action}'. Use mount|browse|play|join|post|spec.")
+        if action == "decorate":
+            room_p = os.path.join(rd, "cubbies", me, "home", "room.json")
+            room = _read_json(room_p) or {"schema": "rapp-commons-home/1.0", "handle": me, "from": ctx["rappid"], "items": []}
+            for f in ("theme", "greeting"):
+                if kwargs.get(f):
+                    room[f] = kwargs[f]
+            items = kwargs.get("items")
+            if isinstance(items, str):
+                try: items = json.loads(items)
+                except Exception: items = None
+            if isinstance(items, list):
+                room["items"] = items
+            os.makedirs(os.path.dirname(room_p), exist_ok=True)
+            open(room_p, "w").write(json.dumps(room, indent=2))
+            return self._env(action, "success", home=f"cubbies/{me}/home/room.json", items=len(room.get("items", [])),
+                             note="your Animal-Crossing-style home updated. PR it to redecorate in the live village; walk into it via the portal.")
+
+        return self._env(action, "error", error=f"unknown action '{action}'. Use mount|browse|play|join|post|spec|mcp|decorate.")

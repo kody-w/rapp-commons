@@ -1,0 +1,1 @@
+{"schema":"rapp-commons-evolution/1.0","round":0,"tag":"v0-baseline","note":"Public commons neighborhood: cubbies + 7 games + voxel world + portal + static MCP + rooms + NPCs. Autonomous 8-strategy evolution starts at round 1.","loop":"8 strategists -> consensus top-3 -> implement+verify -> 8 analysts -> repeat; commit each round; until stop or budget."}
