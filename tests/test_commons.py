@@ -631,6 +631,17 @@ async def run():
                 check("fidelity_hemi",
                       bool(hemi.get("exists") and hemi.get("warmDawn") and hemi.get("coolNoon")
                            and hemi.get("dawnBrighter") and hemi.get("tinted")), hemi)
+
+                # FIDELITY: heightmapped terrain via a shared groundHeight(x,z) sampler — flat plaza, relief at the rim.
+                terr = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const t=A.terrain(); const g=scene.getObjectByName('terrain-ground');
+                    const floraOk=(A.flora()&&A.flora().count>=1200);
+                    return { ground:!!g, plazaFlat:(t.plazaFlat===true), rimRelief:t.rimRelief, sampler:(t.sampler==='groundHeight'),
+                             floraIntact:floraOk };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_terrain",
+                      bool(terr.get("ground") and terr.get("plazaFlat") and (terr.get("rimRelief") or 0) > 3
+                           and terr.get("sampler") and terr.get("floraIntact")), terr)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
