@@ -332,6 +332,39 @@ function godRaysUpdate(){
   godRays.material.uniforms.uIntensity.value = sky.material.uniforms.hazeStrength.value * lowSun * dayF;
   godRays.material.uniforms.uColor.value.copy(sun.color);
 }
+// FIDELITY: procedural BLOOM HALOS — additive sprite glow on every light source, ONE shared radial texture,
+// swelling after dark and near-zero at noon. No EffectComposer. Built once the scene's lights all exist.
+var BloomHalos = null;
+function buildBloomHalos(){
+  if (BloomHalos) return;
+  var cv = document.createElement("canvas"); cv.width = cv.height = 128;
+  var cx = cv.getContext("2d"), grd = cx.createRadialGradient(64,64,0,64,64,64);
+  grd.addColorStop(0,"rgba(255,255,255,1)"); grd.addColorStop(0.28,"rgba(255,255,255,0.5)"); grd.addColorStop(1,"rgba(255,255,255,0)");
+  cx.fillStyle = grd; cx.fillRect(0,0,128,128);
+  var haloTex = new THREE.CanvasTexture(cv);
+  var grp = new THREE.Group(); grp.name = "BloomHalos"; grp.renderOrder = 4; var sources = [];
+  scene.traverse(function(o){
+    if (o.isPointLight) sources.push({ obj:o, color:o.color, isLight:true, base:Math.max(0.001,o.intensity) });
+    else if (o.isMesh && o.material && o.material.emissive && (o.material.emissiveIntensity||0) > 0.5 && o.name !== "terrain-ground" && o !== sky)
+      sources.push({ obj:o, color:o.material.emissive, isLight:false, base:Math.max(0.001,o.material.emissiveIntensity) });
+  });
+  sources.slice(0, 48).forEach(function(src){
+    [[2.6,0.95],[5.6,0.5]].forEach(function(cfg){
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:haloTex, color:src.color.clone(), blending:THREE.AdditiveBlending, depthWrite:false, transparent:true, opacity:0 }));
+      sp.scale.setScalar(cfg[0]); sp.userData = { src:src, baseScale:cfg[0], baseOp:cfg[1] };
+      src.obj.getWorldPosition(sp.position); grp.add(sp);
+    });
+  });
+  scene.add(grp); BloomHalos = grp;
+}
+function bloomUpdate(){
+  if (!BloomHalos) return;
+  var night = Math.max(0, Math.min(1, 1 - (ambient.intensity - 0.3) / 0.7));
+  for (var i=0;i<BloomHalos.children.length;i++){ var s = BloomHalos.children[i], u = s.userData;
+    var cur = u.src.isLight ? u.src.obj.intensity : (u.src.obj.material ? u.src.obj.material.emissiveIntensity : 0);
+    s.material.opacity = u.baseOp * Math.min(1, cur / u.src.base) * night; u.src.obj.getWorldPosition(s.position);
+  }
+}
 // FIDELITY: a drifting fBm CLOUDSCAPE — a second dome just inside the sky, scrolling value-noise clouds
 // that thicken at dusk and thin by day, lit by the sun's direction. Transparent, no texture, 4 octaves.
 const CloudDome = new THREE.Mesh(new THREE.SphereGeometry(490, 32, 24),
@@ -517,6 +550,7 @@ function applyTimeOfDay(t){
   if (typeof godRaysUpdate === "function") godRaysUpdate();   // god rays at golden hour
   if (typeof cloudsUpdate === "function") cloudsUpdate();     // clouds thicken at dusk
   if (typeof celestialUpdate === "function") celestialUpdate(t);   // sun + moon ride the sky
+  if (typeof bloomUpdate === "function") bloomUpdate();            // bloom halos swell after dark
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
 }
 function dayNightTick(dt){
@@ -3293,6 +3327,7 @@ function animate(){
   godRays.quaternion.copy(camera.quaternion);
   godRays.position.copy(camera.position).addScaledVector(sky.material.uniforms.sunDir.value, 45);
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
+  if (BloomHalos){ var _bt = StarField.material.uniforms.uTime.value; for (var _bi=0;_bi<BloomHalos.children.length;_bi++){ var _bs=BloomHalos.children[_bi]; _bs.scale.setScalar(_bs.userData.baseScale*(1+Math.sin(_bt*2+_bi)*0.06)); } }   // gentle bloom breathing
   particles.position.y = Math.sin(t*0.3)*0.5;
   dayNightTick(dt);   // slow day→night sky/fog/sun tint
   if (typeof creatureTick === "function") creatureTick(dt);   // the Lineage creature roams its habitat
@@ -4391,6 +4426,7 @@ async function boot(){
   registerApexArena();
   if (typeof registerCreatureHabitat === "function") registerCreatureHabitat();
   if (typeof buildFlora === "function") buildFlora();   // FIDELITY: instanced flora blankets the terrain
+  if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
   // directory post at spawn that points the way to each (compass-accurate).
@@ -4876,6 +4912,9 @@ boot();
       coverage: +CloudDome.material.uniforms.uCoverage.value.toFixed(3), scrollT: +CloudDome.material.uniforms.uTime.value.toFixed(3) }),
     celestial: () => ({ sun: { y: +SunDisc.position.y.toFixed(1), visible: SunDisc.visible },
       moon: { y: +MoonDisc.position.y.toFixed(1), opacity: +MoonDisc.material.uniforms.uOpacity.value.toFixed(3) } }),
+    bloom: () => { if (!BloomHalos) return { present: false }; var ch = BloomHalos.children, tex = ch[0] && ch[0].material.map, add = true, share = true, dw = true, maxOp = 0;
+      for (var i = 0; i < ch.length; i++){ if (ch[i].material.blending !== THREE.AdditiveBlending) add = false; if (ch[i].material.map !== tex) share = false; if (ch[i].material.depthWrite !== false) dw = false; if (ch[i].material.opacity > maxOp) maxOp = ch[i].material.opacity; }
+      return { present: true, halos: ch.length, additive: add, sharedTexture: share, noDepthWrite: dw, nightGlow: +maxOp.toFixed(3) }; },
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
     flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),

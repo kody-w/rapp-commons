@@ -703,6 +703,18 @@ async def run():
                       bool(sky2.get("cloudDome") and sky2.get("drift") and sky2.get("duskThicker") and sky2.get("scrolls")
                            and sky2.get("bodies") and sky2.get("noonSunUp") and sky2.get("noonMoonGone")
                            and sky2.get("nightMoonUp") and sky2.get("antipodal")), sky2)
+
+                # FIDELITY: procedural bloom halos — additive, shared texture, swell after dark.
+                bloom = await ev("""async ()=>{try{const A=window.commonsAgent; const g=scene.getObjectByName('BloomHalos'); const b=A.bloom();
+                    setTimeOfDay(0.0); const night=A.bloom().nightGlow;
+                    setTimeOfDay(0.5); const noon=A.bloom().nightGlow;
+                    setTimeOfDay(0.42);
+                    return { isGroup:(g&&g.type==='Group'), halos:b.halos, matches:(g&&g.children.length===b.halos),
+                             additive:b.additive, shared:b.sharedTexture, noDW:b.noDepthWrite, swells:(night>noon) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_bloom",
+                      bool(bloom.get("isGroup") and (bloom.get("halos") or 0) >= 8 and bloom.get("matches")
+                           and bloom.get("additive") and bloom.get("shared") and bloom.get("noDW") and bloom.get("swells")), bloom)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
