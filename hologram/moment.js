@@ -255,6 +255,32 @@
   }
   W.dial = dial;
 
+  // BIOGRAPHY — git-as-harness in the browser: fetch the static .bio.json the brainstem CLI deposited and
+  // render the organism's life-story (born, frames grown over UTC time, re-signings, birth-proof status).
+  async function openBio(pk) {
+    pk = pk || (S.moment && S.moment.pk); if (!pk) { toast("this organism has no spacetime address"); return; }
+    $("bio").className = ""; $("biobody").innerHTML = '<div class="bm">reading the git ledger…</div>';
+    var safe = pk.replace(/[^\w·.-]/g, "_"), bio;
+    try { bio = await (await fetch("lineage/" + encodeURIComponent(safe) + ".bio.json?_=" + Math.floor(perf() * 1000))).json(); }
+    catch (e) { $("biohdr").innerHTML = "Biography"; $("biosub").innerHTML = ""; $("biobody").innerHTML = '<div class="bm">No biography committed yet — the brainstem writes it on the next tick.<br><span style="opacity:.6">node hologram/zoo_bio.js ' + esc(pk) + '</span></div>'; return; }
+    var icon = { birth: "◷", grow: "✦", "genesis-add": "⚠", resign: "✎", injury: "⚠", stress: "✖" };
+    $("biohdr").innerHTML = "Biography · <b>" + esc(bio.pk) + "</b>";
+    $("biosub").innerHTML = (bio.grownFrames || 0) + " frames grown over " + bio.revisions + " revisions · " +
+      (bio.breakAt ? '<span style="color:var(--pc)">⚠ birth-proof broke @' + bio.breakAt + '</span>' : '<span style="color:var(--pa)">birth-proof ✓ everywhere</span>') +
+      (bio.ownedBy ? " · owned by " + esc(bio.ownedBy) + "…" : "");
+    $("biobody").innerHTML = bio.chapters.map(function (c) {
+      var d = new Date(c.ct * 1000).toISOString().replace("T", " ").slice(0, 19);
+      var label = c.kind === "birth" ? "born into the repo (" + c.frames + " frames)" :
+        c.kind === "grow" ? "grew a frame at " + (typeof c.at === "number" ? c.at.toFixed(1) : c.at) + (c.u ? " · UTC " + new Date(c.u).toISOString().slice(11, 23) : "") :
+        c.kind === "resign" ? "ownership re-signed (" + esc(c.signer || "") + "…)" :
+        c.kind === "stress" ? "homeostasis stress → " + c.stress :
+        c.kind === "injury" ? "injury: " + c.field + " @" + c.at : c.kind;
+      return '<div class="bch' + (c.anomaly ? ' anom' : '') + '"><span class="bi">' + (icon[c.kind] || "•") + '</span><div><div class="bk">' + label + '</div><div class="bd">' + d + ' UTC · ' + c.sha + '</div></div></div>';
+    }).join("") || '<div class="bm">no chapters yet</div>';
+  }
+  W.openBio = openBio;
+  W.closeBio = function () { $("bio").className = "hide"; };
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -343,12 +369,12 @@
   function go(mode) {
     S.mode = mode;
     ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint", "kindred"].forEach(hide);
-    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none"; $("navKindred").style.display = "none";
+    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none"; $("navKindred").style.display = "none"; $("navBio").style.display = "none"; if ($("bio")) $("bio").className = "hide";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "zoo") { history.replaceState(0, 0, location.pathname + "?zoo"); show("zoo"); renderZoo(); }
     if (mode === "kindred") { show("kindred"); }
     if (mode === "create") { show("create"); initCreate(); }
-    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navKindred").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
+    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navKindred").style.display = ""; $("navBio").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
   }
   W.go = go;
 
@@ -519,7 +545,7 @@
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
-    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); requestAnimationFrame(tick); return; } }
+    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); requestAnimationFrame(tick); return; } }
     if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);

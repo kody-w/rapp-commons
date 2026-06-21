@@ -69,6 +69,15 @@ button.ghost{background:transparent}
   background:#0b0f18cc;border:1px solid #2a3650;border-radius:22px;padding:9px 16px;font-size:13px;font-weight:700;color:var(--ink);
   box-shadow:0 4px 20px #0007;animation:fadehint 2.6s ease forwards}
 @keyframes fadehint{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}
+#bio{position:fixed;top:0;right:0;bottom:0;width:min(420px,94vw);z-index:18;background:rgba(8,11,17,.97);border-left:1px solid #1c2433;overflow-y:auto;padding:0}
+#biotop{position:sticky;top:0;display:flex;align-items:flex-start;gap:10px;padding:16px;background:#080b11f2;border-bottom:1px solid #1c2433}
+#biohdr{font-weight:800;font-size:16px}#biosub{font-size:12px;margin-top:4px}
+#biobody{padding:8px 16px 60px}
+.bch{display:flex;gap:11px;padding:11px 0;border-bottom:1px solid #141b27}
+.bch .bi{font-size:16px;width:20px;text-align:center;color:var(--pb)}
+.bch.anom .bi{color:var(--pc)}.bch.anom .bk{color:var(--pc)}
+.bch .bk{font-size:13px;font-weight:700}.bch .bd{font-size:11px;color:var(--mut);margin-top:2px;font-family:ui-monospace,monospace}
+#biobody .bm{color:var(--mut);font-size:13px;padding:20px 0;text-align:center}
 /* share modal */
 #share{position:fixed;inset:0;z-index:20;background:#06080dcc;display:flex;align-items:center;justify-content:center}
 #sheet{background:#0e131d;border:1px solid #243049;border-radius:18px;padding:22px;width:min(420px,92vw);text-align:center}
@@ -98,6 +107,7 @@ button.ghost{background:transparent}
   <button id="navShare" onclick="openShare()" style="display:none">↗ Share</button>
   <button class="ghost" id="navPip" onclick="pipHologram()" style="display:none" title="float it & keep working">⧉ PiP</button>
   <button class="ghost" id="navKindred" onclick="openKindred()" style="display:none" title="organisms most like this one">≈ Kindred</button>
+  <button class="ghost" id="navBio" onclick="openBio()" style="display:none" title="this organism's git biography">📜 Bio</button>
   <button class="ghost" id="navEgg" onclick="exportEgg()" style="display:none" title="save your companion's seed">⬇ Seed</button>
   <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ HoloPress</button>
   <button class="ghost" onclick="document.getElementById('eggfile').click()" title="import a companion seed (.egg)">⬆ Plant seed</button>
@@ -190,6 +200,10 @@ button.ghost{background:transparent}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<div id="bio" class="hide">
+  <div id="biotop"><div><div id="biohdr"></div><div id="biosub" class="zk"></div></div><div class="sp"></div><button class="ghost" onclick="closeBio()">✕</button></div>
+  <div id="biobody"></div>
+</div>
 <script src="homeostasis.js"></script>
 <script src="fingerprint.js"></script>
 <script src="organism.js"></script>
