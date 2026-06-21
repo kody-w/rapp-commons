@@ -281,6 +281,24 @@
   W.openBio = openBio;
   W.closeBio = function () { $("bio").className = "hide"; };
 
+  // GROWTH DIFF — git-as-harness capability 2: what this creature became, physics-classified.
+  async function openGrew(pk) {
+    pk = pk || (S.moment && S.moment.pk); if (!pk) return;
+    $("bio").className = ""; $("biohdr").innerHTML = "Recent growth"; $("biosub").innerHTML = ""; $("biobody").innerHTML = '<div class="bm">reading the diff…</div>';
+    var safe = pk.replace(/[^\w·.-]/g, "_"), g;
+    try { g = await (await fetch("lineage/" + encodeURIComponent(safe) + ".grew.json?_=" + Math.floor(perf() * 1000))).json(); }
+    catch (e) { $("biobody").innerHTML = '<div class="bm">No growth diff committed yet.</div>'; return; }
+    $("biohdr").innerHTML = "How <b>" + esc(pk) + "</b> grew";
+    $("biosub").innerHTML = "+" + g.framesAdded + " frames · coarsest gap " + g.coarsestBefore + "→" + g.coarsestAfter + " · " +
+      (g.lossless ? '<span style="color:var(--pa)">lossless ✓</span>' : '<span style="color:var(--pc)">lossy ✕</span>') +
+      (g.corruptFrames ? ' · <span style="color:var(--pc)">' + g.corruptFrames + ' web-tears</span>' : '') +
+      " · genesis " + (g.genesisMutated ? '<span style="color:var(--pc)">mutated</span>' : 'intact ✓');
+    $("biobody").innerHTML = (g.frames || []).map(function (f) {
+      return '<div class="bch"><span class="bi">✦</span><div><div class="bk">deepened at ' + (typeof f.at === "number" ? f.at.toFixed(1) : f.at) + '</div><div class="bd">UTC ' + (f.u ? new Date(f.u).toISOString().slice(11, 23) : "") + '</div></div></div>';
+    }).join("") || '<div class="bm">no new frames in this window</div>';
+  }
+  W.openGrew = openGrew;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -545,7 +563,7 @@
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
-    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); requestAnimationFrame(tick); return; } }
+    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); if (q.has("grew")) setTimeout(function () { openGrew(dorg.pk); }, 350); requestAnimationFrame(tick); return; } }
     if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);

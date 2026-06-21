@@ -43,4 +43,10 @@ function diffOrganism(a, b) {
     genFrom: a && a._gen, genTo: b && b._gen, stressFrom: (a && a._stress) || 0, stressTo: (b && b._stress) || 0 };
 }
 
-module.exports = { revs: revs, extract: extract, diffOrganism: diffOrganism, git: git, CLONE: CLONE, FIELDS: FIELDS };
+// the commit at-or-before a UTC instant that touched `file` (for time-addressed extraction)
+function revAtOrBefore(utcMs, file, clone) {
+  const iso = new Date(utcMs).toISOString();
+  try { const sha = git(`log -1 --format=%H --before="${iso}" -- ${file}`, clone).trim(); return sha || null; } catch (e) { return null; }
+}
+
+module.exports = { revs: revs, extract: extract, diffOrganism: diffOrganism, canonGenesis: canonGenesis, revAtOrBefore: revAtOrBefore, git: git, CLONE: CLONE, FIELDS: FIELDS };
