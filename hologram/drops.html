@@ -44,7 +44,7 @@ async function boot(){
   document.getElementById("streamsub").innerHTML = ds.length+" globally-unique organisms · finest gap <b style=\"color:var(--pa)\">"+finest+" ms</b> · a "+span+"s slice of time, one creature per instant. Tap any to walk into it.";
   document.getElementById("stream").innerHTML = ds.map(function(m){
     var h=hue(m), iso=((m.drop||{}).born_iso||"").replace("T"," ").replace("+00:00","");
-    return '<a class="slot full" href="./?m="+encode(strip(m))+'" style="background:linear-gradient(160deg,hsl('+h+',70%,52%),#0b0f18)">'+
+    return '<a class="slot full" href="./?m='+encode(strip(m))+'" style="background:linear-gradient(160deg,hsl('+h+',70%,52%),#0b0f18)">'+
       '<span class="p">'+(m.b||"")+'</span><span class="h">'+iso.slice(11,23)+'</span></a>';
   }).join("");
 }
