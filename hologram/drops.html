@@ -22,32 +22,31 @@ h1{font-size:30px;margin:14px 0 2px}.sub{color:var(--mut);margin:0 0 22px}
 .dot{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:middle;margin-right:5px}
 </style></head>
 <body>
-<div id="bar"><b>◳ The Daily Drop</b><span class="btn" style="padding:3px 9px;font-size:11px;margin-left:4px">auto-pressed by the Triumvirate</span>
+<div id="bar"><b>◷ The Drop Stream</b><span class="btn" style="padding:3px 9px;font-size:11px;margin-left:4px">one organism per UTC millisecond</span>
   <div class="sp"></div><a class="btn" href="./">Feed</a><a class="btn" href="market.html">Market</a></div>
+<style>#stream{display:grid;grid-template-columns:repeat(auto-fill,minmax(94px,1fr));gap:6px}#stream .slot .h{font-size:10px;letter-spacing:0}#stream .slot .p{font-size:9px;opacity:.8}</style>
 <div class="wrap">
-  <h1>24 holograms a day. One every hour. Pressed by no one.</h1>
-  <p class="sub">Every hour, on the clock, the Triumvirate (Claude · Brainstem · Twin) presses a limited drop — its winning Moment, recoloured to that hour's place in the day. A 24-piece spectrum, minted while you sleep. Click any pressed slot to walk into it.</p>
-  <div class="legend"><span><span class="dot" style="background:#fbbf24"></span>CLAUDE</span><span><span class="dot" style="background:#fb7185"></span>BRAINSTEM</span><span><span class="dot" style="background:#38bdf8"></span>TWIN</span></div>
-  <div id="days"></div>
+  <h1>The Drop Stream</h1>
+  <p class="sub" id="streamsub">Every passing millisecond mints one — and only one — globally-unique organism, its DNA seeded by that exact UTC instant. Trolled as fast as the clock allows.</p>
+  <div id="stream"></div>
 </div>
 <script>
 function encode(m){ return btoa(unescape(encodeURIComponent(JSON.stringify(m)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
-var PARTY={CLAUDE:"#fbbf24",BRAINSTEM:"#fb7185",TWIN:"#38bdf8"};
-function hslHour(h){ return "hsl("+Math.round(h/24*360)+",70%,52%)"; }
+function strip(m){ var o={}; for(var k in m){ if(k[0]!=="_") o[k]=m[k]; } return o; }
+function hue(m){ return (m.k&&m.k[0]?m.k[0].h:200); }
 async function boot(){
-  var data; try{ data=await (await fetch("drops.json")).json(); }catch(e){ data={drops:[]}; }
-  var byDay={}; (data.drops||[]).forEach(function(p){ var d=(p.drop||{}).date||"?"; (byDay[d]=byDay[d]||{}); byDay[d][(p.drop||{}).hour]=p; });
-  var days=Object.keys(byDay).sort().reverse();
-  document.getElementById("days").innerHTML = days.map(function(date){
-    var slots=""; for(var h=0;h<24;h++){ var p=byDay[date][h];
-      if(p){ var col=hslHour(h), pc=PARTY[(p.drop||{}).won_by]||"#888";
-        slots+='<div class="slot full" data-m="'+encode(p)+'" style="background:linear-gradient(160deg,'+col+',#0b0f18)"><span class="p" style="color:'+pc+'">'+((p.drop||{}).won_by||"").slice(0,1)+'</span><span class="h">H'+(h<10?"0":"")+h+'</span></div>';
-      } else { slots+='<div class="slot empty"><span class="h">H'+(h<10?"0":"")+h+'</span></div>'; }
-    }
-    var n=Object.keys(byDay[date]).length;
-    return '<div class="day"><h2>'+date+'</h2><div class="dm">'+n+' / 24 pressed</div><div class="spectrum">'+slots+'</div></div>';
-  }).join("") || '<p class="sub">No drops pressed yet — the next one lands on the hour.</p>';
-  document.querySelectorAll(".slot.full").forEach(function(s){ s.onclick=function(){ location.href="./?m="+s.dataset.m; }; });
+  var data; try{ data=await (await fetch("drops.json?_="+Date.now())).json(); }catch(e){ data={drops:[]}; }
+  var ds=(data.drops||[]).filter(function(d){return d.born!=null;}).sort(function(a,b){return b.born-a.born;});
+  if(!ds.length){ document.getElementById("stream").innerHTML='<p class="sub">The stream is empty — the troll mints the next burst shortly.</p>'; return; }
+  var born=ds.map(function(d){return d.born;}).sort(function(a,b){return a-b;}), gaps=[];
+  for(var i=1;i<born.length;i++) gaps.push(born[i]-born[i-1]);
+  var finest=gaps.length?Math.min.apply(null,gaps):0, span=((born[born.length-1]-born[0])/1000).toFixed(1);
+  document.getElementById("streamsub").innerHTML = ds.length+" globally-unique organisms · finest gap <b style=\"color:var(--pa)\">"+finest+" ms</b> · a "+span+"s slice of time, one creature per instant. Tap any to walk into it.";
+  document.getElementById("stream").innerHTML = ds.map(function(m){
+    var h=hue(m), iso=((m.drop||{}).born_iso||"").replace("T"," ").replace("+00:00","");
+    return '<a class="slot full" href="./?m="+encode(strip(m))+'" style="background:linear-gradient(160deg,hsl('+h+',70%,52%),#0b0f18)">'+
+      '<span class="p">'+(m.b||"")+'</span><span class="h">'+iso.slice(11,23)+'</span></a>';
+  }).join("");
 }
 boot();
 </script></body></html>
