@@ -76,11 +76,14 @@ button.ghost{background:transparent}
   <div id="logo" onclick="go('feed')">◳ <b>Holographic Moments</b></div><div class="sp"></div>
   <button class="ghost" id="navRemix" onclick="remix()" style="display:none">⎘ Remix</button>
   <button id="navShare" onclick="openShare()" style="display:none">↗ Share</button>
+  <button class="ghost" id="navEgg" onclick="exportEgg()" style="display:none">⬇ .egg</button>
   <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ HoloPress</button>
+  <button class="ghost" onclick="document.getElementById('eggfile').click()" title="import a .egg">⬆ Import</button>
   <button class="ghost" onclick="location.href='drops.html'">◳ Drop</button>
   <button class="ghost" onclick="location.href='market.html'">▦ Market</button>
   <button class="cta" onclick="go('create')">+ Create</button>
 </div>
+<input type="file" id="eggfile" accept=".egg,.json,application/json" style="display:none">
 
 <div id="feed">
   <div id="hero">

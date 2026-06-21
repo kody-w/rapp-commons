@@ -114,6 +114,32 @@
   }
   W.signMoment = signMoment; W.verifyMoment = verifyMoment;
 
+  // .egg — export a Moment as a portable, re-uploadable file. Lossless: keyframes + title + biome +
+  // signature are all preserved, so a re-imported .egg displays exactly as it was, still provably owned.
+  function exportEgg(m) {
+    m = m || S.moment; if (!m) return;
+    var egg = { format: "holographic-moment-egg/1.0", moment: m, exported: new Date().toISOString() };
+    var blob = new Blob([JSON.stringify(egg, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob), a = D.createElement("a");
+    a.href = url; a.download = (m.t || "moment").replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase() + ".egg";
+    D.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    toast("exported " + a.download);
+  }
+  function importEgg(file) {
+    if (!file) return;
+    var r = new FileReader();
+    r.onload = function () {
+      try {
+        var j = JSON.parse(r.result), m = (j && j.moment) ? j.moment : j;
+        if (m && Array.isArray(m.k)) { openPlay(m); toast("imported “" + (m.t || "moment") + "”"); }
+        else toast("not a valid .egg");
+      } catch (e) { toast("couldn't read that .egg"); }
+    };
+    r.readAsText(file);
+  }
+  W.exportEgg = function () { exportEgg(S.moment); };
+  (function () { var el = D.getElementById("eggfile"); if (el) el.addEventListener("change", function (e) { importEgg(e.target.files[0]); e.target.value = ""; }); })();
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -159,10 +185,10 @@
   function go(mode) {
     S.mode = mode;
     ["feed", "create", "pc", "ptitle", "share", "mint"].forEach(hide);
-    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none";
+    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "create") { show("create"); initCreate(); }
-    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; }
+    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; }
   }
   W.go = go;
 
