@@ -588,6 +588,21 @@ async def run():
                 }catch(e){return {err:String(e)}}}""", {}) or {}
                 check("fidelity_tone",
                       bool(tone.get("aces") and tone.get("srgb") and tone.get("breathes") and tone.get("bounds")), tone)
+
+                # FIDELITY: scattering sky dome v2 — three-band gradient + clock-driven horizon haze + sun glow.
+                sky = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const exists=(scene.getObjectByName('SkyDome')&&scene.getObjectByName('SkyDome').isMesh);
+                    setTimeOfDay(0.5); const noon=A.atmosphere();
+                    setTimeOfDay(0.0); const mid=A.atmosphere();
+                    setTimeOfDay(0.22); const dawnHaze=A.atmosphere().haze;
+                    setTimeOfDay(0.5); const noonHaze=A.atmosphere().haze;
+                    setTimeOfDay(0.42);
+                    return { exists:!!exists, sunHighNoon:(noon.sunDirY>0.5), sunLowMidnight:(mid.sunDirY<0.3),
+                             hazeDawnGtNoon:(dawnHaze>noonHaze), horizonTinted:(noon.horizon!==mid.horizon) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_sky",
+                      bool(sky.get("exists") and sky.get("sunHighNoon") and sky.get("sunLowMidnight")
+                           and sky.get("hazeDawnGtNoon") and sky.get("horizonTinted")), sky)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
