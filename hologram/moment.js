@@ -225,6 +225,24 @@
   }
   W.openKindred = openKindred;
 
+  // WILD — catch the one organism that your exact place + moment mints (Pokémon-GO style). The spacetime
+  // coordinate is its primary key; sign it and you OWN that moment as a living holographic companion.
+  function mintWild() {
+    if (!W.Organism) return;
+    function mint(loc) {
+      var org = W.Organism.organismFromStamp(Date.now(), loc);
+      signMoment(org).then(function () { addToZoo(org); openPlay(org);
+        toast((loc ? "🌍 caught a wild organism — here & now" : "◷ minted this exact moment") + " · " + org.pk); });
+    }
+    if (navigator.geolocation) {
+      toast("scanning your spacetime…");
+      navigator.geolocation.getCurrentPosition(
+        function (p) { mint({ lat: p.coords.latitude, lng: p.coords.longitude }); },
+        function () { mint(null); }, { timeout: 8000, maximumAge: 60000 });
+    } else mint(null);
+  }
+  W.mintWild = mintWild;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -355,6 +373,11 @@
     verifyMoment(m).then(function (ok) {   // show a provable-authorship badge when the signature verifies
       if (ok && m.pub) $("ptitle").innerHTML += ' <span class="au" style="color:var(--pa)">✓ signed ' + (m.pub.x || "").slice(0, 10) + '…</span>';
     });
+    if (m.born != null && W.Organism) {     // a spacetime-born organism: show its exact instant + verify the binding
+      var bound = W.Organism.verifyCoordinate(m), when = new Date(m.born).toISOString().replace("T", " ").replace(".000Z", " UTC").replace("Z", " UTC");
+      var where = (m.loc && m.loc.place) ? " · " + esc(m.loc.place) : (m.loc ? " · " + m.loc.lat + "," + m.loc.lng : "");
+      $("ptitle").innerHTML += '<br><span class="au" style="color:' + (bound ? "var(--pb)" : "var(--pc)") + '">' + (bound ? "◷ born " : "⚠ unverified ") + when + where + " · pk " + esc(m.pk || "") + "</span>";
+    }
   }
   W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; if (!S.playing) { initScan(); setScanHint(true); } else setScanHint(false); };
   W.restart = function () { S.pf = 0; S.playing = true; $("ppBtn").textContent = "❚❚"; setScanHint(false); };
