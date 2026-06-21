@@ -67,8 +67,8 @@
 
   function homeostasis(organism) {
     var s = sortK(organism.k), stress = organism.stress || 0, stable = true;
-    for (var i = 0; i < s.length - 1; i++)
-      if (Math.abs(s[i].at - s[i + 1].at) < 1e-6 && contradicts(s[i], s[i + 1])) stable = false;
+    for (var i = 0; i < s.length - 1; i++)   // a same-time collision is only an injury if a GROWN frame caused it; two genesis frames sharing an `at` is the legitimate birth genome
+      if (Math.abs(s[i].at - s[i + 1].at) < 1e-6 && (s[i].u != null || s[i + 1].u != null) && contradicts(s[i], s[i + 1])) stable = false;
     var alive = stable && stress < STRESS_LIMIT;
     return { alive: alive, stable: stable, generation: organism.gen != null ? organism.gen : s.length,
              frames: s.length, stress: stress, vitality: Math.max(0, 1 - stress / STRESS_LIMIT) };
