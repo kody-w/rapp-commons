@@ -328,13 +328,33 @@ function groundHeight(x, z){
 const gGeo = new THREE.PlaneGeometry(400,400,60,60);
 gGeo.rotateX(-Math.PI/2);
 const pos = gGeo.attributes.position;
+// FIDELITY: height- + slope-aware terrain vertex painting — lowland grass -> earth -> rock by elevation,
+// rockier on steep faces, with pale dirt PATHS radiating from the plaza toward the venues. No new geometry.
+const TPAL = { grass: [0x35, 0x56, 0x2a], earth: [0x5a, 0x4a, 0x32], rock: [0x6a, 0x6a, 0x72], dirt: [0x8a, 0x7a, 0x5a] };
+const TPATHS = [0, Math.PI / 3, 2 * Math.PI / 3, Math.PI, -2 * Math.PI / 3, -Math.PI / 3];
+function _tsm(a, b, t){ t = Math.max(0, Math.min(1, (t - a) / (b - a))); return t * t * (3 - 2 * t); }
+function _tlc(c1, c2, t){ return [c1[0] + (c2[0] - c1[0]) * t, c1[1] + (c2[1] - c1[1]) * t, c1[2] + (c2[2] - c1[2]) * t]; }
+function terrainColor(x, z){
+  const y = groundHeight(x, z);
+  const slope = Math.hypot(groundHeight(x + 1, z) - groundHeight(x - 1, z), groundHeight(x, z + 1) - groundHeight(x, z - 1)) * 0.5;
+  let c = _tlc(TPAL.grass, TPAL.earth, _tsm(0.5, 2.5, Math.abs(y)));
+  c = _tlc(c, TPAL.rock, _tsm(0.6, 1.4, slope));
+  const d = Math.hypot(x, z);
+  if (d > 26){ const br = Math.atan2(z, x); let near = Math.PI;
+    for (const pb of TPATHS){ let df = Math.abs((((br - pb + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) - Math.PI); near = Math.min(near, df); }
+    if (near < 0.12) c = _tlc(c, TPAL.dirt, (1 - near / 0.12) * 0.7); }
+  return c;
+}
+const gcol = new Float32Array(pos.count * 3);
 for (let i=0;i<pos.count;i++){
   const x=pos.getX(i), z=pos.getZ(i);
   pos.setY(i, groundHeight(x, z));
+  const c = terrainColor(x, z); gcol[i*3]=c[0]/255; gcol[i*3+1]=c[1]/255; gcol[i*3+2]=c[2]/255;
 }
+gGeo.setAttribute("color", new THREE.BufferAttribute(gcol, 3));
 gGeo.computeVertexNormals();
 const ground = new THREE.Mesh(gGeo, new THREE.MeshStandardMaterial({
-  color:DNA.groundColor, roughness:0.9, metalness:0.1 }));
+  vertexColors:true, roughness:0.92, metalness:0.04 }));
 ground.name = "terrain-ground";
 ground.receiveShadow = true;
 scene.add(ground);
@@ -4772,6 +4792,9 @@ boot();
     terrain: () => { const pts = [[0, 0], [8, 0], [0, 12], [-10, 6], [15, -15]]; const plazaFlat = pts.every(([x, z]) => Math.abs(groundHeight(x, z)) < 0.05);
       let rim = 0; for (let a = 0; a < 16; a++){ const ang = a / 16 * Math.PI * 2; rim = Math.max(rim, Math.abs(groundHeight(Math.cos(ang) * 150, Math.sin(ang) * 150))); }
       return { sampler: "groundHeight", plazaFlat, rimRelief: +rim.toFixed(2), named: true }; },
+    terrainPaint: () => { const toHex = c => "#" + c.map(v => Math.round(v).toString(16).padStart(2, "0")).join("");
+      return { painted: !!ground.geometry.attributes.color, vertexColors: ground.material.vertexColors === true,
+        samples: [{ at: [30, 12], hex: toHex(terrainColor(30, 12)) }, { at: [160, 40], hex: toHex(terrainColor(160, 40)) }] }; },
     stars: () => ({ count: StarField.geometry.attributes.position.count, opacity: +StarField.material.uniforms.uOpacity.value.toFixed(3),
       firstStar: [+StarField.geometry.attributes.position.getX(0).toFixed(2), +StarField.geometry.attributes.position.getY(0).toFixed(2), +StarField.geometry.attributes.position.getZ(0).toFixed(2)] }),
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),

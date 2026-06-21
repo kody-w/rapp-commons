@@ -656,6 +656,19 @@ async def run():
                 }catch(e){return {err:String(e)}}}""", {}) or {}
                 check("fidelity_stars",
                       bool(stars.get("pts") and stars.get("nightFull") and stars.get("noonGone") and stars.get("deterministic")), stars)
+
+                # FIDELITY: terrain vertex painting — grass/earth/rock bands + dirt paths.
+                tpaint = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const g=scene.getObjectByName('terrain-ground'); const tp=A.terrainPaint();
+                    const ca=g&&g.geometry.attributes.color;
+                    const lc=tp.samples.find(s=>s.at[0]===30).hex;
+                    const r=parseInt(lc.slice(1,3),16),gg=parseInt(lc.slice(3,5),16),bb=parseInt(lc.slice(5,7),16);
+                    return { painted:tp.painted, vc:tp.vertexColors,
+                             colorCount:(ca&&ca.count===g.geometry.attributes.position.count),
+                             lowlandGreen:(gg>r&&gg>bb) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_terrainpaint",
+                      bool(tpaint.get("painted") and tpaint.get("vc") and tpaint.get("colorCount") and tpaint.get("lowlandGreen")), tpaint)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
