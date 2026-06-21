@@ -299,6 +299,22 @@
   }
   W.openGrew = openGrew;
 
+  // TIME-TRAVEL — git-as-harness capability 3 (read side): reconstruct an organism AS OF a past instant
+  // from the static .vitals.json (genesis from its pk + grown frames whose recordedCt <= that tick).
+  async function dialAt(pk, atMs) {
+    if (!W.Organism) return; pk = pk || (S.moment && S.moment.pk); if (!pk) return;
+    var safe = pk.replace(/[^\w·.-]/g, "_"), v;
+    try { v = await (await fetch("lineage/" + encodeURIComponent(safe) + ".vitals.json?_=" + Math.floor(perf() * 1000))).json(); }
+    catch (e) { toast("no time-travel record yet for this organism"); return; }
+    var tick = v.ticks.filter(function (t) { return t.ct * 1000 <= atMs; }).pop() || v.ticks[0];
+    var base = W.Organism.fromPk(pk); if (!base) return;
+    var grown = v.frames.filter(function (f) { return f.u != null && f.recordedCt <= tick.ct; });
+    base.k = base.k.concat(grown).sort(function (a, b) { return a.at - b.at; });
+    openPlay(base, false);
+    toast("⏳ as of " + new Date(tick.ct * 1000).toISOString().slice(0, 19) + "Z · gen " + tick.gen + " · " + (tick.alive ? "alive" : "⚠ dead"));
+  }
+  W.dialAt = dialAt;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -563,7 +579,7 @@
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
-    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); if (q.has("grew")) setTimeout(function () { openGrew(dorg.pk); }, 350); requestAnimationFrame(tick); return; } }
+    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); if (q.has("grew")) setTimeout(function () { openGrew(dorg.pk); }, 350); if (q.get("at")) setTimeout(function () { dialAt(dorg.pk, parseInt(q.get("at"), 10)); }, 100); requestAnimationFrame(tick); return; } }
     if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);
