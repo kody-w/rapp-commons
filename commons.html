@@ -332,6 +332,54 @@ function godRaysUpdate(){
   godRays.material.uniforms.uIntensity.value = sky.material.uniforms.hazeStrength.value * lowSun * dayF;
   godRays.material.uniforms.uColor.value.copy(sun.color);
 }
+// FIDELITY: a drifting fBm CLOUDSCAPE — a second dome just inside the sky, scrolling value-noise clouds
+// that thicken at dusk and thin by day, lit by the sun's direction. Transparent, no texture, 4 octaves.
+const CloudDome = new THREE.Mesh(new THREE.SphereGeometry(490, 32, 24),
+  new THREE.ShaderMaterial({ side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.NormalBlending,
+    uniforms: { uTime:{value:0}, uWind:{value:new THREE.Vector2(0.010,0.006)}, uCoverage:{value:0.4}, uCloudColor:{value:new THREE.Color(0xffffff)}, uSunDir:{value:new THREE.Vector3(0,1,0)} },
+    vertexShader:`varying vec3 vDir; void main(){ vDir=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uTime,uCoverage; uniform vec2 uWind; uniform vec3 uCloudColor,uSunDir; varying vec3 vDir;
+      float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+        float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+        return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }
+      float fbm(vec2 p){ float v=0.0,amp=0.5; for(int i=0;i<4;i++){ v+=amp*vnoise(p); p*=2.02; amp*=0.5; } return v; }
+      void main(){ if(vDir.y<0.02){ discard; }
+        vec2 uv = vDir.xz/(vDir.y+0.30) + uTime*uWind*60.0;
+        float n = fbm(uv*2.1);
+        float c = smoothstep(1.0-uCoverage-0.14, 1.0-uCoverage+0.14, n);
+        float a = c * pow(max(vDir.y,0.0),0.5) * 0.8;
+        float sunlit = 0.55 + 0.45*max(dot(vDir,uSunDir),0.0);
+        gl_FragColor = vec4(uCloudColor*sunlit, a); }` }));
+CloudDome.name="CloudDome"; CloudDome.frustumCulled=false; scene.add(CloudDome);
+// FIDELITY: CELESTIAL BODIES — a real sun disc and a phased moon riding the sky opposite each other.
+const CelestialBodies = new THREE.Group(); CelestialBodies.name="CelestialBodies"; scene.add(CelestialBodies);
+const SunDisc = new THREE.Mesh(new THREE.CircleGeometry(17, 32),
+  new THREE.MeshBasicMaterial({ color:0xfff2c0, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, depthTest:false }));
+SunDisc.name="SunDisc"; SunDisc.renderOrder=3; CelestialBodies.add(SunDisc);
+const MoonDisc = new THREE.Mesh(new THREE.SphereGeometry(8, 24, 24),
+  new THREE.ShaderMaterial({ transparent:true, depthWrite:false,
+    uniforms:{ uMoonLightDir:{value:new THREE.Vector3(1,0,0)}, uOpacity:{value:0} },
+    vertexShader:`varying vec3 vN; void main(){ vN=normalize(normalMatrix*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform vec3 uMoonLightDir; uniform float uOpacity; varying vec3 vN;
+      void main(){ float lit=smoothstep(-0.12,0.28,dot(normalize(vN),normalize(uMoonLightDir)));
+        vec3 col=mix(vec3(0.05,0.06,0.11), vec3(0.93,0.94,1.0), lit); gl_FragColor=vec4(col, uOpacity); }` }));
+MoonDisc.name="MoonDisc"; MoonDisc.renderOrder=3; CelestialBodies.add(MoonDisc);
+const _sdir = new THREE.Vector3(), _white = new THREE.Color(0xffffff), _sunTint = new THREE.Color(0xfff2c0);
+function cloudsUpdate(){
+  CloudDome.material.uniforms.uCoverage.value = 0.35 + sky.material.uniforms.hazeStrength.value * 0.3;   // thicker at dusk/dawn haze
+  CloudDome.material.uniforms.uCloudColor.value.copy(hemi.color).lerp(_white, 0.55);
+  CloudDome.material.uniforms.uSunDir.value.copy(sky.material.uniforms.sunDir.value);
+}
+function celestialUpdate(t){
+  const ca = (t - 0.25) * Math.PI * 2;
+  _sdir.set(Math.cos(ca)*0.6, Math.sin(ca), Math.sin(ca*0.5)*0.3).normalize();   // unclamped: truly rises & sets
+  SunDisc.position.copy(_sdir).multiplyScalar(440); SunDisc.visible = _sdir.y > 0.0;
+  SunDisc.material.color.copy(sun.color).lerp(_sunTint, 0.4);
+  MoonDisc.position.copy(_sdir).multiplyScalar(-440);                            // antipode of the sun
+  MoonDisc.material.uniforms.uOpacity.value = 1.0 - Math.min(1, Math.max(0,(ambient.intensity-0.3)/0.7));
+  MoonDisc.material.uniforms.uMoonLightDir.value.copy(_sdir).multiplyScalar(-1); // lit toward the (below-horizon) sun => a phase
+}
 
 // FIDELITY: real heightmapped terrain via ONE canonical sampler every consumer shares (ground + flora).
 // A smoothstep radial ramp keeps the central plaza dead flat (|y|<0.05 inside ~26u) so every venue and
@@ -467,6 +515,8 @@ function applyTimeOfDay(t){
   if (typeof updateLanterns === "function") updateLanterns(dayNightPhase(t));  // glow when dark
   if (typeof starsUpdate === "function") starsUpdate();   // stars fade in at night, out by day
   if (typeof godRaysUpdate === "function") godRaysUpdate();   // god rays at golden hour
+  if (typeof cloudsUpdate === "function") cloudsUpdate();     // clouds thicken at dusk
+  if (typeof celestialUpdate === "function") celestialUpdate(t);   // sun + moon ride the sky
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
 }
 function dayNightTick(dt){
@@ -3242,6 +3292,7 @@ function animate(){
   godRays.material.uniforms.uTime.value += dt;                                        // billboard the god rays toward the sun
   godRays.quaternion.copy(camera.quaternion);
   godRays.position.copy(camera.position).addScaledVector(sky.material.uniforms.sunDir.value, 45);
+  CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
   particles.position.y = Math.sin(t*0.3)*0.5;
   dayNightTick(dt);   // slow day→night sky/fog/sun tint
   if (typeof creatureTick === "function") creatureTick(dt);   // the Lineage creature roams its habitat
@@ -4821,6 +4872,10 @@ boot();
       firstStar: [+StarField.geometry.attributes.position.getX(0).toFixed(2), +StarField.geometry.attributes.position.getY(0).toFixed(2), +StarField.geometry.attributes.position.getZ(0).toFixed(2)] }),
     godrays: () => ({ present: !!godRays, intensity: +godRays.material.uniforms.uIntensity.value.toFixed(3),
       sunLowness: +(1 - THREE.MathUtils.smoothstep(sky.material.uniforms.sunDir.value.y, 0.1, 0.6)).toFixed(3), tint: "#" + godRays.material.uniforms.uColor.value.getHexString() }),
+    clouds: () => ({ drift: [CloudDome.material.uniforms.uWind.value.x, CloudDome.material.uniforms.uWind.value.y],
+      coverage: +CloudDome.material.uniforms.uCoverage.value.toFixed(3), scrollT: +CloudDome.material.uniforms.uTime.value.toFixed(3) }),
+    celestial: () => ({ sun: { y: +SunDisc.position.y.toFixed(1), visible: SunDisc.visible },
+      moon: { y: +MoonDisc.position.y.toFixed(1), opacity: +MoonDisc.material.uniforms.uOpacity.value.toFixed(3) } }),
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
     flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),

@@ -681,6 +681,28 @@ async def run():
                 }catch(e){return {err:String(e)}}}""", {}) or {}
                 check("fidelity_godrays",
                       bool(gray.get("present") and gray.get("dawnOn") and gray.get("noonOff") and gray.get("nightOff")), gray)
+
+                # FIDELITY: drifting cloudscape + sun/moon celestial bodies.
+                sky2 = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const cd=scene.getObjectByName('CloudDome'); const grp=scene.getObjectByName('CelestialBodies');
+                    const sd=scene.getObjectByName('SunDisc'), md=scene.getObjectByName('MoonDisc');
+                    const driftMag=Math.hypot(A.clouds().drift[0],A.clouds().drift[1]);
+                    setTimeOfDay(0.8); const covDusk=A.clouds().coverage;
+                    setTimeOfDay(0.5); const covDay=A.clouds().coverage;
+                    const noon=A.celestial();
+                    setTimeOfDay(0.0); const night=A.celestial();
+                    const t1=A.clouds().scrollT; await new Promise(r=>setTimeout(r,180)); const t2=A.clouds().scrollT;
+                    setTimeOfDay(0.42);
+                    return { cloudDome:!!(cd&&cd.material&&cd.material.transparent), drift:(driftMag>0),
+                             duskThicker:(covDusk>covDay), scrolls:(t2>t1),
+                             bodies:!!(grp&&sd&&md),
+                             noonSunUp:(noon.sun.y>0 && noon.sun.visible===true), noonMoonGone:(noon.moon.opacity<0.1),
+                             nightMoonUp:(night.moon.opacity>0.5), antipodal:(noon.sun.y>0 && noon.moon.y<0 && night.sun.y<0 && night.moon.y>0) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_celestial",
+                      bool(sky2.get("cloudDome") and sky2.get("drift") and sky2.get("duskThicker") and sky2.get("scrolls")
+                           and sky2.get("bodies") and sky2.get("noonSunUp") and sky2.get("noonMoonGone")
+                           and sky2.get("nightMoonUp") and sky2.get("antipodal")), sky2)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
