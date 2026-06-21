@@ -3801,6 +3801,57 @@ async function mxCrucible(rounds){
   return crucibleState();
 }
 
+// DIMENSION LIFECYCLE — a dimension splits off the moment you drop into a frame and leave the
+// main path; to return you RECONCILE its diff against main's version (merge the non-conflicting
+// changes via the dream-catcher, or abandon to main's version) and CLOSE it back to the main
+// timeline. The signed log is immutable (the fork's ops are permanent — you can't forge history);
+// only the LIVE main timeline reconciles. It is always KNOWN what must be set back to main.
+const DIMENSIONS = [];
+function mxVoxMap(){
+  const m = {}; const vs = (typeof voxelState === "function") ? voxelState() : { blocks: [] };
+  for (const b of (vs.blocks || [])) m["vox:" + b.x + "," + b.y + "," + b.z] = b.block;
+  return m;
+}
+function mxSplitDimension(){
+  const token = mxFreeze(); mxFork(token);             // diverge off this frame into a new dimension
+  const d = { dim: MX_DIM, fromFrame: token.frame, base: mxVoxMap(), openedAt: _utc(), closed: false };
+  DIMENSIONS.push(d);
+  return { dim: d.dim, fromFrame: d.fromFrame, base_cells: Object.keys(d.base).length };
+}
+function _dimRec(dim){ return DIMENSIONS.find(d => d.dim === dim && !d.closed); }
+function mxDimensionDiff(dim){
+  const d = _dimRec(dim); if (!d) return { error: "no open dimension " + dim, to_reconcile: [] };
+  const cur = mxVoxMap(); const out = []; const keys = new Set([...Object.keys(d.base), ...Object.keys(cur)]);
+  for (const k of keys) if (cur[k] !== d.base[k]) out.push({ key: k, main: d.base[k] || null, dim: cur[k] || null });
+  return { dim, fromFrame: d.fromFrame, to_reconcile: out, drifted: out.length };   // what must be set back to main
+}
+function mxReconcileDimension(dim, mode){
+  const d = _dimRec(dim); if (!d) return { error: "no open dimension " + dim };
+  mode = mode || "merge";
+  const diff = mxDimensionDiff(dim).to_reconcile;
+  if (mode === "abandon"){                              // snap the live view back to main's version, then close
+    for (const c of diff){
+      const p = c.key.replace("vox:", "").split(",").map(Number);
+      if (c.main == null) voxApplyOp({ op: "mine", x: p[0], y: p[1], z: p[2] });
+      else voxApplyOp({ op: "place", x: p[0], y: p[1], z: p[2], block: c.main, from: ME.rappid });
+    }
+    if (typeof renderVoxelBlocks === "function") renderVoxelBlocks();
+    d.closed = true; MX_DIM = 0;
+    return { mode: "abandon", reverted: diff.length, conflicts: [], closed: true, back_on_main: true };
+  }
+  // merge: dream-catcher the dimension's changes into main — additive changes merge, contradictions
+  // are conflicts that need manual resolution (the dimension stays open until they're settled).
+  const cands = diff.filter(c => c.dim != null).map(c => ({ key: c.key, val: c.dim }));
+  const m = mxMerge(d.base, cands);
+  const conflicts = m.rejected.map(r => ({ key: r.key, main: d.base[r.key], dim: r.val, reason: r.reason }));
+  if (conflicts.length === 0){ d.closed = true; MX_DIM = 0; }
+  return { mode: "merge", merged: m.kept.length, conflicts, closed: conflicts.length === 0, back_on_main: conflicts.length === 0 };
+}
+function mxDimensionState(){
+  return DIMENSIONS.map(d => ({ dim: d.dim, fromFrame: d.fromFrame, closed: d.closed,
+    drift: d.closed ? 0 : mxDimensionDiff(d.dim).drifted }));
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
@@ -4276,6 +4327,13 @@ boot();
     openCapsules: () => (typeof mxOpenCapsules === "function" ? mxOpenCapsules() : []),
     crucible:     (r) => (typeof mxCrucible === "function" ? mxCrucible(r) : null),
     crucibleState:() => (typeof crucibleState === "function" ? crucibleState() : null),
+    // DIMENSION LIFECYCLE: every drop-in/unfreeze forks a dimension off that frame; reconcile its
+    // diff back to main (merge non-conflicting changes via the dream-catcher, or abandon to main's
+    // version) and CLOSE it to rejoin the main timeline. History stays immutable; the live main reconciles.
+    splitDimension: () => (typeof mxSplitDimension === "function" ? mxSplitDimension() : null),
+    dimensionDiff:  (dim) => (typeof mxDimensionDiff === "function" ? mxDimensionDiff(dim) : null),
+    reconcileDimension: (dim, mode) => (typeof mxReconcileDimension === "function" ? mxReconcileDimension(dim, mode) : null),
+    dimensionState: () => (typeof mxDimensionState === "function" ? mxDimensionState() : []),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

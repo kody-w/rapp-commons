@@ -426,6 +426,30 @@ async def run():
                       bool((cru.get("A") or 0) > 0 and (cru.get("B") or 0) > 0 and cru.get("converged") is True
                            and (cru.get("last_gap", 9)) < (cru.get("first_gap", 0)) and len(cru.get("history") or []) >= 4),
                       {"A": cru.get("A"), "B": cru.get("B"), "first_gap": cru.get("first_gap"), "last_gap": cru.get("last_gap")})
+
+                # DIMENSION LIFECYCLE: drop-in/unfreeze forks a dimension; reconcile its diff back to
+                # main — merge the additive change cleanly, detect a conflict, abandon back to main's version.
+                dimt = await ev("""async ()=>{try{
+                    const A=window.commonsAgent;
+                    const s1=A.splitDimension();
+                    await A.voxelPlace(88,5,88,'green');                 // additive divergence
+                    const d1=A.dimensionDiff(s1.dim);
+                    const r1=A.reconcileDimension(s1.dim,'merge');        // merges cleanly + closes
+                    await A.voxelPlace(87,5,87,'blue');                  // main establishes a cell
+                    const s2=A.splitDimension();
+                    await A.voxelPlace(87,5,87,'red');                   // diverge: change main's cell -> conflict
+                    const r2=A.reconcileDimension(s2.dim,'merge');        // conflict detected, stays open
+                    const r3=A.reconcileDimension(s2.dim,'abandon');      // snap back to main (blue), close
+                    const cur=A.voxelState().blocks.find(b=>b.x===87&&b.z===87);
+                    return { add_in_diff:d1.to_reconcile.some(c=>c.key==='vox:88,5,88'&&c.dim==='green'),
+                             merged_clean:(r1.merged>=1 && r1.conflicts.length===0 && r1.closed===true && r1.back_on_main===true),
+                             conflict:(r2.conflicts.length>=1 && r2.closed===false),
+                             abandon_closed:(r3.closed===true && r3.mode==='abandon'),
+                             reverted_blue:(cur && cur.block==='blue') };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_dimension",
+                      bool(dimt.get("add_in_diff") and dimt.get("merged_clean") and dimt.get("conflict")
+                           and dimt.get("abandon_closed") and dimt.get("reverted_blue")), dimt)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
