@@ -1,0 +1,125 @@
+<!-- (c) 2026 Kody Wildfeuer - PolyForm Noncommercial 1.0.0, see /LICENSE - "Holographic Moments" is a trademark. -->
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Holographic Market — every row is a portal</title>
+<style>
+:root{--bg:#06080d;--ink:#e8edf4;--mut:#8b95a5;--card:#10141d;--pa:#4ade80;--pb:#38bdf8;--pc:#fb7185;--line:#1c2433}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Helvetica Neue,Arial,sans-serif}
+a{color:inherit;text-decoration:none}
+#bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;padding:14px 22px;background:linear-gradient(180deg,#06080dF2,#06080dcc);border-bottom:1px solid var(--line)}
+#bar b{background:linear-gradient(90deg,var(--pa),var(--pb));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sp{flex:1}.btn{border:1px solid #2a3650;background:#182030;border-radius:10px;padding:8px 13px;font-weight:700;font-size:13px;cursor:pointer;color:var(--ink)}
+.btn.cta{background:linear-gradient(90deg,var(--pa),var(--pb));color:#05121a;border:0}
+.wrap{max-width:1080px;margin:0 auto;padding:18px 22px 80px}
+h1{font-size:30px;margin:14px 0 2px}.sub{color:var(--mut);margin:0 0 20px}
+h2{font-size:15px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin:26px 0 12px}
+#board{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;position:relative;overflow:hidden}
+.lead .rk{position:absolute;top:10px;right:14px;font-size:34px;font-weight:900;color:#1c2740}
+.lead .who{font-weight:800;font-size:18px}
+.lead .stat{margin-top:10px;display:flex;gap:16px}
+.lead .stat div{font-size:12px;color:var(--mut)}.lead .stat b{display:block;font-size:22px;color:var(--ink)}
+.lead .sig{margin-top:10px;font-size:12px;font-weight:700}
+.ok{color:var(--pa)}.no{color:var(--mut)}
+.tools{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 12px}
+input,select{background:#0d121b;border:1px solid #243049;color:var(--ink);border-radius:9px;padding:9px 11px;font-family:inherit;font-size:14px}
+#q{flex:1;min-width:180px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;color:var(--mut);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
+td{padding:10px;border-bottom:1px solid #11161f}
+tr.row{cursor:pointer}tr.row:hover td{background:#0e1420}
+.sw{width:26px;height:26px;border-radius:7px;display:inline-block;vertical-align:middle}
+.pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#0d121b;border:1px solid #243049;color:var(--mut)}
+.walk{color:var(--pb);font-weight:700}
+.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style></head>
+<body>
+<div id="bar"><b>◳ The Holographic Market</b><span class="pill" style="margin-left:6px">every row is a portal</span><div class="sp"></div>
+  <a class="btn" href="./">← Feed</a><a class="btn cta" href="./?create">+ Create</a></div>
+<div class="wrap">
+  <h1>The leaderboard, where each row is a hologram.</h1>
+  <p class="sub">Every Holographic Moment ever minted, scraped from the public record. Ranked by creator and by <b>provably-distinct signers</b> — click any row to walk into that exact hologram.</p>
+
+  <h2>Creator leaderboard</h2>
+  <div id="board"></div>
+  <p class="note" id="signnote"></p>
+
+  <h2>All moments</h2>
+  <div class="tools">
+    <input id="q" placeholder="search title / creator / biome…">
+    <select id="fParty"><option value="">all creators</option></select>
+    <select id="fBiome"><option value="">all vibes</option></select>
+  </div>
+  <table><thead><tr>
+    <th data-k="t">Moment</th><th data-k="a">Creator</th><th data-k="b">Vibe</th><th data-k="frames">Frames</th><th data-k="signed">Signed</th><th>Portal</th>
+  </tr></thead><tbody id="rows"></tbody></table>
+</div>
+<script>
+// minimal Moment encode (must match moment.js) — base64url(JSON) so a row links straight into the player
+function encode(m){ return btoa(unescape(encodeURIComponent(JSON.stringify(m)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function esc(s){ return (s||"").replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c])); }
+function hueOf(m){ return (m.k&&m.k[0]&&m.k[0].h)||200; }
+
+// verify a signed Moment with Web Crypto (ECDSA P-256). A Moment is "signed" only if sig+pub verify
+// against the canonical body (everything except sig/pub). Distinct verified keys = ungameable.
+async function verify(m){
+  if (!m.sig || !m.pub) return { signed:false };
+  try{
+    const body = {}; for (const k of Object.keys(m).sort()) if (k!=="sig"&&k!=="pub") body[k]=m[k];
+    const key = await crypto.subtle.importKey("jwk", m.pub, {name:"ECDSA",namedCurve:"P-256"}, false, ["verify"]);
+    const sig = Uint8Array.from(m.sig.match(/.{1,2}/g).map(h=>parseInt(h,16)));
+    const ok = await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"}, key, sig, new TextEncoder().encode(JSON.stringify(body)));
+    return { signed:ok, fp: ok ? (m.pub.x||"").slice(0,16) : null };
+  }catch(e){ return { signed:false }; }
+}
+
+let MOMENTS=[], sortK="t", sortDir=1;
+async function boot(){
+  let data;
+  try{ data = await (await fetch("moments.json")).json(); }catch(e){ data={moments:[]}; }
+  MOMENTS = (data.moments||data||[]).map(m=>({ ...m, _frames:100, _v:null }));
+  // verify signatures
+  for (const m of MOMENTS) m._v = await verify(m);
+  renderBoard(); fillFilters(); renderRows();
+}
+
+function renderBoard(){
+  const by={};
+  for (const m of MOMENTS){ const a=m.a||"@anon"; (by[a]=by[a]||{a, n:0, signers:new Set(), signed:0}); by[a].n++; if (m._v.signed){ by[a].signed++; if (m._v.fp) by[a].signers.add(m._v.fp); } }
+  const rows=Object.values(by).sort((x,y)=> (y.signers.size-x.signers.size) || (y.signed-x.signed) || (y.n-x.n));
+  const total=MOMENTS.length, signedTot=MOMENTS.filter(m=>m._v.signed).length;
+  document.getElementById("board").innerHTML = rows.map((r,i)=>{
+    const hue = 120 + i*40;
+    return `<div class="lead"><div class="rk">${i+1}</div>
+      <div class="who">${esc(r.a)}</div>
+      <div class="stat"><div><b>${r.n}</b>moments</div><div><b>${r.signers.size||"—"}</b>distinct signers</div></div>
+      <div class="sig ${r.signers.size?'ok':'no'}">${r.signers.size? '✓ '+r.signers.size+' provable key(s)':'unsigned (claim only)'}</div>
+      <div style="position:absolute;left:0;bottom:0;height:4px;width:${Math.round(100*r.n/Math.max(1,total))}%;background:hsl(${hue},65%,55%)"></div></div>`;
+  }).join("");
+  document.getElementById("signnote").innerHTML = signedTot
+    ? `${signedTot}/${total} moments carry a verified signature — those rankings can't be gamed (a copy can't forge the signer's key).`
+    : `Ranked by volume for now. When moments are <b>signed</b>, the board ranks by distinct verified keys — un-forgeable, ungameable.`;
+}
+function fillFilters(){
+  const ps=[...new Set(MOMENTS.map(m=>m.a||"@anon"))], bs=[...new Set(MOMENTS.map(m=>m.b||"savanna"))];
+  document.getElementById("fParty").innerHTML='<option value="">all creators</option>'+ps.map(p=>`<option>${esc(p)}</option>`).join("");
+  document.getElementById("fBiome").innerHTML='<option value="">all vibes</option>'+bs.map(b=>`<option>${esc(b)}</option>`).join("");
+}
+function renderRows(){
+  const q=(document.getElementById("q").value||"").toLowerCase(), fp=document.getElementById("fParty").value, fb=document.getElementById("fBiome").value;
+  let list=MOMENTS.filter(m=> (!fp||(m.a||"@anon")===fp) && (!fb||(m.b||"savanna")===fb) &&
+    (!q || (m.t+" "+(m.a||"")+" "+(m.b||"")).toLowerCase().includes(q)));
+  const val=m=> sortK==="signed"?(m._v.signed?1:0): sortK==="frames"?100 : (m[sortK]||"");
+  list.sort((a,b)=> (val(a)>val(b)?1:val(a)<val(b)?-1:0)*sortDir);
+  document.getElementById("rows").innerHTML = list.map(m=>`
+    <tr class="row" data-m="${encode(m)}">
+      <td><span class="sw" style="background:linear-gradient(135deg,hsl(${hueOf(m)},65%,50%),hsl(${(hueOf(m)+60)%360},70%,35%))"></span> &nbsp;${esc(m.t)}</td>
+      <td>${esc(m.a||"@anon")}</td><td><span class="pill">${esc(m.b||"savanna")}</span></td>
+      <td>100</td><td class="${m._v.signed?'ok':'no'}">${m._v.signed?'✓ verified':'—'}</td>
+      <td><span class="walk">Walk in →</span></td></tr>`).join("")
+    || `<tr><td colspan="6" style="color:var(--mut);padding:20px">no moments match.</td></tr>`;
+  document.querySelectorAll("tr.row").forEach(tr=> tr.onclick=()=>{ location.href="./?m="+tr.dataset.m; });
+}
+["q","fParty","fBiome"].forEach(id=>document.getElementById(id).addEventListener("input",renderRows));
+document.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{ const k=th.dataset.k; sortDir = (sortK===k)?-sortDir:1; sortK=k; renderRows(); });
+boot();
+</script></body></html>
