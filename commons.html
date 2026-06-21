@@ -3853,6 +3853,112 @@ function mxDimensionState(){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9g. MATRIX EVOLUTION (round 2) — CAUSALITY LENS (prove which signed record CAUSED
+   a thing to exist, via a verify-drop counterfactual), CHRONO-DIFF (the signed,
+   tamper-evident diff between two 4D coordinates), and MANY-WORLDS COLLAPSE (fork N
+   rival dimensions for one cell, let the dream-catcher elect the survivor). All
+   additive, signed, reusing persistRead/Verify + mxRewind + mxMerge + voxelAppendOp.
+   ───────────────────────────────────────────────────────────────────────── */
+function _predTrue(predicate, voxMap){
+  if (predicate && predicate.voxAt){
+    const k = (predicate.voxAt[0] | 0) + "," + (predicate.voxAt[1] | 0) + "," + (predicate.voxAt[2] | 0);
+    return voxMap.has(k);
+  }
+  return false;
+}
+async function _voxPass(log, dropSig){
+  const vox = new Map();
+  for (const rec of log){
+    if (dropSig && rec.sig === dropSig) continue;           // counterfactual: this record never verified
+    if (!(await persistVerify(rec))) continue;
+    if ((rec.schema || "") === "rapp-world-op/1.0"){
+      const k = (rec.x | 0) + "," + (rec.y | 0) + "," + (rec.z | 0);
+      if (rec.op === "place") vox.set(k, rec.block || "stone"); else if (rec.op === "mine") vox.delete(k);
+    }
+  }
+  return vox;
+}
+async function _sha8(s){
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(h)].slice(0, 8).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// CAUSALITY LENS — the first signed record that made the predicate true, PROVEN by a counterfactual.
+async function mxBecause(predicate){
+  const log = persistRead();
+  const vox = new Map(); let firstTrue = -1, cause = null;
+  for (let i = 0; i < log.length; i++){
+    const rec = log[i];
+    if (!(await persistVerify(rec))) continue;
+    if ((rec.schema || "") === "rapp-world-op/1.0"){
+      const k = (rec.x | 0) + "," + (rec.y | 0) + "," + (rec.z | 0);
+      if (rec.op === "place") vox.set(k, rec.block || "stone"); else if (rec.op === "mine") vox.delete(k);
+    }
+    if (firstTrue < 0 && _predTrue(predicate, vox)){ firstTrue = i; cause = rec; }
+  }
+  if (firstTrue < 0) return { predicate, firstTrueAt: null, causeRecord: null, counterfactual: { withCause: false, withoutCause: false }, attestationSig: null };
+  const withCause = _predTrue(predicate, vox);
+  const withoutCause = _predTrue(predicate, await _voxPass(log, cause.sig));   // drop the cause -> predicate dies
+  const att = { schema: "rapp-commons-causality/1.0", from: ME.rappid, ts: _utc(),
+    predicate: JSON.stringify(predicate), cause_sig: String(cause.sig).slice(0, 16), firstTrueAt: firstTrue };
+  att.sig = await signEvent(att); att.pub = ME.pubJwk; persistAppend(att);
+  return { predicate, firstTrueAt: { index: firstTrue, ts: cause.ts, frame: (cause.frame != null ? cause.frame : null) },
+    causeRecord: { schema: cause.schema, from: cause.from, sig: cause.sig },
+    counterfactual: { withCause, withoutCause }, attestationSig: att.sig };
+}
+
+// CHRONO-DIFF — the signed, tamper-evident diff between two 4D coordinates.
+async function mxDiff(tokenA, tokenB){
+  const a = await mxRewind(tokenA), b = await mxRewind(tokenB);
+  const ma = new Map(a.voxels.map(v => [v.x + "," + v.y + "," + v.z, v.block]));
+  const mb = new Map(b.voxels.map(v => [v.x + "," + v.y + "," + v.z, v.block]));
+  const added = [], removed = [], changed = []; let unchanged = 0;
+  for (const k of new Set([...ma.keys(), ...mb.keys()])){
+    const va = ma.get(k), vb = mb.get(k);
+    if (va == null && vb != null) added.push({ cell: k, block: vb });
+    else if (va != null && vb == null) removed.push({ cell: k, block: va });
+    else if (va !== vb) changed.push({ cell: k, from: va, to: vb });
+    else unchanged++;
+  }
+  const sortc = (x, y) => x.cell < y.cell ? -1 : 1;
+  const hash = await _sha8(JSON.stringify({ a: added.sort(sortc), r: removed.sort(sortc), c: changed.sort(sortc) }));
+  const sealed = { schema: "rapp-commons-diff/1.0", from: ME.rappid, ts: _utc(), a: tokenA, b: tokenB, hash };
+  sealed.sig = await signEvent(sealed); sealed.pub = ME.pubJwk; persistAppend(sealed);
+  return { from: { a: tokenA, b: tokenB }, added, removed, changed, unchanged,
+    dropped_a: a.dropped, dropped_b: b.dropped, sealed: { sig: sealed.sig, hash } };
+}
+
+// MANY-WORLDS COLLAPSE — fork N rival dimensions for one cell; the dream-catcher elects the survivor.
+async function mxCollapse(key, candidates){
+  candidates = candidates || [];
+  const base = mxCapsuleBase();
+  const forks = [];
+  for (const c of candidates){
+    mxFork(mxFreeze());                                      // each rival gets its own forked dimension
+    const m = mxMerge(base, [{ key, val: c.val }]);
+    const kept = m.kept.length > 0;                          // agrees with / is additive to the established frame
+    forks.push({ dimension: MX_DIM, val: c.val, kept, corroborations: kept ? 1 : 0 });
+  }
+  const survivors = forks.filter(f => f.kept);
+  const eliminated = forks.filter(f => !f.kept).map(f => ({ dimension: f.dimension, val: f.val, reason: "contradicts the established frame (glitch)" }));
+  let survivor = null;
+  if (survivors.length){
+    const tally = {}; for (const s of survivors) tally[s.val] = (tally[s.val] || 0) + 1;   // dream-catcher majority
+    const winVal = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0];
+    survivor = { dimension: (survivors.find(s => s.val === winVal) || {}).dimension, val: winVal };
+  }
+  let committedSig = null;
+  if (survivor){
+    const p = key.replace("vox:", "").split(",").map(Number);
+    await voxelAppendOp("place", p[0], p[1], p[2], survivor.val);     // commit the winner as a REAL signed op
+    const last = VOX.ops[VOX.ops.length - 1]; committedSig = last ? last.sig : null;
+  }
+  const bracket = { schema: "rapp-commons-collapse/1.0", from: ME.rappid, ts: _utc(), key, survivor: survivor ? survivor.val : null, forks: forks.length };
+  bracket.sig = await signEvent(bracket); bracket.pub = ME.pubJwk; persistAppend(bracket);
+  return { key, forks, survivor, eliminated, committedSig, bracketSig: bracket.sig };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -4334,6 +4440,12 @@ boot();
     dimensionDiff:  (dim) => (typeof mxDimensionDiff === "function" ? mxDimensionDiff(dim) : null),
     reconcileDimension: (dim, mode) => (typeof mxReconcileDimension === "function" ? mxReconcileDimension(dim, mode) : null),
     dimensionState: () => (typeof mxDimensionState === "function" ? mxDimensionState() : []),
+    // MATRIX EVOLUTION (round 2): CAUSALITY LENS (prove which signed record caused a thing, via a
+    // verify-drop counterfactual), CHRONO-DIFF (signed diff between two 4D coords), MANY-WORLDS
+    // COLLAPSE (fork N rival dimensions for one cell; the dream-catcher elects the survivor).
+    because:  (predicate) => (typeof mxBecause === "function" ? mxBecause(predicate) : null),
+    diff:     (a, b) => (typeof mxDiff === "function" ? mxDiff(a, b) : null),
+    collapse: (key, cands) => (typeof mxCollapse === "function" ? mxCollapse(key, cands) : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

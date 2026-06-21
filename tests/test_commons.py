@@ -450,6 +450,59 @@ async def run():
                 check("evo_dimension",
                       bool(dimt.get("add_in_diff") and dimt.get("merged_clean") and dimt.get("conflict")
                            and dimt.get("abandon_closed") and dimt.get("reverted_blue")), dimt)
+
+                # EVO round 2 — CAUSALITY LENS: prove which signed record CAUSED a cell to exist
+                # (counterfactual: verify-drop the cause -> the predicate dies). Far-out unique coord.
+                caus = await ev("""async ()=>{try{
+                    const A=window.commonsAgent; const base=A.timeline().length;
+                    await A.voxelPlace(123,5,123,'red');
+                    const r=await A.because({voxAt:[123,5,123]});
+                    const log=JSON.parse(localStorage.getItem('rapp-commons:persist:log/1')||'[]');
+                    const op=log.find(x=>x.schema==='rapp-world-op/1.0'&&x.op==='place'&&x.x===123&&x.z===123);
+                    const r2=await A.because({voxAt:[123,5,123]});
+                    const stillRed=A.voxelState().blocks.some(b=>b.x===123&&b.z===123&&b.block==='red');
+                    return { cause_match:(r.causeRecord&&op&&r.causeRecord.sig===op.sig),
+                             first_ok:(r.firstTrueAt&&r.firstTrueAt.index>=base-1),
+                             cf:(r.counterfactual.withCause===true&&r.counterfactual.withoutCause===false),
+                             att:(typeof r.attestationSig==='string'&&r.attestationSig.length>0),
+                             deterministic:(r2.causeRecord&&r.causeRecord&&r2.causeRecord.sig===r.causeRecord.sig),
+                             still_red:stillRed };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_causality",
+                      bool(caus.get("cause_match") and caus.get("cf") and caus.get("att")
+                           and caus.get("deterministic") and caus.get("still_red")), caus)
+
+                # CHRONO-DIFF: the signed, deterministic diff between two 4D coordinates.
+                chrono = await ev("""async ()=>{try{
+                    const A=window.commonsAgent;
+                    const a={index:A.timeline().length-1};
+                    await A.voxelPlace(140,2,140,'blue');
+                    await A.voxelPlace(141,2,141,'green');
+                    await A.voxelPlace(142,2,142,'red'); await A.voxelMine(142,2,142);
+                    const c={index:A.timeline().length-1};
+                    const d=await A.diff(a,c); const d2=await A.diff(a,c);
+                    const has=(arr,cell)=>arr.some(x=>x.cell===cell);
+                    return { blue:has(d.added,'140,2,140'), green:has(d.added,'141,2,141'),
+                             net_out:(!has(d.added,'142,2,142')),
+                             sealed:(typeof d.sealed.sig==='string'&&typeof d.sealed.hash==='string'),
+                             deterministic:(d.sealed.hash===d2.sealed.hash) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_chrono_diff",
+                      bool(chrono.get("blue") and chrono.get("green") and chrono.get("net_out")
+                           and chrono.get("sealed") and chrono.get("deterministic")), chrono)
+
+                # MANY-WORLDS COLLAPSE: fork N rivals for one cell; the dream-catcher elects the survivor.
+                coll = await ev("""async ()=>{try{
+                    const A=window.commonsAgent; const key='vox:150,3,150';
+                    const r=await A.collapse(key,[{val:'gold',by:'a'},{val:'gold',by:'b'},{val:'iron',by:'c'}]);
+                    const cur=A.voxelState().blocks.find(b=>b.x===150&&b.z===150);
+                    return { survivor:(r.survivor&&r.survivor.val), committed:(typeof r.committedSig==='string'),
+                             bracket:(typeof r.bracketSig==='string'), forks:((r.forks||[]).length===3),
+                             in_world:(cur&&cur.block==='gold') };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_collapse",
+                      bool(coll.get("survivor") == "gold" and coll.get("committed") and coll.get("bracket")
+                           and coll.get("forks") and coll.get("in_world")), coll)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
