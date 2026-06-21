@@ -56,6 +56,17 @@ button.ghost{background:transparent}
 #qrbox{background:#fff;border-radius:12px;padding:12px;display:inline-block;min-height:160px;min-width:160px}
 #surl{width:100%;margin:14px 0 10px;background:#0d121b;border:1px solid #243049;color:var(--ink);border-radius:9px;padding:9px;font-size:12px}
 .toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#18202f;border:1px solid #2a3650;padding:9px 16px;border-radius:20px;z-index:30;font-size:13px}
+/* editions mint sheet */
+#mint{position:fixed;inset:0;z-index:14;background:#06080d;overflow-y:auto}
+#mintbar{position:sticky;top:0;display:flex;align-items:center;gap:12px;padding:14px 20px;background:#06080df2;border-bottom:1px solid #1c2433;z-index:2}
+#mintbar .t{font-weight:800}#mintbar .s{color:#8b95a5;font-size:13px}
+#mintgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px;padding:18px;max-width:1120px;margin:0 auto}
+.edcard{background:#10141d;border:1px solid #1c2433;border-radius:14px;padding:11px;text-align:center;cursor:pointer;transition:border-color .1s}
+.edcard:hover{border-color:#4ade80}
+.edcard .qz{background:#fff;border-radius:8px;padding:6px;display:inline-block;line-height:0}
+.edcard .qz img,.edcard .qz canvas{display:block}
+.edcard .en{font-weight:800;font-size:13px;margin-top:8px}
+.edcard .ev{font-size:11px;color:#8b95a5;margin-top:2px}
 @media(max-width:640px){#create{width:100vw;top:58px}#hero h1{font-size:30px}}
 </style></head>
 <body>
@@ -64,6 +75,7 @@ button.ghost{background:transparent}
   <div id="logo" onclick="go('feed')">◳ <b>Holographic Moments</b></div><div class="sp"></div>
   <button class="ghost" id="navRemix" onclick="remix()" style="display:none">⎘ Remix</button>
   <button id="navShare" onclick="openShare()" style="display:none">↗ Share</button>
+  <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ Editions</button>
   <button class="ghost" onclick="location.href='market.html'">▦ Market</button>
   <button class="cta" onclick="go('create')">+ Create</button>
 </div>
@@ -101,6 +113,16 @@ button.ghost{background:transparent}
   <button onclick="restart()">⟲</button>
   <span id="fl">FRAME 0 / 99</span>
   <div id="track" onclick="scrubAt(event)"><div id="fill"></div></div>
+</div>
+
+<div id="mint" class="hide">
+  <div id="mintbar">
+    <button class="ghost" onclick="go('play')">← back</button>
+    <div><div class="t" id="mintTitle">Limited edition</div><div class="s" id="mintSub"></div></div>
+    <div class="sp"></div>
+    <button onclick="copyMintSheet()">Copy sheet link</button>
+  </div>
+  <div id="mintgrid"></div>
 </div>
 
 <div id="share" class="hide">

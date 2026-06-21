@@ -158,11 +158,11 @@
 
   function go(mode) {
     S.mode = mode;
-    ["feed", "create", "pc", "ptitle", "share"].forEach(hide);
-    $("navRemix").style.display = "none"; $("navShare").style.display = "none";
+    ["feed", "create", "pc", "ptitle", "share", "mint"].forEach(hide);
+    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "create") { show("create"); initCreate(); }
-    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; }
+    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; }
   }
   W.go = go;
 
@@ -260,6 +260,44 @@
     show("share");
   }
   W.openShare = function () { openShare(S.moment); };
+
+  // EDITIONS — mint a signed LIMITED RUN of a Moment. Each edition is a distinct signed token
+  // (numbered n/N + a unique nonce) with its OWN URL + QR — provable scarcity out of infinite supply.
+  function _nonce() { var a = new Uint8Array(8); crypto.getRandomValues(a); return Array.from(a).map(function (b) { return b.toString(16).padStart(2, "0"); }).join(""); }
+  async function mintEditions(m, n) {
+    var base = { v: m.v || 1, t: m.t, a: m.a, b: m.b, k: m.k }, out = [];
+    for (var i = 1; i <= n; i++) {
+      var ed = JSON.parse(JSON.stringify(base));
+      ed.ed = { n: i, of: n, id: _nonce() }; ed.t = m.t + " · #" + i + "/" + n;
+      await signMoment(ed); out.push(ed);
+    }
+    return out;
+  }
+  async function openMint(n) {
+    if (!S.moment) return; n = n || 50;
+    S.editionBase = S.moment;
+    $("mintTitle").textContent = (S.moment.t || "Moment");
+    $("mintSub").textContent = "minting " + n + " signed editions…";
+    show("mint"); S.mode = "mint";
+    var eds = await mintEditions(S.moment, n); S.editions = eds;
+    $("mintSub").textContent = n + " signed editions · each a 1-of-1 QR" + (eds[0] && eds[0].pub ? " · key " + eds[0].pub.x.slice(0, 12) + "…" : "");
+    var grid = $("mintgrid"); grid.innerHTML = "";
+    eds.forEach(function (ed) {
+      var url = location.origin + location.pathname + "?m=" + encode(ed);
+      var card = D.createElement("div"); card.className = "edcard";
+      var qz = D.createElement("div"); qz.className = "qz";
+      try { new QRCode(qz, { text: url, width: 110, height: 110, correctLevel: QRCode.CorrectLevel.M }); } catch (e) { qz.textContent = "QR"; }
+      card.appendChild(qz);
+      var en = D.createElement("div"); en.className = "en"; en.textContent = "EDITION " + ed.ed.n + " / " + ed.ed.of;
+      var ev = D.createElement("div"); ev.className = "ev"; ev.textContent = "✓ signed · " + ed.ed.id.slice(0, 8);
+      card.appendChild(en); card.appendChild(ev);
+      card.onclick = function () { location.href = url; };
+      grid.appendChild(card);
+    });
+    history.replaceState(0, 0, location.pathname + "?mint=" + encode(S.editionBase) + "&n=" + n);
+  }
+  W.openMint = function () { openMint(50); };
+  W.copyMintSheet = function () { var u = location.origin + location.pathname + "?mint=" + encode(S.editionBase || S.moment) + "&n=" + (S.editions ? S.editions.length : 50); try { navigator.clipboard.writeText(u); } catch (e) {} toast("mint sheet link copied"); };
   W.copyUrl = function () { $("surl").select(); try { D.execCommand("copy"); } catch (e) {} navigator.clipboard && navigator.clipboard.writeText($("surl").value); toast("link copied"); };
   W.playShared = function () { hide("share"); openPlay(shareMoment); };
 
@@ -270,6 +308,7 @@
     setBiome("savanna");
     // optionally augment the feed from a committed manifest
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
+    if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);
