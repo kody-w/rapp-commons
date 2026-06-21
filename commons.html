@@ -245,6 +245,13 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// FIDELITY: ACES filmic tone-mapping + sRGB output — a filmic response across EVERY pixel (boxes,
+// portals, lanterns, emissives). Exposure "breathes" with the day-night clock (opens at night so
+// glow reads as light, not clipped white). One-time renderer config + one line in applyTimeOfDay().
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.outputEncoding = THREE.sRGBEncoding;
+const TONE = { base: 1.05, nightBoost: 0.55 };
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(DNA.fogColor, DNA.fogNear, DNA.fogFar);
@@ -355,6 +362,7 @@ function applyTimeOfDay(t){
   const ang = (t - 0.25) * Math.PI * 2;
   sun.position.set(Math.cos(ang)*60, Math.max(2, Math.sin(ang)*70), Math.sin(ang)*40);
   if (typeof updateLanterns === "function") updateLanterns(dayNightPhase(t));  // glow when dark
+  renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
 }
 function dayNightTick(dt){
   if (!DAYNIGHT.auto) return;
@@ -4645,6 +4653,8 @@ boot();
     spawnCreature: (traits) => (typeof spawnCreature === "function" ? spawnCreature(traits) : null),
     creature: () => (typeof creatureState === "function" ? creatureState() : null),
     creatureProfile: (traits) => (typeof creatureProfile === "function" ? creatureProfile(traits) : null),
+    // FIDELITY probes
+    tone: () => ({ toneMapping: renderer.toneMapping, exposure: +renderer.toneMappingExposure.toFixed(3), outputEncoding: renderer.outputEncoding }),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

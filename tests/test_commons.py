@@ -574,6 +574,20 @@ async def run():
                 check("creature_habitat",
                       bool(crt.get("spawned") and crt.get("explorer") and crt.get("render")
                            and crt.get("color") and crt.get("profile") and crt.get("pos")), crt)
+
+                # FIDELITY: ACES filmic tone-mapping + exposure breathing with the day-night clock.
+                tone = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const t=A.tone();
+                    setTimeOfDay(0.5); const eday=A.tone().exposure;
+                    setTimeOfDay(0.0); const enight=A.tone().exposure;
+                    setTimeOfDay(0.42);
+                    return { aces:(t.toneMapping===THREE.ACESFilmicToneMapping),
+                             srgb:(t.outputEncoding===THREE.sRGBEncoding),
+                             breathes:(enight>eday),
+                             bounds:(eday>=0.6&&eday<=1.8&&enight>=0.6&&enight<=1.8) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_tone",
+                      bool(tone.get("aces") and tone.get("srgb") and tone.get("breathes") and tone.get("bounds")), tone)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
