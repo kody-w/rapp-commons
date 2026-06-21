@@ -139,7 +139,17 @@
     r.onload = function () {
       try {
         var j = JSON.parse(r.result), m = (j && j.moment) ? j.moment : j;
-        if (m && Array.isArray(m.k)) { addToZoo(m); openPlay(m); toast("planted “" + (m.t || "moment") + "” in your zoo"); }
+        if (m && Array.isArray(m.k)) {
+          reconcileIntoZoo(m).then(function (res) {
+            openPlay(res.organism || m);
+            if (res.kind === "planted") { toast("planted “" + (m.t || "moment") + "” in your zoo"); return; }
+            var t = res.tally, bits = [];
+            if (t.refined) bits.push(t.refined + " new frame" + (t.refined > 1 ? "s" : ""));
+            if (t.redundant) bits.push(t.redundant + " unchanged");
+            if (t.resisted) bits.push("resisted " + t.resisted);
+            toast((res.alive ? "✦ " : "⚠ ") + (m.t || "companion") + " absorbed your seed — " + (bits.join(", ") || "nothing changed") + " · gen " + res.gen);
+          });
+        }
         else toast("not a valid .egg");
       } catch (e) { toast("couldn't read that .egg"); }
     };
@@ -153,7 +163,30 @@
   function loadZoo() { try { return JSON.parse(localStorage.getItem("holo:zoo") || "[]"); } catch (e) { return []; } }
   function saveZoo(z) { try { localStorage.setItem("holo:zoo", JSON.stringify(z.slice(-300))); } catch (e) {} }
   function zooKey(m) { return (m.t || "") + "|" + (m.sig || "").slice(0, 16); }
-  function addToZoo(m) { if (!m) return; var z = loadZoo(); z = z.filter(function (x) { return zooKey(x) !== zooKey(m); }); z.push(JSON.parse(JSON.stringify(m))); saveZoo(z); }
+  function lineageId() { return "org-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+  function hState(m) { return W.Homeostasis.homeostasis({ k: m.k, gen: m._gen, stress: m._stress }); }
+  function addToZoo(m) {
+    if (!m) return; var z = loadZoo(); var copy = JSON.parse(JSON.stringify(m));
+    if (!copy._id) copy._id = lineageId();                 // lineage id ties an organism's generations together (not signed: _ prefix)
+    if (copy._gen == null) copy._gen = (copy.k || []).length;
+    if (copy._stress == null) copy._stress = 0;
+    z = z.filter(function (x) { return x._id === copy._id ? false : zooKey(x) !== zooKey(copy); });
+    z.push(copy); saveZoo(z); return copy;
+  }
+  // RECONCILE an incoming organism (a seed) into your zoo via homeostasis — it lives on, grows, or resists.
+  async function reconcileIntoZoo(m) {
+    var H = W.Homeostasis, z = loadZoo();
+    var host = z.find(function (x) { return (m._id && x._id === m._id) || (x.t === m.t && (x.a || "") === (m.a || "")); });
+    if (!host) { var added = addToZoo(m); return { kind: "planted", organism: added }; }
+    var work = { k: host.k.slice(), gen: host._gen != null ? host._gen : host.k.length, stress: host._stress || 0 };
+    var tally = { refined: 0, redundant: 0, resisted: 0 };
+    (m.k || []).forEach(function (f) { var r = H.reconcile(work, f); tally[r.kind]++; work = r.organism; });
+    host.k = work.k; host._gen = work.gen; host._stress = work.stress;
+    await signMoment(host);                                 // re-sign the surviving generation — still provably yours
+    saveZoo(z);
+    var st = H.homeostasis(work);
+    return { kind: "reconciled", tally: tally, alive: st.alive, gen: st.generation, vitality: st.vitality, organism: host };
+  }
   async function renderZoo() {
     var k = await getKey(); var fp = (k && k.pub && k.pub.x) ? k.pub.x.slice(0, 16) : "—";
     var z = loadZoo();
@@ -161,12 +194,16 @@
     var g = $("zoogrid");
     if (!z.length) { g.innerHTML = '<div class="empty">Your menagerie is empty. <a onclick="go(\'create\')">🌱 Plant your first companion →</a></div>'; return; }
     g.innerHTML = z.slice().reverse().map(function (m) {
+      var h = hState(m), pct = Math.round(h.vitality * 100);
+      var badge = h.alive ? "✦ homeostasis · gen " + h.generation : "⚠ homeostasis failing";
+      var bar = '<div class="vit"><i style="width:' + pct + '%;background:' + (h.alive ? "var(--pa)" : "var(--pc)") + '"></i></div>';
       return '<div class="card" data-m="' + encode(m) + '"><div class="thumb" style="' + thumbStyle(m) + '"><span class="tag">' + (m.sig ? "✓ yours" : "unsigned") + '</span><span class="play beat">♥</span></div>' +
-        '<div class="meta"><div class="ti">' + esc(m.t) + '</div><div class="au">' + esc(m.a || "@you") + " · " + (m.b || "savanna") + ' · alive</div></div></div>';
+        '<div class="meta"><div class="ti">' + esc(m.t) + '</div><div class="au">' + esc(m.a || "@you") + " · " + (m.b || "savanna") + '</div>' + bar +
+        '<div class="hs" style="color:' + (h.alive ? "var(--mut)" : "var(--pc)") + '">' + badge + '</div></div></div>';
     }).join("");
     document.querySelectorAll("#zoogrid .card").forEach(function (c) { c.onclick = function () { openPlay(decode(c.dataset.m)); }; });
   }
-  W.addToZoo = addToZoo;
+  W.addToZoo = addToZoo; W.reconcileIntoZoo = reconcileIntoZoo;
 
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
