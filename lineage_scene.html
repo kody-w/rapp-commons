@@ -1,0 +1,250 @@
+<!doctype html><html><head><meta charset="utf-8"><title>The Lineage — Scene</title>
+<style>
+html,body{margin:0;height:100%;background:#06080d;overflow:hidden;font-family:Helvetica Neue,Arial,sans-serif}
+#c{display:block;width:100vw;height:100vh}
+#player{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:14px;padding:14px 20px;
+  background:linear-gradient(0deg,rgba(5,7,11,.92),rgba(5,7,11,0));z-index:9;color:#e8edf4;user-select:none}
+#player button{background:#1b2535;color:#e8edf4;border:1px solid #33415a;border-radius:8px;width:44px;height:40px;
+  font-size:16px;cursor:pointer}
+#player button:hover{background:#26344a}
+#cuelbl{font-size:14px;font-weight:700;letter-spacing:2px;color:#9fb0c7;min-width:170px}
+#ptrack{flex:1;height:8px;background:#1b2535;border-radius:6px;overflow:hidden}
+#pfill{height:100%;width:0;background:linear-gradient(90deg,#4ade80,#38bdf8);transition:width .1s linear}
+#ptitle{position:fixed;left:22px;top:18px;color:#cdd6e3;font-weight:800;font-size:15px;letter-spacing:1px;
+  text-shadow:0 2px 8px #000;z-index:9;display:none}
+#genlabel{position:fixed;left:0;right:0;top:28px;text-align:center;display:none;z-index:8;color:#fff;
+  font-weight:800;font-size:30px;letter-spacing:5px;text-shadow:0 2px 14px #000,0 0 22px rgba(74,222,128,.55)}
+</style>
+</head><body><canvas id="c"></canvas>
+<div id="ptitle">THE LINEAGE · scene preview</div>
+<div id="genlabel"></div>
+<div id="player">
+  <button id="pp" title="Play / Pause (space)">❚❚</button>
+  <button id="restart" title="Restart (R)">RST</button>
+  <span id="cuelbl">1/6 · ESTABLISH</span>
+  <div id="ptrack"><div id="pfill"></div></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* lineage_scene — a STANDALONE, triggerable storyboard scene for filming THE LINEAGE wildlife doc.
+   A creature's trait vector {explore,exploit,cooperate,aggress} becomes a glowing 3D animal in a biome
+   habitat (savanna / canyon / bioluminescent forest / volcanic) chosen by its dominant instinct. The
+   camera is DIRECTED by cues fired in sequence: establish -> reveal -> habitat -> detail -> roam ->
+   bloodline. Drive it via window.scene.cue(name)/setCreature(traits), or ?traits=&cue= URL params, or
+   window.__TRAITS__ injected before load. Self-contained: nothing here touches the mainline commons. */
+const TAX = {
+  genus: { explore: "Vagus", exploit: "Avarus", cooperate: "Socius", aggress: "Ferox" },
+  common: { explore: "Wanderer", exploit: "Hoarder", cooperate: "Packbeast", aggress: "Render" },
+  color: { explore: 0x4ade80, exploit: 0xfbbf24, cooperate: 0x38bdf8, aggress: 0xfb7185 },
+  habitat: { explore: "the open frontier, never settling in one place", exploit: "deep resource veins it mines without rest",
+             cooperate: "tight colonies where it thrives among its own kind", aggress: "the contested borderlands it defends to the death" },
+  behavior: { explore: "ranges far and wide, always scouting fresh ground", exploit: "wrings every last drop from whatever it finds",
+              cooperate: "moves in packs and guards its kin", aggress: "strikes first and gives no quarter" },
+  temper: { explore: "restless and curious, forever on the move", exploit: "patient and calculating, a born opportunist",
+            cooperate: "gentle with its own, a true social animal", aggress: "fierce and territorial — keep your distance" },
+};
+const BIOME = {
+  explore: { ground: 0x35562a, fog: 0x9fc6e8, sky: 0x9fc6e8, flora: 0x6fae4a, rock: 0x6b7a55 },   // savanna
+  exploit: { ground: 0x6b4a26, fog: 0xd8b27a, sky: 0xe6c089, flora: 0x8a6a3a, rock: 0x9a6a3a },   // canyon
+  cooperate:{ ground: 0x142436, fog: 0x1f5f6e, sky: 0x123244, flora: 0x35e0c0, rock: 0x2a4a5a },  // biolum forest
+  aggress: { ground: 0x2a1414, fog: 0x6a1f1f, sky: 0x3a1414, flora: 0x7f1d1d, rock: 0x4a2424 },   // volcanic
+};
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 600);
+camera.position.set(14, 8, 14);
+const amb = new THREE.AmbientLight(0xffffff, 0.85); scene.add(amb);
+const sun = new THREE.DirectionalLight(0xfff2d6, 1.15); sun.position.set(12, 20, 8); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 64), new THREE.MeshStandardMaterial({ color: 0x35562a, roughness: 1 }));
+ground.rotateX(-Math.PI / 2); scene.add(ground);
+let floraGroup = new THREE.Group(); scene.add(floraGroup);
+
+const ST = { traits: null, dom: "explore", creature: null, vel: new THREE.Vector3(), target: new THREE.Vector3(),
+  t: 0, cue: "establish", cueT0: 0, bloodGroup: null, size: 1.3,
+  evoSeq: null, evoDur: 30, evoGen: 0, lastBuild: 0, lastDom: null, holo: false };   // EVOLVE/morph: the bloodline IS a frame sequence
+const cur = { pos: new THREE.Vector3(14, 8, 14), look: new THREE.Vector3(0, 1.5, 0) };
+
+function domOf(tr){ return Object.keys(tr).sort((a, b) => tr[b] - tr[a]); }
+function profile(tr){ tr = tr || ST.traits || { explore: .5, exploit: .5, cooperate: .5, aggress: .5 };
+  const d = domOf(tr), dom = d[0], sec = d[1];
+  return { name: "The " + TAX.common[dom] + " (" + TAX.common[sec] + " strain)", binomial: TAX.genus[dom] + " " + TAX.common[sec].toLowerCase(),
+    dominant: dom, secondary: sec, habitat: TAX.habitat[dom], behavior: TAX.behavior[dom], temperament: TAX.temper[d[3]] || TAX.temper[dom], traits: tr }; }
+
+function buildBiome(dom){
+  const b = BIOME[dom] || BIOME.explore;
+  scene.background = new THREE.Color(b.sky); scene.fog = new THREE.Fog(b.fog, 28, 110);
+  ground.material.color.setHex(b.ground);
+  scene.remove(floraGroup); floraGroup = new THREE.Group(); scene.add(floraGroup);
+  for (let i = 0; i < 60; i++){ const a = (i * 137.5) * Math.PI / 180, r = 5 + (i % 11) * 4.5;
+    const tall = dom === "explore" || dom === "cooperate";
+    const m = new THREE.Mesh(tall ? new THREE.ConeGeometry(0.35, 1.6 + (i % 4) * 0.5, 6) : new THREE.DodecahedronGeometry(0.6 + (i % 3) * 0.5),
+      new THREE.MeshStandardMaterial({ color: b.flora, roughness: 0.9, emissive: dom === "cooperate" ? b.flora : 0x000000, emissiveIntensity: dom === "cooperate" ? 0.5 : 0 }));
+    m.position.set(Math.cos(a) * r, tall ? 0.8 : 0.4, Math.sin(a) * r); floraGroup.add(m); }
+}
+function lerpTraits(a, b, f){ const o = {}; for (const k of ["explore", "exploit", "cooperate", "aggress"]) o[k] = (a[k] || 0) + ((b[k] || 0) - (a[k] || 0)) * f; return o; }
+function buildCreature(traits){
+  traits = traits || { explore: .5, exploit: .5, cooperate: .5, aggress: .5 };
+  const keepPos = ST.creature ? ST.creature.position.clone() : null, keepRot = ST.creature ? ST.creature.rotation.y : 0;
+  if (ST.creature) scene.remove(ST.creature);
+  const dom = domOf(traits)[0], col = TAX.color[dom];
+  const size = 0.9 + (traits.exploit || 0) * 1.6, legLen = 0.7 + (traits.explore || 0) * 1.4;
+  const g = new THREE.Group(); if (keepPos){ g.position.copy(keepPos); g.rotation.y = keepRot; }   // keep place across morph rebuilds
+  const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.5, metalness: 0.1, emissive: col, emissiveIntensity: 0.45 });
+  const bodyY = legLen + size * 0.5;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(size * 1.7, size, size * 1.1), mat); body.position.y = bodyY; g.add(body);
+  const cl = new THREE.PointLight(col, 1.8, 24); cl.position.set(0, bodyY + 1.3, 0); g.add(cl);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(size * 0.75, size * 0.75, size * 0.75), mat); head.position.set(size * 1.05, bodyY + size * 0.25, 0); g.add(head);
+  for (const dz of [-0.22, 0.22]){ const e = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe08a, emissiveIntensity: 1.4 })); e.position.set(size * 1.45, bodyY + size * 0.35, dz * size); g.add(e); }
+  for (const [lx, lz] of [[-0.55, -0.42], [-0.55, 0.42], [0.55, -0.42], [0.55, 0.42]]){ const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, legLen, 6), mat); leg.position.set(lx * size, legLen / 2, lz * size); g.add(leg); }
+  const ns = Math.round((traits.aggress || 0) * 7);
+  for (let i = 0; i < ns; i++){ const sp = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.45 + (traits.aggress || 0) * 0.5, 5), new THREE.MeshStandardMaterial({ color: 0x991b1b, emissive: 0x991b1b, emissiveIntensity: 0.4 })); sp.position.set(((i + 0.5) / ns - 0.5) * size * 1.2, bodyY + size * 0.55, 0); g.add(sp); }
+  scene.add(g); ST.creature = g; ST.traits = traits; ST.dom = dom; ST.color = col; ST.size = size; ST.bodyY = bodyY;
+  ST.speed = 0.5 + (traits.explore || 0) * 1.8; ST.target.set(0, 0, 0);
+}
+function buildBloodline(n){
+  if (ST.bloodGroup) scene.remove(ST.bloodGroup);
+  const g = new THREE.Group(); n = Math.max(1, Math.min(n || 1, 8));
+  for (let i = 0; i < n; i++){ const last = i === n - 1;
+    const node = new THREE.Mesh(new THREE.IcosahedronGeometry(last ? 0.7 : 0.45, 0), new THREE.MeshStandardMaterial({ color: last ? ST.color : 0x8b95a5, emissive: last ? ST.color : 0x445, emissiveIntensity: last ? 0.8 : 0.3, transparent: true, opacity: 0 }));
+    node.position.set((i - (n - 1) / 2) * 2.4, ST.bodyY + 3.4, 0); g.add(node);
+    if (i > 0){ const link = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.05, 0.05), new THREE.MeshStandardMaterial({ color: 0x556, transparent: true, opacity: 0 })); link.position.set((i - 0.5 - (n - 1) / 2) * 2.4, ST.bodyY + 3.4, 0); g.add(link); } }
+  scene.add(g); ST.bloodGroup = g;
+}
+const genEl = document.getElementById("genlabel");
+function evolveStep(){
+  // walk the SAME creature through the whole bloodline: lerp traits gen-by-gen, rebuilding the body
+  // (legs lengthen as explore climbs, spikes erupt as aggress rises, glow shifts as the dominant flips).
+  const ct = ST.t - ST.cueT0, prog = Math.min(1, ct / (ST.evoDur || 30));
+  const pos = prog * (ST.evoSeq.length - 1), i = Math.floor(pos), f = pos - i;
+  const tr = (prog >= 1) ? ST.evoSeq[ST.evoSeq.length - 1] : lerpTraits(ST.evoSeq[i], ST.evoSeq[Math.min(i + 1, ST.evoSeq.length - 1)], f);
+  if (ST.t - ST.lastBuild > 0.11 || (prog >= 1 && !ST.evoDone)){
+    const dom = domOf(tr)[0];
+    if (dom !== ST.lastDom){ buildBiome(dom); ST.lastDom = dom; }   // habitat migrates as the instinct flips
+    buildCreature(tr); ST.lastBuild = ST.t; if (prog >= 1) ST.evoDone = true;   // land exactly on the apex
+  }
+  ST.evoGen = Math.round(pos);
+  if (genEl){ genEl.style.display = "block"; genEl.textContent = "GENERATION " + ST.evoGen + " / " + (ST.evoSeq.length - 1); }
+}
+function roam(dt){
+  const g = ST.creature; if (!g) return;
+  if (g.position.distanceTo(ST.target) < 1.0){ const a = Math.sin(ST.t * 0.7) * Math.PI * 2, r = 4 + (Math.sin(ST.t) * 0.5 + 0.5) * 10; ST.target.set(Math.cos(a) * r, 0, Math.sin(a) * r); }
+  const dir = ST.target.clone().sub(g.position); dir.y = 0; const d = dir.length();
+  if (d > 0.01){ dir.normalize(); ST.vel.copy(dir); g.position.addScaledVector(dir, Math.min(ST.speed * dt, d)); g.rotation.y = Math.atan2(dir.x, dir.z); }
+  g.position.y = Math.abs(Math.sin(ST.t * 6)) * 0.13;
+}
+function director(){
+  const c = ST.creature ? ST.creature.position : new THREE.Vector3(), ct = ST.t - ST.cueT0;
+  let pos, look = c.clone().setY((ST.bodyY || 1.5) * 0.9);
+  if (ST.cue === "establish"){ const a = ct * 0.4; pos = new THREE.Vector3(c.x + Math.cos(a) * 16, 8 + Math.sin(ct * 0.5) * 3, c.z + Math.sin(a) * 16); look = new THREE.Vector3(c.x, 2, c.z); }
+  else if (ST.cue === "reveal"){ const z = Math.max(3.5, 22 - ct * 2.0); pos = new THREE.Vector3(c.x + Math.cos(0.4) * z, c.y + 3.2, c.z + Math.sin(0.4) * z); }
+  else if (ST.cue === "habitat"){ pos = new THREE.Vector3(-20 + ct * 3.0, 8, 16); look = new THREE.Vector3(0, 2, 0); }
+  else if (ST.cue === "detail"){ const a = ct * 0.6, r = 3.4; pos = new THREE.Vector3(c.x + Math.cos(a) * r, c.y + (ST.bodyY || 1.5) + 0.2, c.z + Math.sin(a) * r); }
+  else if (ST.cue === "roam"){ const a = Math.atan2(ST.vel.x, ST.vel.z); pos = new THREE.Vector3(c.x - Math.sin(a) * 5 + 2.2, c.y + 1.6, c.z - Math.cos(a) * 5); }
+  else if (ST.cue === "bloodline"){ const a = ct * 0.12; pos = new THREE.Vector3(Math.cos(a) * 13, 7.5, Math.sin(a) * 13 + 5); look = new THREE.Vector3(c.x, (ST.bodyY || 1.5) + 2.2, c.z); }
+  else if (ST.cue === "evolve"){ const a = ct * 0.32, r = 7.6 - Math.min(3.2, ct * 0.045) + Math.sin(ct * 0.6) * 1.6; pos = new THREE.Vector3(c.x + Math.cos(a) * r, c.y + (ST.bodyY || 2) * 0.5 + 1.6 + Math.sin(ct * 0.4) * 1.3, c.z + Math.sin(a) * r); look = c.clone().setY((ST.bodyY || 2) * 0.6); }
+  else pos = new THREE.Vector3(c.x + 8, c.y + 4, c.z + 8);
+  const k = 1 - Math.pow(0.012, 1 / 60);                    // smooth follow
+  cur.pos.lerp(pos, k); cur.look.lerp(look, k);
+  camera.position.copy(cur.pos); camera.lookAt(cur.look);
+}
+// PLAYER — when opened standalone, the scene PLAYS the storyboard from the filming camera (the cues
+// auto-advance), with pause/play + restart, so you can watch the exact shot before any render. When the
+// recorder injects window.__FILMING__, the player steps aside and the recorder drives the cues itself.
+const SEQ = [["establish", 13], ["reveal", 13], ["habitat", 12], ["detail", 14], ["roam", 12], ["bloodline", 16]];
+const PLAYER = { paused: false, filming: (window.__FILMING__ === true), seqIdx: 0, seqElapsed: 0,
+  total: SEQ.reduce((s, b) => s + b[1], 0) };
+const hud = {};
+function togglePause(){ PLAYER.paused = !PLAYER.paused; if (hud.btn) hud.btn.textContent = PLAYER.paused ? "▶" : "❚❚"; }
+function restartSeq(){ ST.t = 0; PLAYER.seqIdx = 0; PLAYER.seqElapsed = 0; PLAYER.paused = false; if (hud.btn) hud.btn.textContent = "❚❚";
+  if (ST.holo) cue("evolve", { dur: ST.evoDur }); else cue(SEQ[0][0]); }
+function buildHUD(){
+  if (PLAYER.filming) return;
+  const el = document.getElementById("player"); if (!el) return;
+  el.style.display = "flex"; document.getElementById("ptitle").style.display = "block";
+  hud.btn = document.getElementById("pp"); hud.label = document.getElementById("cuelbl"); hud.fill = document.getElementById("pfill");
+  hud.btn.onclick = togglePause; document.getElementById("restart").onclick = restartSeq;
+  hud.track = document.getElementById("ptrack");
+  if (hud.track) hud.track.onclick = (e) => {   // drag/click the scrubber to DRIVE the frames (jump to any generation)
+    if (!ST.evoSeq) return; const r = hud.track.getBoundingClientRect();
+    PLAYER.paused = true; if (hud.btn) hud.btn.textContent = "▶";
+    scrub(((e.clientX - r.left) / r.width) * (ST.evoSeq.length - 1));
+  };
+  document.getElementById("ptitle").textContent = "THE LINEAGE · " + (ST.holo ? "Holographic Evolution (drag to drive the frames)" : (ST.traits ? profile(ST.traits).name : "scene preview"));
+}
+function updateHUD(){
+  if (PLAYER.filming || !hud.label) return;
+  if (ST.holo && ST.evoSeq){
+    const n = ST.evoSeq.length - 1;
+    hud.label.textContent = "GEN " + ST.evoGen + " / " + n;
+    hud.fill.style.width = Math.min(100, ST.evoGen / n * 100) + "%"; return;
+  }
+  const elapsed = SEQ.slice(0, PLAYER.seqIdx).reduce((s, b) => s + b[1], 0) + PLAYER.seqElapsed;
+  hud.label.textContent = (PLAYER.seqIdx + 1) + "/" + SEQ.length + " · " + SEQ[PLAYER.seqIdx][0].toUpperCase();
+  hud.fill.style.width = Math.min(100, elapsed / PLAYER.total * 100) + "%";
+}
+addEventListener("keydown", (e) => { if (e.code === "Space"){ e.preventDefault(); togglePause(); } else if (e.key === "r" || e.key === "R") restartSeq(); });
+
+let last = performance.now();
+function tick(now){
+  let dt = Math.min((now - last) / 1000, 0.05); last = now;
+  if (PLAYER.paused) dt = 0;
+  ST.t += dt;
+  if (!PLAYER.filming && !ST.holo && dt > 0){            // storyboard auto-advance (per-creature mode)
+    PLAYER.seqElapsed += dt;
+    if (PLAYER.seqIdx < SEQ.length - 1 && PLAYER.seqElapsed >= SEQ[PLAYER.seqIdx][1]){ PLAYER.seqIdx++; PLAYER.seqElapsed = 0; cue(SEQ[PLAYER.seqIdx][0]); }
+  }
+  if (ST.cue === "evolve" && ST.evoSeq && ST.evoSeq.length > 1){ evolveStep();
+    if (ST.holo && !PLAYER.filming && ST.evoDone && (ST.t - ST.cueT0) > ST.evoDur + 2.5) cue("evolve", { dur: ST.evoDur }); }   // loop the holographic video
+  else if (genEl && genEl.style.display !== "none") genEl.style.display = "none";
+  roam(dt); director();
+  if (ST.bloodGroup) ST.bloodGroup.children.forEach(m => { if (m.material.transparent) m.material.opacity = Math.min(1, m.material.opacity + dt * 0.8); });
+  renderer.render(scene, camera); updateHUD(); requestAnimationFrame(tick);
+}
+function setCreature(tr){ ST.traits = tr; ST.lastDom = domOf(tr)[0]; buildBiome(ST.lastDom); buildCreature(tr); cur.pos.set(c0().x, 9, c0().z + 16); }
+function setBloodline(seq){ ST.evoSeq = seq; if (seq && seq.length) setCreature(seq[0]); }   // load the bloodline trait sequence
+function morphTo(tr){ ST.traits = tr; const d = domOf(tr)[0]; if (d !== ST.lastDom){ buildBiome(d); ST.lastDom = d; } buildCreature(tr); }   // snap the body to a trait vector, keep the camera
+function scrub(g){   // DRIVE the frame sequence directly — move the playhead to any generation-frame
+  if (!ST.evoSeq || ST.evoSeq.length < 2) return; const n = ST.evoSeq.length - 1;
+  const gi = Math.max(0, Math.min(n, Math.round(g)));
+  ST.cue = "evolve"; ST.evoDone = false;
+  ST.cueT0 = ST.t - (gi / n) * ST.evoDur;   // move the playhead so the morph engine lands on this generation
+  evolveStep();
+}
+function c0(){ return ST.creature ? ST.creature.position : new THREE.Vector3(); }
+function cue(name, opts){ opts = (typeof opts === "number") ? { ancestors: opts } : (opts || {}); ST.cue = name; ST.cueT0 = ST.t;
+  if (name === "bloodline") buildBloodline(opts.ancestors || ST.ancestors || 1);
+  if (name === "evolve"){ ST.evoDur = opts.dur || 30; ST.evoDone = false; } }
+window.scene = { setCreature, setBloodline, morphTo, scrub, cue,
+  state: () => ({ ready: true, dom: ST.dom, cue: ST.cue, gen: ST.evoGen, gens: ST.evoSeq ? ST.evoSeq.length - 1 : 0, holo: ST.holo, pos: c0() }),
+  profile: () => profile(ST.traits), ready: false };
+
+(async function boot(){
+  const q = new URLSearchParams(location.search);
+  if (q.get("ancestors")) ST.ancestors = parseInt(q.get("ancestors"), 10) || 1;
+  if (typeof window.__ANCESTORS__ === "number") ST.ancestors = window.__ANCESTORS__;
+  // A BLOODLINE is a FRAME SEQUENCE that drives the holographic evolution video — stream it from the
+  // public CDN (?bloodline=<rawgithub url>), inject it (window.__BLOODLINE__), or pass it base64 (?bl=).
+  let bl = (Array.isArray(window.__BLOODLINE__) && window.__BLOODLINE__) || null;
+  if (!bl && q.get("bloodline")){ try { const j = await (await fetch(q.get("bloodline"))).json(); bl = j.seq || j; } catch (e) {} }
+  if (!bl && q.get("bl")){ try { const j = JSON.parse(atob(q.get("bl"))); bl = j.seq || j; } catch (e) {} }
+  if (bl && bl.length > 1){
+    ST.ancestors = bl.length - 1; setBloodline(bl);
+    if (PLAYER.filming) cue(q.get("cue") || "establish");          // the recorder drives the frames
+    else { buildHUD(); ST.holo = true; cue("evolve", { dur: parseFloat(q.get("dur")) || 40 }); }   // play the holographic video
+  } else {
+    let tr = (typeof window.__TRAITS__ === "object" && window.__TRAITS__) || null;
+    if (!tr && q.get("traits")){ try { tr = JSON.parse(q.get("traits")); } catch (e) {} }
+    if (!tr){ try { tr = JSON.parse(atob(q.get("t") || "")); } catch (e) {} }
+    if (!tr) tr = { explore: 0.8, exploit: 0.4, cooperate: 0.5, aggress: 0.2 };
+    setCreature(tr);
+    if (PLAYER.filming) cue(q.get("cue") || "establish");
+    else { buildHUD(); cue(SEQ[0][0]); }
+  }
+  window.scene.ready = true; window.lineageReady = true;
+  requestAnimationFrame(tick);
+})();
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script></body></html>
