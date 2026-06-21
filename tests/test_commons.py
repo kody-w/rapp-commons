@@ -669,6 +669,18 @@ async def run():
                 }catch(e){return {err:String(e)}}}""", {}) or {}
                 check("fidelity_terrainpaint",
                       bool(tpaint.get("painted") and tpaint.get("vc") and tpaint.get("colorCount") and tpaint.get("lowlandGreen")), tpaint)
+
+                # FIDELITY: golden-hour god rays — on at dawn/dusk, off at noon and night.
+                gray = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const g=scene.getObjectByName('godRays');
+                    setTimeOfDay(0.22); const dawn=A.godrays().intensity;
+                    setTimeOfDay(0.5); const noon=A.godrays().intensity;
+                    setTimeOfDay(0.0); const night=A.godrays().intensity;
+                    setTimeOfDay(0.42);
+                    return { present:!!g, dawnOn:(dawn>0.1), noonOff:(noon<0.05), nightOff:(night<0.05) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_godrays",
+                      bool(gray.get("present") and gray.get("dawnOn") and gray.get("noonOff") and gray.get("nightOff")), gray)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
