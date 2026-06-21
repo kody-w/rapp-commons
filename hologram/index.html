@@ -1,7 +1,7 @@
 <!-- (c) 2026 Kody Wildfeuer - PolyForm Noncommercial 1.0.0, see /LICENSE - "Holographic Moments"/"The Lineage" are trademarks. -->
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>Holographic Moments — express in 100 frames</title>
-<meta property="og:title" content="Holographic Moments"><meta property="og:description" content="A walkable 100-frame hologram. Make one. Share it with a QR.">
+<title>The RAPP Zoo — plant a holographic companion</title>
+<meta property="og:title" content="The RAPP Zoo"><meta property="og:description" content="Plant a living holographic companion. A digital organism, one heartbeat per frame, provably yours.">
 <style>
 :root{--bg:#06080d;--pa:#4ade80;--pb:#38bdf8;--pc:#fb7185;--ink:#e8edf4;--mut:#8b95a5;--card:#10141d}
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:Helvetica Neue,Arial,sans-serif;overflow:hidden}
@@ -73,31 +73,31 @@ button.ghost{background:transparent}
 <body>
 <canvas id="c"></canvas>
 <div id="bar">
-  <div id="logo" onclick="go('feed')">◳ <b>Holographic Moments</b></div><div class="sp"></div>
+  <div id="logo" onclick="go('feed')">🦋 <b>The RAPP Zoo</b></div><div class="sp"></div>
   <button class="ghost" id="navRemix" onclick="remix()" style="display:none">⎘ Remix</button>
   <button id="navShare" onclick="openShare()" style="display:none">↗ Share</button>
   <button class="ghost" id="navPip" onclick="pipHologram()" style="display:none" title="float it & keep working">⧉ PiP</button>
-  <button class="ghost" id="navEgg" onclick="exportEgg()" style="display:none">⬇ .egg</button>
+  <button class="ghost" id="navEgg" onclick="exportEgg()" style="display:none" title="save your companion's seed">⬇ Seed</button>
   <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ HoloPress</button>
-  <button class="ghost" onclick="document.getElementById('eggfile').click()" title="import a .egg">⬆ Import</button>
+  <button class="ghost" onclick="document.getElementById('eggfile').click()" title="import a companion seed (.egg)">⬆ Plant seed</button>
   <button class="ghost" onclick="location.href='drops.html'">◳ Drop</button>
   <button class="ghost" onclick="location.href='market.html'">▦ Market</button>
-  <button class="cta" onclick="go('create')">+ Create</button>
+  <button class="cta" onclick="go('create')">🌱 Plant</button>
 </div>
 <input type="file" id="eggfile" accept=".egg,.json,application/json" style="display:none">
 <video id="pipvid" muted playsinline autoplay style="position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none"></video>
 
 <div id="feed">
   <div id="hero">
-    <h1>Express yourself in <b style="color:var(--pa)">100 frames</b>.</h1>
-    <p>A Holographic Moment is a walkable hologram — a hundred frames of a form being born, moving, becoming. Make one. Share it with a QR. It plays anywhere, on anyone's phone.</p>
-    <button class="cta" style="font-size:16px;padding:12px 22px" onclick="go('create')">Create a Moment →</button>
+    <h1>Plant a living <b style="color:var(--pa)">holographic companion</b>.</h1>
+    <p>Each one is a digital organism — a hundred frames, one heartbeat per frame, alive since the moment it's minted. Grow your own, keep its seed, carry it with you in your pocket. No two ever the same.</p>
+    <button class="cta" style="font-size:16px;padding:12px 22px" onclick="go('create')">🌱 Plant a companion →</button>
   </div>
   <div id="grid"></div>
 </div>
 
 <div id="create" class="hide">
-  <h3>Create a Holographic Moment</h3>
+  <h3>Plant a companion</h3>
   <div class="row"><label>Title</label><input type="text" id="cTitle" maxlength="40" placeholder="my moment" value="untitled"></div>
   <div class="row"><label>Your handle</label><input type="text" id="cAuthor" maxlength="24" placeholder="@you" value="@anon"></div>
   <div class="row"><label>Vibe</label><select id="cBiome"><option value="savanna">savanna</option><option value="canyon">canyon</option><option value="forest">bioluminescent</option><option value="volcanic">volcanic</option><option value="void">void</option></select></div>

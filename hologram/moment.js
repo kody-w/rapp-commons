@@ -57,6 +57,14 @@
     g.position.set(f.x * 12, 0, f.z * 12);
     if (keepP) { g.position.y = keepP.y; g.rotation.y = keepR; }
     scene.add(g); FORM = g; FORM.bodyY = bodyY; FORM.cur = f;
+    FORM.heartLight = lt; FORM.baseLI = 0.6 + f.g * 2.2;   // the glow that pulses with the heartbeat
+  }
+  // HEARTBEAT — each frame is a beat; a sharp lub-dub then rest, so the companion reads as alive.
+  function heartbeat(t) {
+    var p = (t % 1.05) / 1.05;
+    var lub = Math.exp(-Math.pow((p - 0.0) * 13, 2));
+    var dub = Math.exp(-Math.pow((p - 0.16) * 15, 2)) * 0.7;
+    return lub + dub;
   }
 
   // ---- Moment format ----
@@ -173,6 +181,9 @@
       if (playing) { S.pf += dt * (99 / S.dur); if (S.pf >= 99) S.pf = 0; }
       if (FORM && moving) FORM.position.y = Math.abs(Math.sin(now * 5)) * 0.1;
       applyFrame(S.pf, false);
+      if (FORM) { var beat = moving ? heartbeat(now) : 0;   // the companion's heartbeat — pulse the body + glow
+        FORM.scale.setScalar(1 + beat * 0.045);
+        if (FORM.heartLight) FORM.heartLight.intensity = FORM.baseLI * (1 + beat * 0.65); }
       if (moving) camTick(dt);
       if (S.mode === "play") updatePC();
     } else { camera.position.set(0, 6, 16); camera.lookAt(0, 1, 0); }
