@@ -166,12 +166,14 @@
   var last = perf();
   function tick() {
     var now = perf(), dt = Math.min(now - last, 0.05); last = now; S.t = now;
-    if ((S.mode === "play" || S.mode === "create") && S.frames) {
-      var moving = (S.mode === "create") || S.playing;   // PAUSE = a true freeze-frame: stop the clock, the bob, AND the camera
-      if (S.mode === "play" && S.playing) { S.pf += dt * (99 / S.dur); if (S.pf >= 99) S.pf = 0; }
+    if ((S.mode === "play" || S.mode === "create" || S.pip) && S.frames) {
+      // play: honor pause. create: no auto-advance. PiP while navigated away: keep looping.
+      var playing = (S.mode === "play") ? S.playing : (S.mode === "create" ? false : true);
+      var moving = (S.mode === "create") || playing;     // PAUSE = a true freeze-frame: stop the clock, bob, AND camera
+      if (playing) { S.pf += dt * (99 / S.dur); if (S.pf >= 99) S.pf = 0; }
       if (FORM && moving) FORM.position.y = Math.abs(Math.sin(now * 5)) * 0.1;
       applyFrame(S.pf, false);
-      if (moving) camTick(dt);                            // freeze the camera where it is when paused
+      if (moving) camTick(dt);
       if (S.mode === "play") updatePC();
     } else { camera.position.set(0, 6, 16); camera.lookAt(0, 1, 0); }
     renderer.render(scene, camera); requestAnimationFrame(tick);
@@ -186,10 +188,10 @@
   function go(mode) {
     S.mode = mode;
     ["feed", "create", "pc", "ptitle", "share", "mint"].forEach(hide);
-    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none";
+    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "create") { show("create"); initCreate(); }
-    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; }
+    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
   }
   W.go = go;
 
@@ -232,6 +234,23 @@
   W.scrubAt = function (e) { var r = $("track").getBoundingClientRect(); S.pf = Math.max(0, Math.min(99, (e.clientX - r.left) / r.width * 99)); S.playing = false; $("ppBtn").textContent = "▶"; applyFrame(S.pf, true); };
   function updatePC() { $("fl").textContent = "FRAME " + Math.round(S.pf) + " / 99"; $("fill").style.width = (S.pf / 99 * 100) + "%"; }
   W.remix = function () { if (S.moment) { go("create"); loadIntoCreate(S.moment); } };
+
+  // PICTURE-IN-PICTURE — float the live hologram in an always-on-top OS window so it keeps playing
+  // while you work in other apps. Captures the WebGL canvas to a stream and PiPs it (no fullscreen).
+  async function pipHologram() {
+    var vid = $("pipvid");
+    try {
+      if (D.pictureInPictureElement) { await D.exitPictureInPicture(); S.pip = false; return; }
+      if (!S.pipStream) S.pipStream = renderer.domElement.captureStream(30);
+      vid.srcObject = S.pipStream; vid.muted = true;
+      await vid.play();
+      await vid.requestPictureInPicture();
+      S.pip = true;
+      vid.addEventListener("leavepictureinpicture", function () { S.pip = false; }, { once: true });
+      toast("hologram floating — keep working ✦");
+    } catch (e) { toast("picture-in-picture isn't available here"); }
+  }
+  W.pipHologram = pipHologram;
 
   // ---- CREATE ----
   var draft = null, selKey = 0;
