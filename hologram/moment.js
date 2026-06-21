@@ -167,10 +167,11 @@
   function tick() {
     var now = perf(), dt = Math.min(now - last, 0.05); last = now; S.t = now;
     if ((S.mode === "play" || S.mode === "create") && S.frames) {
+      var moving = (S.mode === "create") || S.playing;   // PAUSE = a true freeze-frame: stop the clock, the bob, AND the camera
       if (S.mode === "play" && S.playing) { S.pf += dt * (99 / S.dur); if (S.pf >= 99) S.pf = 0; }
-      if (FORM) FORM.position.y = Math.abs(Math.sin(now * 5)) * 0.1;
+      if (FORM && moving) FORM.position.y = Math.abs(Math.sin(now * 5)) * 0.1;
       applyFrame(S.pf, false);
-      camTick(dt);
+      if (moving) camTick(dt);                            // freeze the camera where it is when paused
       if (S.mode === "play") updatePC();
     } else { camera.position.set(0, 6, 16); camera.lookAt(0, 1, 0); }
     renderer.render(scene, camera); requestAnimationFrame(tick);
