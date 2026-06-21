@@ -29,5 +29,11 @@ ok("verifyCoordinate accepts a place mint", O.verifyCoordinate(here) === true);
 const forged = JSON.parse(JSON.stringify(a)); forged.k[1].h = (forged.k[1].h + 90) % 360;
 ok("verifyCoordinate rejects a forgery", O.verifyCoordinate(forged) === false);
 
+// DIAL — an address regenerates its organism anywhere (no fetch)
+ok("dial sky·ms round-trips the organism", JSON.stringify(O.fromPk(a.pk).k) === JSON.stringify(a.k) && O.fromPk(a.pk).pk === a.pk, a.pk);
+ok("dial a place pk round-trips", JSON.stringify(O.fromPk(here.pk).k) === JSON.stringify(here.k) && O.fromPk(here.pk).pk === here.pk, here.pk);
+ok("dial a bare UTC ms works", O.fromPk(String(t)).pk === "sky·" + t);
+ok("dial rejects garbage", O.fromPk("not-an-address") === null);
+
 console.log(`\norganism: ${pass}/${pass+fail} passed` + (fail ? "  *** RED ***" : "  ALL GREEN"));
 process.exit(fail ? 1 : 0);

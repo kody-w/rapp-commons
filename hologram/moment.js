@@ -243,6 +243,18 @@
   }
   W.mintWild = mintWild;
 
+  // DIAL — summon an organism anywhere by its address (pk). The coordinate regenerates the hologram; no fetch.
+  function dial(addr) {
+    if (!W.Organism) return;
+    addr = (addr == null) ? prompt("📡 Dial an organism by its address:\n\n  sky·<utc-ms>\n  <geohash>·<utc-ms>") : addr;
+    if (!addr) return;
+    var org = W.Organism.fromPk(addr);
+    if (!org) { toast("couldn't dial “" + addr + "”"); return; }
+    history.replaceState(0, 0, location.pathname + "?dial=" + encodeURIComponent(org.pk));
+    openPlay(org, false); toast("📡 summoned " + org.pk);
+  }
+  W.dial = dial;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -507,6 +519,7 @@
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
+    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); requestAnimationFrame(tick); return; } }
     if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);

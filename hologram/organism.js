@@ -60,7 +60,29 @@
     return re.pk === org.pk && re.b === org.b && JSON.stringify(genesis) === JSON.stringify(re.k);
   }
 
-  var api = { organismFromStamp: organismFromStamp, pkFor: pkFor, geohash: geohash, nameFromPk: nameFromPk, verifyCoordinate: verifyCoordinate, BIOMES: BIOMES };
+  function geohashDecode(hash) {
+    var even = true, latR = [-90, 90], lngR = [-180, 180];
+    for (var i = 0; i < hash.length; i++) { var c = B32.indexOf(hash[i]); if (c < 0) return null;
+      for (var b = 4; b >= 0; b--) { var bit = (c >> b) & 1;
+        if (even) { var m1 = (lngR[0] + lngR[1]) / 2; if (bit) lngR[0] = m1; else lngR[1] = m1; }
+        else { var m2 = (latR[0] + latR[1]) / 2; if (bit) latR[0] = m2; else latR[1] = m2; }
+        even = !even; } }
+    return { lat: (latR[0] + latR[1]) / 2, lng: (lngR[0] + lngR[1]) / 2 };
+  }
+
+  // DIAL — resolve an address (pk) back into its organism. Because the organism is deterministic from its
+  // coordinate, dialing regenerates it anywhere it is requested from — the address summons the hologram.
+  function fromPk(pk) {
+    if (!pk || typeof pk !== "string") return null;
+    pk = pk.trim();
+    var dot = pk.indexOf("·") >= 0 ? "·" : (pk.indexOf("|") >= 0 ? "|" : null);   // tolerate · or | as the separator
+    if (!dot) { var n = parseInt(pk, 10); return (n && ("" + n).length >= 10) ? organismFromStamp(n) : null; }  // bare UTC ms
+    var parts = pk.split(dot), ms = parseInt(parts[1], 10); if (!ms) return null;
+    if (parts[0] === "sky") return organismFromStamp(ms);
+    var loc = geohashDecode(parts[0]); return loc ? organismFromStamp(ms, loc) : null;
+  }
+
+  var api = { organismFromStamp: organismFromStamp, fromPk: fromPk, pkFor: pkFor, geohash: geohash, geohashDecode: geohashDecode, nameFromPk: nameFromPk, verifyCoordinate: verifyCoordinate, BIOMES: BIOMES };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.Organism = api;
 })(typeof window !== "undefined" ? window : this);
