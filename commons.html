@@ -3127,6 +3127,7 @@ function animate(){
   particles.rotation.y += dt*0.05;
   particles.position.y = Math.sin(t*0.3)*0.5;
   dayNightTick(dt);   // slow day→night sky/fog/sun tint
+  if (typeof creatureTick === "function") creatureTick(dt);   // the Lineage creature roams its habitat
 
   // animate the NATIVE nexus holographic zone (frame swirl + drifting halo).
   for (const m of NEXUS.mats) m.uniforms.time.value = t;
@@ -4061,6 +4062,88 @@ async function mxHeal(){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9i. CREATURE / WILDLIFE HABITAT (additive) — a Lineage champion's trait vector
+   {explore,exploit,cooperate,aggress} becomes a REAL 3D voxel CREATURE that roams a
+   habitat in the commons, so a wildlife-doc host can film it like a real animal in
+   the wild. Size from exploit, leg-length from explore, spikes from aggress, colour
+   from its dominant instinct. spawnCreature(traits) / creature() / creatureProfile().
+   ───────────────────────────────────────────────────────────────────────── */
+const CREATURE = { group: null, traits: null, habitat: new THREE.Vector3(-70, 0, 70), target: null, t: 0 };
+const _TGENUS = { explore: "Vagus", exploit: "Avarus", cooperate: "Socius", aggress: "Ferox" };
+const _TCOMMON = { explore: "Wanderer", exploit: "Hoarder", cooperate: "Packbeast", aggress: "Render" };
+const _TCOLOR = { explore: 0x4ade80, exploit: 0xfbbf24, cooperate: 0x38bdf8, aggress: 0xfb7185 };
+const _THAB = { explore: "the open frontier, never settling in one place", exploit: "deep resource veins it mines without rest",
+  cooperate: "tight colonies where it thrives among its own kind", aggress: "the contested borderlands it defends to the death" };
+const _TBEHAV = { explore: "ranges far and wide, always scouting fresh ground", exploit: "wrings every last drop from whatever it finds",
+  cooperate: "moves in packs and guards its kin", aggress: "strikes first and gives no quarter" };
+const _TTEMPER = { explore: "restless and curious, forever on the move", exploit: "patient and calculating, a born opportunist",
+  cooperate: "gentle with its own, a true social animal", aggress: "fierce and territorial — keep your distance" };
+function _domTraits(tr){ return Object.keys(tr).sort((a, b) => tr[b] - tr[a]); }
+function creatureProfile(tr){
+  tr = tr || CREATURE.traits || { explore: .5, exploit: .5, cooperate: .5, aggress: .5 };
+  const d = _domTraits(tr), dom = d[0], sec = d[1];
+  return { name: "The " + _TCOMMON[dom] + (sec ? " (" + _TCOMMON[sec] + " strain)" : ""),
+    binomial: _TGENUS[dom] + " " + _TCOMMON[sec].toLowerCase(), dominant: dom, secondary: sec,
+    habitat: _THAB[dom], behavior: _TBEHAV[dom], temperament: _TTEMPER[d[3]] || _TTEMPER[dom],
+    traits: tr };
+}
+function spawnCreature(traits){
+  traits = traits || { explore: .5, exploit: .5, cooperate: .5, aggress: .5 };
+  if (CREATURE.group) scene.remove(CREATURE.group);
+  const dom = _domTraits(traits)[0], col = _TCOLOR[dom];
+  const size = 0.9 + (traits.exploit || 0) * 1.6;           // body bulk from exploit
+  const legLen = 0.7 + (traits.explore || 0) * 1.4;         // leg length from explore
+  const g = new THREE.Group(); g.position.copy(CREATURE.habitat);
+  const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.6, metalness: 0.1 });
+  const bodyY = legLen + size * 0.5;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(size * 1.7, size, size * 1.1), mat); body.position.y = bodyY; g.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(size * 0.75, size * 0.75, size * 0.75), mat); head.position.set(size * 1.05, bodyY + size * 0.25, 0); g.add(head);
+  for (const dz of [-0.22, 0.22]){ const eye = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe08a, emissiveIntensity: 1.2 })); eye.position.set(size * 1.42, bodyY + size * 0.35, dz * size); g.add(eye); }
+  for (const [lx, lz] of [[-0.55, -0.42], [-0.55, 0.42], [0.55, -0.42], [0.55, 0.42]]){ const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, legLen, 6), new THREE.MeshStandardMaterial({ color: col, roughness: 0.85 })); leg.position.set(lx * size, legLen / 2, lz * size); g.add(leg); }
+  const nspikes = Math.round((traits.aggress || 0) * 7);    // dorsal spikes from aggress
+  for (let i = 0; i < nspikes; i++){ const sp = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.4 + (traits.aggress || 0) * 0.5, 5), new THREE.MeshStandardMaterial({ color: 0x7f1d1d })); sp.position.set(((i + 0.5) / nspikes - 0.5) * size * 1.2, bodyY + size * 0.55, 0); g.add(sp); }
+  scene.add(g);
+  CREATURE.group = g; CREATURE.traits = traits; CREATURE.color = col; CREATURE.size = size; CREATURE.dom = dom;
+  CREATURE.speed = 0.4 + (traits.explore || 0) * 1.8; CREATURE.bodyY = bodyY;
+  CREATURE.target = CREATURE.habitat.clone();
+  return creatureState();
+}
+function creatureState(){
+  const p = CREATURE.group ? CREATURE.group.position : CREATURE.habitat;
+  const prof = creatureProfile(CREATURE.traits);
+  return { spawned: !!CREATURE.group, name: prof.name, binomial: prof.binomial, dominant: CREATURE.dom || prof.dominant,
+    color: CREATURE.color || null, size: +(CREATURE.size || 0).toFixed(2), traits: CREATURE.traits,
+    pos: { x: +p.x.toFixed(1), y: +p.y.toFixed(1), z: +p.z.toFixed(1) }, profile: prof };
+}
+function buildCreatureHabitat(){
+  // a patch of habitat (lit ground ring + a few rocks/flora) so the creature has a home to be filmed in.
+  const ring = new THREE.Mesh(new THREE.CircleGeometry(16, 40), new THREE.MeshStandardMaterial({ color: 0x1b3a1b, roughness: 1 }));
+  ring.rotateX(-Math.PI / 2); ring.position.set(CREATURE.habitat.x, 0.03, CREATURE.habitat.z); scene.add(ring);
+  for (let i = 0; i < 7; i++){ const a = i / 7 * Math.PI * 2, r = 6 + (i % 3) * 3;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + (i % 3) * 0.4), new THREE.MeshStandardMaterial({ color: 0x3a4250, roughness: 1 }));
+    rock.position.set(CREATURE.habitat.x + Math.cos(a) * r, 0.5, CREATURE.habitat.z + Math.sin(a) * r); scene.add(rock); }
+}
+function creatureTick(dt){
+  const g = CREATURE.group; if (!g) return;
+  CREATURE.t += dt;
+  if (!CREATURE.target || g.position.distanceTo(CREATURE.target) < 1.2){
+    const a = (Math.sin(CREATURE.t * 0.7) * 0.5 + 0.5) * Math.PI * 2, r = 4 + (Math.sin(CREATURE.t) * 0.5 + 0.5) * 9;
+    CREATURE.target = new THREE.Vector3(CREATURE.habitat.x + Math.cos(a) * r, 0, CREATURE.habitat.z + Math.sin(a) * r);
+  }
+  const dir = CREATURE.target.clone().sub(g.position); dir.y = 0; const d = dir.length();
+  if (d > 0.01){ dir.normalize(); g.position.addScaledVector(dir, Math.min(CREATURE.speed * dt, d)); g.rotation.y = Math.atan2(dir.x, dir.z); }
+  g.position.y = Math.abs(Math.sin(CREATURE.t * 6)) * 0.12;   // a little gait bob
+}
+function registerCreatureHabitat(){
+  buildCreatureHabitat();
+  if (typeof makeAreaInteractable === "function") makeAreaInteractable({
+    pos: CREATURE.habitat, radius: 16, type: "area", label: "Wildlife Habitat", slug: "creature",
+    blurb: "A living habitat in the commons where a Lineage champion roams as a real 3D creature — its body shaped by its instincts (size from exploit, legs from explore, spikes from aggress, colour from its dominant trait). Observe it in the wild.",
+    action: () => { if (typeof travelTo === "function") travelTo(Object.assign(CREATURE.habitat.clone(), { label: "Wildlife Habitat" })); }
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -4092,6 +4175,7 @@ async function boot(){
   registerVoxelRoom();
   registerNexusArea();
   registerApexArena();
+  if (typeof registerCreatureHabitat === "function") registerCreatureHabitat();
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
   // directory post at spawn that points the way to each (compass-accurate).
@@ -4556,6 +4640,10 @@ boot();
     quorum:   (key, threshold) => (typeof mxQuorum === "function" ? mxQuorum(key, threshold) : null),
     heal:     () => (typeof mxHeal === "function" ? mxHeal() : null),
     injectForgery: (x, y, z, block) => (typeof mxInjectForgery === "function" ? mxInjectForgery(x, y, z, block) : null),
+    // CREATURE / WILDLIFE HABITAT: a Lineage champion's trait vector becomes a real 3D creature roaming a habitat.
+    spawnCreature: (traits) => (typeof spawnCreature === "function" ? spawnCreature(traits) : null),
+    creature: () => (typeof creatureState === "function" ? creatureState() : null),
+    creatureProfile: (traits) => (typeof creatureProfile === "function" ? creatureProfile(traits) : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

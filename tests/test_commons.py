@@ -557,6 +557,23 @@ async def run():
                 check("evo_immune",
                       bool(imm.get("quarantined") and imm.get("tainted") and imm.get("restored")
                            and imm.get("healed") and imm.get("report") and imm.get("idempotent")), imm)
+
+                # CREATURE / WILDLIFE HABITAT: a Lineage trait vector becomes a real 3D creature.
+                crt = await ev("""async ()=>{try{
+                    const A=window.commonsAgent;
+                    A.spawnCreature({explore:0.95,exploit:0.2,cooperate:0.3,aggress:0.1}); const c1=A.creature();
+                    A.spawnCreature({explore:0.1,exploit:0.2,cooperate:0.2,aggress:0.95}); const c2=A.creature();
+                    const prof=A.creatureProfile({cooperate:0.9,explore:0.2,exploit:0.2,aggress:0.1});
+                    return { spawned:(c1&&c1.spawned===true),
+                             explorer:(c1.dominant==='explore'&&/Wanderer/.test(c1.name)),
+                             render:(c2.dominant==='aggress'&&/Render/.test(c2.name)),
+                             color:(typeof c1.color==='number'),
+                             profile:(typeof prof.habitat==='string'&&typeof prof.behavior==='string'&&prof.dominant==='cooperate'),
+                             pos:(c1.pos&&typeof c1.pos.x==='number') };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("creature_habitat",
+                      bool(crt.get("spawned") and crt.get("explorer") and crt.get("render")
+                           and crt.get("color") and crt.get("profile") and crt.get("pos")), crt)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
