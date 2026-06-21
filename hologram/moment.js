@@ -108,10 +108,64 @@
   }
   async function signMoment(m) {
     var k = await getKey(); if (!k) return m;
+    if (W.Rappid && !m.sig_suite) m.sig_suite = W.Rappid.SIG_SUITE;   // crypto-agility (covered by the signature)
     var sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, k.priv, _body(m));
     m.sig = Array.from(new Uint8Array(sig)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
     m.pub = k.pub; return m;
   }
+
+  // OWNERSHIP TRANSFER — a Moment's rappid is a deed. The current owner signs over the rights to a recipient
+  // key (a human or an agent). Resolution walks the signed, hash-linked transfer chain from the ledger.
+  var _hx = function (buf) { return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join(""); };
+  async function signTransfer(m, toPubX, prevHash) {
+    var k = await getKey(); if (!k || !W.Ownership || !W.Rappid) return null;
+    var t = W.Ownership.newTransfer(W.Rappid.ofMoment(m.pk), k.pub.x, toPubX, prevHash, Date.now());
+    var sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, k.priv, new TextEncoder().encode(W.Ownership.transferBody(t)));
+    t.sig = _hx(sig); t.pub = k.pub; t.sig_suite = W.Rappid.SIG_SUITE; return t;
+  }
+  async function verifyTransfer(t) {
+    if (!t || !t.sig || !t.pub || t.pub.x !== t.from || W.Ownership.transferHash(t) !== t.hash) return false;
+    try {
+      var key = await crypto.subtle.importKey("jwk", t.pub, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      var sb = new Uint8Array(t.sig.match(/.{2}/g).map(function (h) { return parseInt(h, 16); }));
+      return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, sb, new TextEncoder().encode(W.Ownership.transferBody(t)));
+    } catch (e) { return false; }
+  }
+  async function resolveOwner(m) {
+    if (!W.Rappid || !W.Ownership) return { owner: null };
+    var rid = W.Rappid.ofMoment(m.pk), mint = (m.pub && m.pub.x) || m.signer || null;
+    if (!mint) return { owner: null, ownerRappid: null, transfers: 0, tip: rid };
+    var all = [];
+    try { var txt = await (await fetch("lineage/transfers.jsonl?_=" + Math.floor(perf() * 1000))).text();
+      all = txt.trim().split("\n").filter(Boolean).map(JSON.parse).filter(function (t) { return t.rappid === rid; }); } catch (e) {}
+    var ok = []; for (var i = 0; i < all.length; i++) if (await verifyTransfer(all[i])) ok.push(all[i]);
+    return W.Ownership.deedChain(rid, mint, ok);
+  }
+  async function transferMoment() {
+    var m = S.moment; if (!m || !m.pk) { toast("only a spacetime Moment can be deeded"); return; }
+    var k = await getKey(), d = await resolveOwner(m);
+    if (!k || !d.owner) { toast("this Moment isn't owned yet — plant/sign it first"); return; }
+    if (d.owner !== k.pub.x) { toast("you are not the current owner of this Moment"); return; }
+    var to = prompt("🤝 Transfer this Moment\n\nPaste the recipient's zookeeper key (their pub.x). A human or an agent — any key is an identity."); if (!to) return;
+    var t = await signTransfer(m, to.trim(), d.tip); if (!t) { toast("couldn't sign the transfer"); return; }
+    var blob = new Blob([JSON.stringify(t)], { type: "application/json" }), a = D.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = m.pk.replace(/[^\w·.-]/g, "_") + ".deed.json"; a.click();
+    toast("deed signed → " + to.slice(0, 10) + "… · publish it to the commons to record the transfer");
+  }
+  W.signTransfer = signTransfer; W.verifyTransfer = verifyTransfer; W.resolveOwner = resolveOwner; W.transferMoment = transferMoment;
+  async function openDeed() {
+    var m = S.moment; if (!m || !m.pk) { toast("not a deedable Moment"); return; }
+    $("bio").className = ""; $("biohdr").innerHTML = "Deed"; $("biosub").innerHTML = "resolving ownership…"; $("biobody").innerHTML = "";
+    var rid = W.Rappid.ofMoment(m.pk), d = await resolveOwner(m), k = await getKey(), mine = (k && d.owner === k.pub.x);
+    $("biohdr").innerHTML = "Deed · <b style='color:var(--pb)'>" + esc(rid.slice(0, 30)) + "…</b>";
+    $("biosub").innerHTML = d.owner ? ("owned by <b>" + esc((d.ownerRappid || "").replace("rappid:keeper:", "").slice(0, 18)) + "…</b>" + (mine ? ' <span style="color:var(--pa)">(you)</span>' : "") + " · " + d.transfers + " transfer" + (d.transfers === 1 ? "" : "s")) : "unowned — plant & sign it to claim it";
+    var rows = (d.history || []).map(function (h) {
+      return '<div class="bch"><span class="bi">' + (h.event === "mint" ? "✦" : "🤝") + '</span><div><div class="bk">' + (h.event === "mint" ? "minted / claimed by " + esc((h.owner || "").slice(0, 12)) + "…" : "transferred → " + esc((h.to || "").slice(0, 12)) + "…") + '</div><div class="bd">' + (h.ts ? new Date(h.ts).toISOString().slice(0, 19) + "Z" : "genesis") + (h.hash ? " · " + h.hash : "") + '</div></div></div>';
+    }).join("");
+    if (mine) rows += '<div style="padding:14px 0"><button onclick="transferMoment()" style="width:100%;background:linear-gradient(90deg,var(--pa),var(--pb));color:#05121a;border:0;border-radius:10px;padding:11px;font-weight:800;cursor:pointer">🤝 Transfer ownership</button></div>';
+    $("biobody").innerHTML = rows || '<div class="bm">no deed history</div>';
+  }
+  W.openDeed = openDeed;
   async function verifyMoment(m) {
     if (!m.sig || !m.pub) return false;
     try {
@@ -439,13 +493,13 @@
   function go(mode) {
     S.mode = mode;
     ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint", "kindred", "keeper"].forEach(hide);
-    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none"; $("navKindred").style.display = "none"; $("navBio").style.display = "none"; if ($("bio")) $("bio").className = "hide";
+    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none"; $("navKindred").style.display = "none"; $("navBio").style.display = "none"; $("navDeed").style.display = "none"; if ($("bio")) $("bio").className = "hide";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "zoo") { history.replaceState(0, 0, location.pathname + "?zoo"); show("zoo"); renderZoo(); }
     if (mode === "kindred") { show("kindred"); }
     if (mode === "keeper") { show("keeper"); }
     if (mode === "create") { show("create"); initCreate(); }
-    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navKindred").style.display = ""; $("navBio").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
+    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navKindred").style.display = ""; $("navBio").style.display = ""; $("navDeed").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
   }
   W.go = go;
 
@@ -485,7 +539,9 @@
     if (m.born != null && W.Organism) {     // a spacetime-born organism: show its exact instant + verify the binding
       var bound = W.Organism.verifyCoordinate(m), when = new Date(m.born).toISOString().replace("T", " ").replace(".000Z", " UTC").replace("Z", " UTC");
       var where = (m.loc && m.loc.place) ? " · " + esc(m.loc.place) : (m.loc ? " · " + m.loc.lat + "," + m.loc.lng : "");
-      $("ptitle").innerHTML += '<br><span class="au" style="color:' + (bound ? "var(--pb)" : "var(--pc)") + '">' + (bound ? "◷ born " : "⚠ unverified ") + when + where + " · pk " + esc(m.pk || "") + "</span>";
+      var rid = W.Rappid ? W.Rappid.ofMoment(m.pk) : "";
+      $("ptitle").innerHTML += '<br><span class="au" style="color:' + (bound ? "var(--pb)" : "var(--pc)") + '">' + (bound ? "◷ born " : "⚠ unverified ") + when + where + (rid ? " · ⧈ " + esc(rid.slice(0, 24)) + "…" : " · pk " + esc(m.pk || "")) + "</span>";
+      if (W.Ownership) resolveOwner(m).then(function (d) { if (d && d.owner) $("ptitle").innerHTML += ' <span class="au" style="color:var(--pa)">· owned by ' + esc((d.ownerRappid || "").replace("rappid:keeper:", "").slice(0, 14)) + '…' + (d.transfers ? " (" + d.transfers + "↦)" : "") + '</span>'; });
     }
   }
   W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; if (!S.playing) { initScan(); setScanHint(true); } else setScanHint(false); };

@@ -120,6 +120,16 @@ Ownership is an **ECDSA P-256 signature** produced in the browser via Web Crypto
 
 To own a moment in time, sign it.
 
+### 6.1 The Rappid Eternity binding
+A Moment's eternal address (`pk`) maps to a canonical **RAPP Eternity Standard** id: `rappid:<slug>:<64hex>`, where the 64-hex is `sha256("moment:"+pk)` (256-bit). A zookeeper key maps to `rappid:keeper:<sha256("keeper:"+pubx)>`. The id is deterministic and eternal; the **hash is the join key**. Per the eternity compatibility contract, implementations **MUST read all legacy forms forever** (a `pk`, a bare UTC ms, a `|` separator), **emit only canonical**, and **never version the string — add record fields instead**. `sig_suite` (e.g. `ecdsa-p256`) is the crypto-agility field, covered by the signature.
+
+### 6.2 Transferable deeds
+A rappid is a **transferable deed**. Ownership is the tip of a **per-rappid, hash-linked chain of transfers**: the current owner signs over the rights to a recipient key (a human *or* an agent — any key is an identity).
+
+- A **transfer** is `{rappid, from, to, prev, ts, hash, sig, pub}`. `hash = sha256` of the canonical body; `prev` links to the previous transfer's hash (or the rappid, for the first); `sig` is the **current owner's** signature, and `pub.x` **MUST** equal `from`.
+- **Resolution** (`deedChain`): start at the minter (the Moment's original signer), walk transfers by `prev`-linkage; each is applied **only if** `from` equals the then-current owner *and* its body hashes to `hash`. The tip is the current owner. Unauthorized or tampered transfers are ignored.
+- The deed ledger (`lineage/transfers.jsonl`) is **permissionless-append** (a mempool); validity is decided at resolution, not at write. To send the rights to a Moment you already own, sign a transfer to the recipient's rappid/key and record it on the chain.
+
 ---
 
 ## 7. The Drop Stream
