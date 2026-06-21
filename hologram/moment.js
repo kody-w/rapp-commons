@@ -139,7 +139,7 @@
     r.onload = function () {
       try {
         var j = JSON.parse(r.result), m = (j && j.moment) ? j.moment : j;
-        if (m && Array.isArray(m.k)) { openPlay(m); toast("imported “" + (m.t || "moment") + "”"); }
+        if (m && Array.isArray(m.k)) { addToZoo(m); openPlay(m); toast("planted “" + (m.t || "moment") + "” in your zoo"); }
         else toast("not a valid .egg");
       } catch (e) { toast("couldn't read that .egg"); }
     };
@@ -147,6 +147,26 @@
   }
   W.exportEgg = function () { exportEgg(S.moment); };
   (function () { var el = D.getElementById("eggfile"); if (el) el.addEventListener("change", function (e) { importEgg(e.target.files[0]); e.target.value = ""; }); })();
+
+  // MY ZOO — your menagerie. Every companion you plant or replant joins your local collection,
+  // keyed by your signing key (your key IS your identity as a zookeeper).
+  function loadZoo() { try { return JSON.parse(localStorage.getItem("holo:zoo") || "[]"); } catch (e) { return []; } }
+  function saveZoo(z) { try { localStorage.setItem("holo:zoo", JSON.stringify(z.slice(-300))); } catch (e) {} }
+  function zooKey(m) { return (m.t || "") + "|" + (m.sig || "").slice(0, 16); }
+  function addToZoo(m) { if (!m) return; var z = loadZoo(); z = z.filter(function (x) { return zooKey(x) !== zooKey(m); }); z.push(JSON.parse(JSON.stringify(m))); saveZoo(z); }
+  async function renderZoo() {
+    var k = await getKey(); var fp = (k && k.pub && k.pub.x) ? k.pub.x.slice(0, 16) : "—";
+    var z = loadZoo();
+    $("zookeeper").innerHTML = "zookeeper <b style='color:var(--ink)'>" + esc(fp) + "…</b> &nbsp;·&nbsp; " + z.length + " companion" + (z.length === 1 ? "" : "s") + " in your care";
+    var g = $("zoogrid");
+    if (!z.length) { g.innerHTML = '<div class="empty">Your menagerie is empty. <a onclick="go(\'create\')">🌱 Plant your first companion →</a></div>'; return; }
+    g.innerHTML = z.slice().reverse().map(function (m) {
+      return '<div class="card" data-m="' + encode(m) + '"><div class="thumb" style="' + thumbStyle(m) + '"><span class="tag">' + (m.sig ? "✓ yours" : "unsigned") + '</span><span class="play beat">♥</span></div>' +
+        '<div class="meta"><div class="ti">' + esc(m.t) + '</div><div class="au">' + esc(m.a || "@you") + " · " + (m.b || "savanna") + ' · alive</div></div></div>';
+    }).join("");
+    document.querySelectorAll("#zoogrid .card").forEach(function (c) { c.onclick = function () { openPlay(decode(c.dataset.m)); }; });
+  }
+  W.addToZoo = addToZoo;
 
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
@@ -198,9 +218,10 @@
 
   function go(mode) {
     S.mode = mode;
-    ["feed", "create", "pc", "ptitle", "share", "mint"].forEach(hide);
+    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo"].forEach(hide);
     $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
+    if (mode === "zoo") { history.replaceState(0, 0, location.pathname + "?zoo"); show("zoo"); renderZoo(); }
     if (mode === "create") { show("create"); initCreate(); }
     if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
   }
@@ -307,6 +328,7 @@
   async function openShare(m) {
     shareMoment = m || S.moment; if (!shareMoment) return;
     await signMoment(shareMoment);                          // sign with the browser key — provable authorship
+    addToZoo(shareMoment);                                  // it joins your menagerie
     var url = location.origin + location.pathname + "?m=" + encode(shareMoment);
     $("surl").value = url;
     var box = $("qrbox"); box.innerHTML = "";
@@ -367,6 +389,7 @@
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
+    if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);
   }
