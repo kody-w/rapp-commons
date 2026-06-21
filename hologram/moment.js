@@ -79,6 +79,41 @@
   function encode(m) { return btoa(unescape(encodeURIComponent(JSON.stringify(m)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
   function decode(s) { try { s = s.replace(/-/g, "+").replace(/_/g, "/"); return JSON.parse(decodeURIComponent(escape(atob(s)))); } catch (e) { return null; } }
 
+  // BROWSER SIGNING — a per-browser ECDSA P-256 key (persisted in localStorage) signs each Moment on
+  // Share, so authorship is cryptographically PROVABLE on a public repo and the market's distinct-signer
+  // counts can't be gamed (a copy can't forge your key). Sign/verify use the canonical body (all fields
+  // except sig/pub, top-level keys sorted) — exactly what market.html verifies.
+  var KEY = null;
+  function _body(m) { var b = {}; Object.keys(m).sort().forEach(function (k) { if (k !== "sig" && k !== "pub") b[k] = m[k]; }); return new TextEncoder().encode(JSON.stringify(b)); }
+  async function getKey() {
+    if (KEY) return KEY;
+    try {
+      var stored = localStorage.getItem("holo:key");
+      if (stored) { var j = JSON.parse(stored); KEY = { priv: await crypto.subtle.importKey("jwk", j.priv, { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]), pub: j.pub }; }
+      else {
+        var kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+        var priv = await crypto.subtle.exportKey("jwk", kp.privateKey), pub = await crypto.subtle.exportKey("jwk", kp.publicKey);
+        localStorage.setItem("holo:key", JSON.stringify({ priv: priv, pub: pub })); KEY = { priv: kp.privateKey, pub: pub };
+      }
+    } catch (e) { KEY = null; }
+    return KEY;
+  }
+  async function signMoment(m) {
+    var k = await getKey(); if (!k) return m;
+    var sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, k.priv, _body(m));
+    m.sig = Array.from(new Uint8Array(sig)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+    m.pub = k.pub; return m;
+  }
+  async function verifyMoment(m) {
+    if (!m.sig || !m.pub) return false;
+    try {
+      var key = await crypto.subtle.importKey("jwk", m.pub, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      var sig = Uint8Array.from(m.sig.match(/.{1,2}/g).map(function (h) { return parseInt(h, 16); }));
+      return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, sig, _body(m));
+    } catch (e) { return false; }
+  }
+  W.signMoment = signMoment; W.verifyMoment = verifyMoment;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -161,6 +196,9 @@
     go("play"); loadMoment(m); S.playing = true; $("ppBtn").textContent = "❚❚";
     $("ptitle").innerHTML = esc(m.t) + ' <span class="au">' + esc(m.a || "@anon") + "</span>";
     if (push !== false) history.replaceState(0, 0, location.pathname + "?m=" + encode(m));
+    verifyMoment(m).then(function (ok) {   // show a provable-authorship badge when the signature verifies
+      if (ok && m.pub) $("ptitle").innerHTML += ' <span class="au" style="color:var(--pa)">✓ signed ' + (m.pub.x || "").slice(0, 10) + '…</span>';
+    });
   }
   W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; };
   W.restart = function () { S.pf = 0; S.playing = true; $("ppBtn").textContent = "❚❚"; };
@@ -209,13 +247,16 @@
 
   // ---- SHARE ----
   var shareMoment = null;
-  function openShare(m) {
+  async function openShare(m) {
     shareMoment = m || S.moment; if (!shareMoment) return;
+    await signMoment(shareMoment);                          // sign with the browser key — provable authorship
     var url = location.origin + location.pathname + "?m=" + encode(shareMoment);
     $("surl").value = url;
     var box = $("qrbox"); box.innerHTML = "";
     try { new QRCode(box, { text: url, width: 168, height: 168, correctLevel: QRCode.CorrectLevel.H }); }
     catch (e) { box.textContent = "(scan via the link below)"; }
+    var fp = (shareMoment.pub && shareMoment.pub.x) ? shareMoment.pub.x.slice(0, 16) : "";
+    var h = D.querySelector("#sheet h3"); if (h) h.innerHTML = "Your Holographic Moment" + (fp ? "<span style='display:block;color:var(--pa);font-size:12px;font-weight:600;margin-top:5px'>✓ signed by your key · " + fp + "…</span>" : "");
     show("share");
   }
   W.openShare = function () { openShare(S.moment); };

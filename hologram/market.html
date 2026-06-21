@@ -64,7 +64,7 @@ function hueOf(m){ return (m.k&&m.k[0]&&m.k[0].h)||200; }
 async function verify(m){
   if (!m.sig || !m.pub) return { signed:false };
   try{
-    const body = {}; for (const k of Object.keys(m).sort()) if (k!=="sig"&&k!=="pub") body[k]=m[k];
+    const body = {}; for (const k of Object.keys(m).sort()) if (k!=="sig"&&k!=="pub"&&k[0]!=="_") body[k]=m[k];
     const key = await crypto.subtle.importKey("jwk", m.pub, {name:"ECDSA",namedCurve:"P-256"}, false, ["verify"]);
     const sig = Uint8Array.from(m.sig.match(/.{1,2}/g).map(h=>parseInt(h,16)));
     const ok = await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"}, key, sig, new TextEncoder().encode(JSON.stringify(body)));
