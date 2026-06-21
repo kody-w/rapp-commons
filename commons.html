@@ -4170,6 +4170,51 @@ function registerCreatureHabitat(){
 /* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
+/* FIDELITY: instanced procedural flora — trees, shrubs, grass blanket the terrain in 3 draw calls
+   (THREE.InstancedMesh), deterministically placed (seeded mulberry32) and kept clear of every venue
+   + spawn. Turns "boxes on a grid" into a world you walk through. buildFlora() runs once at boot. */
+let FLORA = null;
+function buildFlora(){
+  let s = 1337 >>> 0;
+  const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const groundY = (x, z) => Math.sin(x * 0.06) * Math.cos(z * 0.06) * 0.6;
+  const venues = interactables.map(it => ({ x: it.pos.x, z: it.pos.z, r: (it.radius || 6) + 4 }));
+  const pts = [];
+  for (let gx = -180; gx <= 180; gx += 7) for (let gz = -180; gz <= 180; gz += 7){
+    const x = gx + (rnd() - 0.5) * 6, z = gz + (rnd() - 0.5) * 6;
+    if (Math.hypot(x, z) < 12) continue;
+    let ok = true; for (const v of venues){ if (Math.hypot(x - v.x, z - v.z) < v.r){ ok = false; break; } }
+    if (ok) pts.push([x, z]);
+  }
+  const counts = { trees: 350, shrubs: 400, grass: 700 };
+  const geos = { trees: new THREE.ConeGeometry(1.1, 4.2, 7), shrubs: new THREE.IcosahedronGeometry(1.0, 0), grass: new THREE.ConeGeometry(0.16, 1.3, 4) };
+  const RAMP = [0x35562a, 0x2a6b4a, 0x6fae4a, 0x7a8a4a, 0x4a6a7a];
+  const group = new THREE.Group(); group.name = "flora-field";
+  const dummy = new THREE.Object3D(), col = new THREE.Color(), meshes = {};
+  let pi = 0, minClear = Infinity;
+  for (const kind of ["trees", "shrubs", "grass"]){
+    const n = counts[kind];
+    const im = new THREE.InstancedMesh(geos[kind], new THREE.MeshStandardMaterial({ color: 0x4a7a3a, roughness: 0.9, flatShading: true }), n);
+    im.name = "flora-" + kind; im.castShadow = false; im.receiveShadow = false;
+    for (let i = 0; i < n; i++){
+      const p = pts.length ? pts[pi % pts.length] : [200, 200]; pi++;
+      const x = p[0], z = p[1], y = groundY(x, z), sc = 0.7 + rnd() * 0.9;
+      dummy.position.set(x, y + (kind === "trees" ? 2.1 * sc : kind === "shrubs" ? 0.7 * sc : 0.6 * sc), z);
+      dummy.rotation.set(0, rnd() * Math.PI * 2, 0);
+      dummy.scale.setScalar(kind === "grass" ? sc * 0.85 : sc);
+      dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix);
+      col.setHex(RAMP[Math.floor(rnd() * RAMP.length)]); im.setColorAt(i, col);
+      let d = Infinity; for (const v of venues) d = Math.min(d, Math.hypot(x - v.x, z - v.z) - (v.r - 4));
+      minClear = Math.min(minClear, d);
+    }
+    im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    group.add(im); meshes[kind] = im;
+  }
+  scene.add(group);
+  FLORA = { group, trees: meshes.trees, shrubs: meshes.shrubs, grass: meshes.grass,
+    count: counts.trees + counts.shrubs + counts.grass, draws: 3, minClear: +minClear.toFixed(2), seed: 1337 };
+}
+
 let WORLDS = null;
 async function boot(){
   await mintIdentity();
@@ -4200,6 +4245,7 @@ async function boot(){
   registerNexusArea();
   registerApexArena();
   if (typeof registerCreatureHabitat === "function") registerCreatureHabitat();
+  if (typeof buildFlora === "function") buildFlora();   // FIDELITY: instanced flora blankets the terrain
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
   // directory post at spawn that points the way to each (compass-accurate).
@@ -4672,6 +4718,7 @@ boot();
     tone: () => ({ toneMapping: renderer.toneMapping, exposure: +renderer.toneMappingExposure.toFixed(3), outputEncoding: renderer.outputEncoding }),
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
+    flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

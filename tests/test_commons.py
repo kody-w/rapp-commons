@@ -603,6 +603,20 @@ async def run():
                 check("fidelity_sky",
                       bool(sky.get("exists") and sky.get("sunHighNoon") and sky.get("sunLowMidnight")
                            and sky.get("hazeDawnGtNoon") and sky.get("horizonTinted")), sky)
+
+                # FIDELITY: instanced flora field — trees/shrubs/grass blanket the terrain in <=5 draws, venue-clear.
+                flora = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const grp=scene.getObjectByName('flora-field');
+                    const trees=scene.getObjectByName('flora-trees');
+                    const f1=A.flora(), f2=A.flora();
+                    return { group:!!grp, treesInst:(trees&&trees.isInstancedMesh===true), treeCount:(trees?trees.count:0),
+                             total:(f1?f1.count:0), draws:(f1?f1.draws:99), clear:(f1?f1.minClear:-1),
+                             deterministic:(f1&&f2&&f1.count===f2.count&&f1.minClear===f2.minClear) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_flora",
+                      bool(flora.get("group") and flora.get("treesInst") and (flora.get("treeCount") or 0) >= 300
+                           and (flora.get("total") or 0) >= 1200 and (flora.get("draws") or 99) <= 5
+                           and (flora.get("clear") or -1) > 0 and flora.get("deterministic")), flora)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
