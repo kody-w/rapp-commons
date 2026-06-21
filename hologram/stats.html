@@ -30,6 +30,7 @@ h2{font-size:15px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;m
 <div class="wrap">
   <h1>Vital signs of the RAPP Zoo</h1>
   <p class="sub">A snapshot of the whole menagerie, computed from the static warehouse and committed to the repo every tick. Because each commit is a point in time, the git history of <code>stats.json</code> <i>is</i> the time-series database — the Simon Willison git-scraping pattern, applied to a living ecosystem.</p>
+  <div id="chain" style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 15px;margin:4px 0 6px;font-size:14px"></div>
   <div class="kpis" id="kpis"></div>
   <h2>Biome distribution</h2>
   <div class="bars" id="biomes"></div>
@@ -72,5 +73,7 @@ async function boot(){
     '<polyline points="'+pts+'" fill="none" stroke="#4ade80" stroke-width="2.5"/></svg>'+
     '<div class="note">'+snaps.length+' snapshots · '+ymin+' → '+ymax+' organisms · git history holds them all</div>';
 }
+(async function(){ try{ var c=await (await fetch("lineage/chain.json?_="+Date.now())).json();
+    document.getElementById("chain").innerHTML="\u26d3\ufe0f <b>The Chain</b> \u00b7 "+c.height+" blocks \u00b7 "+c.organisms+" organisms \u00b7 genesis <code>"+c.genesisBlock+"</code> \u2192 head <code>"+c.headBlock+"</code> \u00b7 "+(c.valid?'<span style="color:var(--pa)">valid \u2713 (every birth-proof holds across all history)</span>':'<span style="color:var(--pc)">'+c.anomalies.length+' anomalies</span>'); }catch(e){ var el=document.getElementById("chain"); if(el) el.style.display="none"; } })();
 boot();
 </script></body></html>
