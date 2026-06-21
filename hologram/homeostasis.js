@@ -41,7 +41,7 @@
     return s[s.length - 1];
   }
 
-  function norm(f) { var o = { at: f.at }; FIELDS.forEach(function (x) { if (f[x] != null) o[x] = f[x]; }); return o; }
+  function norm(f) { var o = { at: f.at }; FIELDS.forEach(function (x) { if (f[x] != null) o[x] = f[x]; }); if (f.u != null) o.u = f.u; return o; }   // preserve a frame's UTC arrival stamp
 
   // reconcile an incoming frame. Returns {accepted, survives, kind, organism}.
   //  kind: "refined" (new fractal detail), "redundant" (nothing changed), "resisted" (downstream contradiction).

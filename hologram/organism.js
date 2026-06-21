@@ -50,11 +50,14 @@
     return p(C) + p(V) + p(C) + p(V) + p(C) + "-" + p(S) + p(S) + p(S);
   }
 
-  // regenerate from a record and confirm the organism truly is the one its coordinate mints (verify ownership of a moment)
+  // regenerate from a record and confirm the organism truly is the one its coordinate mints. The genesis
+  // frames (no `u` stamp) must match the mint exactly; fidelity frames grown in over time (UTC-stamped `u`)
+  // are additive detail and are excluded — so an organism can grow forever without breaking its birth proof.
   function verifyCoordinate(org) {
     if (!org || org.born == null) return false;
     var re = organismFromStamp(org.born, org.loc);
-    return re.pk === org.pk && JSON.stringify(re.k) === JSON.stringify(org.k) && re.b === org.b;
+    var genesis = (org.k || []).filter(function (f) { return f.u == null; });
+    return re.pk === org.pk && re.b === org.b && JSON.stringify(genesis) === JSON.stringify(re.k);
   }
 
   var api = { organismFromStamp: organismFromStamp, pkFor: pkFor, geohash: geohash, nameFromPk: nameFromPk, verifyCoordinate: verifyCoordinate, BIOMES: BIOMES };
