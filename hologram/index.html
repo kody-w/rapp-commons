@@ -42,6 +42,11 @@ button.ghost{background:transparent}
 #zoogrid .vit{height:5px;background:#1a2230;border-radius:4px;margin:9px 0 5px;overflow:hidden}
 #zoogrid .vit i{display:block;height:100%;border-radius:4px;transition:width .3s}
 #zoogrid .hs{font-size:11px;font-weight:700;letter-spacing:.3px}
+#kindred{position:fixed;top:58px;left:0;right:0;bottom:0;overflow-y:auto;z-index:6;padding:8px 18px 80px}
+#zoogrid2{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+#zoogrid2 a.card{text-decoration:none;color:inherit;display:block}
+#zoogrid2 .vit{height:5px;background:#1a2230;border-radius:4px;margin:9px 0 3px;overflow:hidden}
+#zoogrid2 .vit i{display:block;height:100%;border-radius:4px}
 /* create panel */
 #create{position:fixed;top:58px;left:0;bottom:0;width:330px;z-index:8;background:rgba(10,14,21,.96);border-right:1px solid #1c2433;overflow-y:auto;padding:16px}
 #create h3{margin:4px 0 12px;font-size:16px}
@@ -92,6 +97,7 @@ button.ghost{background:transparent}
   <button class="ghost" id="navRemix" onclick="remix()" style="display:none">⎘ Remix</button>
   <button id="navShare" onclick="openShare()" style="display:none">↗ Share</button>
   <button class="ghost" id="navPip" onclick="pipHologram()" style="display:none" title="float it & keep working">⧉ PiP</button>
+  <button class="ghost" id="navKindred" onclick="openKindred()" style="display:none" title="organisms most like this one">≈ Kindred</button>
   <button class="ghost" id="navEgg" onclick="exportEgg()" style="display:none" title="save your companion's seed">⬇ Seed</button>
   <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ HoloPress</button>
   <button class="ghost" onclick="document.getElementById('eggfile').click()" title="import a companion seed (.egg)">⬆ Plant seed</button>
@@ -118,6 +124,14 @@ button.ghost{background:transparent}
     <p class="zk" id="zookeeper"></p>
   </div>
   <div id="zoogrid"></div>
+</div>
+
+<div id="kindred" class="hide">
+  <div id="zoohdr">
+    <h1>Kindred to <b style="color:var(--pb)" id="kinof"></b></h1>
+    <p class="zk" id="kinsub"></p>
+  </div>
+  <div id="zoogrid2"></div>
 </div>
 
 <div id="create" class="hide">
@@ -174,5 +188,6 @@ button.ghost{background:transparent}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="homeostasis.js"></script>
+<script src="fingerprint.js"></script>
 <script src="moment.js"></script>
 </body></html>

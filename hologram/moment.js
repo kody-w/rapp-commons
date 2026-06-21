@@ -205,6 +205,26 @@
   }
   W.addToZoo = addToZoo; W.reconcileIntoZoo = reconcileIntoZoo;
 
+  // KINDRED — "organisms more similar to mine than others." Loads the static warehouse and ranks it
+  // entirely in the browser by fingerprint distance (Simon Willison free-data-warehouse pattern).
+  async function openKindred(m) {
+    m = m || S.moment; if (!m) return;
+    go("kindred");
+    $("kinof").textContent = m.t || "your companion";
+    $("kinsub").textContent = "scoring the warehouse…";
+    var wh; try { wh = await (await fetch("warehouse.json?_=" + Math.floor(perf() * 1000))).json(); }
+    catch (e) { $("kinsub").textContent = "warehouse unavailable — build it with build_warehouse.js"; return; }
+    var pool = (wh.organisms || []).filter(function (o) { return !(o.t === m.t && (o.a || "") === (m.a || "")); });
+    var ranked = W.Fingerprint.rank(m, pool).slice(0, 24);
+    $("kinsub").innerHTML = "scored " + (wh.organisms || []).length + " organisms · most similar first · " + (wh.dims || 0) + "-D fingerprint, ranked in your browser";
+    $("zoogrid2").innerHTML = ranked.map(function (o) {
+      var pct = Math.round(o.score * 100), mm = decode(o.token);
+      return '<a class="card" href="./?m=' + o.token + '"><div class="thumb" style="' + thumbStyle(mm) + '"><span class="tag">' + pct + '% alike</span><span class="play beat">♥</span></div>' +
+        '<div class="meta"><div class="ti">' + esc(o.t) + '</div><div class="au">' + esc(o.a) + ' · ' + (o.b || "savanna") + (o.drop ? ' · drop' : '') + '</div><div class="vit"><i style="width:' + pct + '%;background:var(--pb)"></i></div></div></a>';
+    }).join("") || '<div style="grid-column:1/-1;color:var(--mut);padding:30px;text-align:center">No other organisms in the warehouse yet.</div>';
+  }
+  W.openKindred = openKindred;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -292,12 +312,13 @@
 
   function go(mode) {
     S.mode = mode;
-    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint"].forEach(hide);
-    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none";
+    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint", "kindred"].forEach(hide);
+    $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none"; $("navKindred").style.display = "none";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "zoo") { history.replaceState(0, 0, location.pathname + "?zoo"); show("zoo"); renderZoo(); }
+    if (mode === "kindred") { show("kindred"); }
     if (mode === "create") { show("create"); initCreate(); }
-    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
+    if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navKindred").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
   }
   W.go = go;
 
