@@ -60,6 +60,7 @@ button.ghost{background:transparent}
 #mint{position:fixed;inset:0;z-index:14;background:#06080d;overflow-y:auto}
 #mintbar{position:sticky;top:0;display:flex;align-items:center;gap:12px;padding:14px 20px;background:#06080df2;border-bottom:1px solid #1c2433;z-index:2}
 #mintbar .t{font-weight:800}#mintbar .s{color:#8b95a5;font-size:13px}
+.hpbrand{font-weight:900;letter-spacing:.5px}.hpbrand b{background:linear-gradient(90deg,#fbbf24,#fb7185);-webkit-background-clip:text;background-clip:text;color:transparent}
 #mintgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px;padding:18px;max-width:1120px;margin:0 auto}
 .edcard{background:#10141d;border:1px solid #1c2433;border-radius:14px;padding:11px;text-align:center;cursor:pointer;transition:border-color .1s}
 .edcard:hover{border-color:#4ade80}
@@ -75,7 +76,7 @@ button.ghost{background:transparent}
   <div id="logo" onclick="go('feed')">◳ <b>Holographic Moments</b></div><div class="sp"></div>
   <button class="ghost" id="navRemix" onclick="remix()" style="display:none">⎘ Remix</button>
   <button id="navShare" onclick="openShare()" style="display:none">↗ Share</button>
-  <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ Editions</button>
+  <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ HoloPress</button>
   <button class="ghost" onclick="location.href='market.html'">▦ Market</button>
   <button class="cta" onclick="go('create')">+ Create</button>
 </div>
@@ -118,9 +119,10 @@ button.ghost{background:transparent}
 <div id="mint" class="hide">
   <div id="mintbar">
     <button class="ghost" onclick="go('play')">← back</button>
+    <div class="hpbrand">◳ <b>HoloPress</b></div>
     <div><div class="t" id="mintTitle">Limited edition</div><div class="s" id="mintSub"></div></div>
     <div class="sp"></div>
-    <button onclick="copyMintSheet()">Copy sheet link</button>
+    <button onclick="copyMintSheet()">Copy press run</button>
   </div>
   <div id="mintgrid"></div>
 </div>

@@ -277,10 +277,10 @@
     if (!S.moment) return; n = n || 50;
     S.editionBase = S.moment;
     $("mintTitle").textContent = (S.moment.t || "Moment");
-    $("mintSub").textContent = "minting " + n + " signed editions…";
+    $("mintSub").textContent = "running the press · " + n + " editions…";
     show("mint"); S.mode = "mint";
     var eds = await mintEditions(S.moment, n); S.editions = eds;
-    $("mintSub").textContent = n + " signed editions · each a 1-of-1 QR" + (eds[0] && eds[0].pub ? " · key " + eds[0].pub.x.slice(0, 12) + "…" : "");
+    $("mintSub").textContent = "press run of " + n + " · each a signed 1-of-1" + (eds[0] && eds[0].pub ? " · printed by key " + eds[0].pub.x.slice(0, 12) + "…" : "");
     var grid = $("mintgrid"); grid.innerHTML = "";
     eds.forEach(function (ed) {
       var url = location.origin + location.pathname + "?m=" + encode(ed);
