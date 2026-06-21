@@ -365,6 +365,67 @@ async def run():
                          and dj.get("improved") is True and len(set(r.get("leader") for r in rounds)) >= 2)
                 check("matrix_double_jump", bool(dj_ok),
                       {"trailing": dj.get("trailing"), "best": dj.get("best"), "leaders": [r.get("leader") for r in rounds]})
+
+                # EVO round 1 — MEMENTO: re-derive the world at a past 4D coordinate from the signed
+                # stream (verify-gated; far-out unique coords so resident ops never collide).
+                mem = await ev("""async ()=>{try{
+                    await window.commonsAgent.voxelPlace(99,5,99,'red');
+                    await window.commonsAgent.voxelPlace(98,5,98,'blue');
+                    const me=window.commonsAgent.me().rappid;
+                    const mine=window.commonsAgent.timeline().filter(r=>r.schema==='rapp-world-op/1.0'&&String(r.from)===String(me));
+                    const iRed=mine[mine.length-2].i, iBlue=mine[mine.length-1].i;
+                    const r1=await window.commonsAgent.rewind({index:iRed});
+                    const r2=await window.commonsAgent.rewind({index:iBlue});
+                    const r2b=await window.commonsAgent.rewind({index:iBlue});
+                    const has=(a,x,z)=>a.some(v=>v.x===x&&v.z===z);
+                    return {r1_red:has(r1.voxels,99,99), r1_blue:has(r1.voxels,98,98),
+                            r2_red:has(r2.voxels,99,99), r2_blue:has(r2.voxels,98,98),
+                            deterministic:JSON.stringify(r2.voxels)===JSON.stringify(r2b.voxels)};
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_memento",
+                      bool(mem.get("r1_red") and not mem.get("r1_blue") and mem.get("r2_red")
+                           and mem.get("r2_blue") and mem.get("deterministic")), mem)
+
+                # MEMENTO verify-gate: tamper a record's signature -> rewind DROPS it (can't forge history). Self-restoring.
+                tam = await ev("""async ()=>{try{
+                    const K='rapp-commons:persist:log/1';
+                    const log=JSON.parse(localStorage.getItem(K)||'[]');
+                    let idx=-1; for(let i=log.length-1;i>=0;i--){const r=log[i];if(r.schema==='rapp-world-op/1.0'&&r.x===98&&r.z===98){idx=i;break;}}
+                    if(idx<0) return {found:false};
+                    const orig=log[idx].sig; log[idx].sig=(orig[0]==='a'?'b':'a')+orig.slice(1);
+                    localStorage.setItem(K,JSON.stringify(log));
+                    const r=await window.commonsAgent.rewind({index:log.length-1});
+                    const has=(a,x,z)=>a.some(v=>v.x===x&&v.z===z);
+                    const res={found:true, dropped:r.dropped, blue_absent:!has(r.voxels,98,98)};
+                    log[idx].sig=orig; localStorage.setItem(K,JSON.stringify(log));
+                    return res;
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_memento_verify", bool(tam.get("found") and (tam.get("dropped") or 0) >= 1 and tam.get("blue_absent")), tam)
+
+                # TIME CAPSULE: a sealed signed prophecy in its own dimension, adjudicated by the merge.
+                cap = await ev("""async ()=>{try{
+                    await window.commonsAgent.voxelPlace(97,5,97,'blue');
+                    const t=window.commonsAgent.freeze();
+                    const sealed=await window.commonsAgent.sealCapsule({key:'vox:97,5,97',val:'blue'},{frame:t.frame});
+                    const t2=window.commonsAgent.freeze();
+                    const seal2=await window.commonsAgent.sealCapsule({key:'vox:97,5,97',val:'red'},{frame:t2.frame});
+                    window.commonsAgent.freeze();
+                    const r=await window.commonsAgent.openCapsules();
+                    const f=r.find(c=>c.id===sealed.id), b=r.find(c=>c.id===seal2.id);
+                    return {f_status:f&&f.status, f_reason:(f&&f.verdict&&f.verdict.reason)||'', f_dim:(f&&f.dimension)||0,
+                            b_status:b&&b.status, b_reason:(b&&b.verdict&&b.verdict.reason)||''};
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_capsule",
+                      bool(cap.get("f_status") == "fulfilled" and "matches" in str(cap.get("f_reason"))
+                           and (cap.get("f_dim") or 0) > 0 and cap.get("b_status") == "broken"
+                           and "glitch" in str(cap.get("b_reason"))), cap)
+
+                # GENESIS CRUCIBLE: two builder loops; the laggard adopts the leader (double jump on signed voxels).
+                cru = await ev("()=>window.commonsAgent.crucible(4)", None) or {}
+                check("evo_crucible",
+                      bool((cru.get("A") or 0) > 0 and (cru.get("B") or 0) > 0 and cru.get("converged") is True
+                           and (cru.get("last_gap", 9)) < (cru.get("first_gap", 0)) and len(cru.get("history") or []) >= 4),
+                      {"A": cru.get("A"), "B": cru.get("B"), "first_gap": cru.get("first_gap"), "last_gap": cru.get("last_gap")})
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")

@@ -3690,6 +3690,118 @@ function mxDoubleJump(n){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9f. MATRIX EVOLUTION (round 1) — three signed, dream-catcher-judged powers that
+   prove the world is real: MEMENTO (re-derive the world at any past 4D coordinate
+   from the signed stream, verify-gated — you cannot forge history), TIME CAPSULE
+   (a sealed signed prophecy in its own forked dimension, adjudicated true/false by
+   the merge), and GENESIS CRUCIBLE (two rival builder loops; the laggard adopts the
+   leader's blueprint — the double jump on REAL signed voxels). All additive,
+   read-mostly, reusing persistRead/Verify/Append + signEvent + voxelAppendOp + mxMerge.
+   ───────────────────────────────────────────────────────────────────────── */
+const _utc = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
+
+// MEMENTO — re-derive the world AS OF a 4D coordinate from the signed stream.
+function mxTimeline(){
+  return persistRead().map((r, i) => ({ i, schema: r.schema, from: r.from, ts: r.ts, frame: (r.frame != null ? r.frame : null) }));
+}
+async function mxRewind(token){
+  token = token || {};
+  const cutI = (token.index != null) ? token.index : null;
+  const cutUtc = token.utc ? String(token.utc) : null;
+  const cutFrame = (token.frame != null) ? token.frame : null;
+  const log = persistRead();
+  const vox = new Map(); let words = 0, bounties = 0, bonds = 0, poker = 0, dropped = 0;
+  for (let i = 0; i < log.length; i++){
+    const rec = log[i];
+    if (cutI != null && i > cutI) continue;
+    if (cutUtc && String(rec.ts) > cutUtc) continue;
+    if (cutFrame != null && rec.frame != null && rec.frame > cutFrame) continue;
+    if (!(await persistVerify(rec))){ dropped++; continue; }   // verify-gated: forged history is DROPPED
+    const s = rec.schema || "";
+    if (s === "rapp-world-op/1.0"){
+      const k = (rec.x | 0) + "," + (rec.y | 0) + "," + (rec.z | 0);
+      if (rec.op === "place") vox.set(k, { x: rec.x | 0, y: rec.y | 0, z: rec.z | 0, block: rec.block || "stone" });
+      else if (rec.op === "mine") vox.delete(k);
+    } else if (s === "rapp-wwf-move/1.0") words++;
+    else if (s === "rapp-commons-bounty/1.0") bounties++;
+    else if (s === "rapp-commons-relationship/1.0") bonds++;
+    else if (s === "rapp-poker-action/1.0") poker++;
+  }
+  return { at: { frame: cutFrame, utc: cutUtc, index: cutI }, voxels: [...vox.values()], words, bounties, bonds, poker, dropped };
+}
+async function mxRewindCommit(){
+  const body = { schema: "rapp-commons-rewind/1.0", from: ME.rappid, ts: _utc(), frame: MX_FRAME, dimension: MX_DIM };
+  body.sig = await signEvent(body); body.pub = ME.pubJwk; persistAppend(body); return body;
+}
+
+// TIME CAPSULE — a sealed signed prophecy, forked into its own dimension, judged by the merge.
+const CAPSULES = [];
+async function mxSealCapsule(claim, unlock){
+  const body = { schema: "rapp-commons-capsule/1.0", from: ME.rappid, ts: _utc(),
+    claim: { key: String(claim && claim.key), val: (claim ? claim.val : null) },
+    unlock: { frame: (unlock && unlock.frame != null) ? unlock.frame : null, utc: (unlock && unlock.utc) || null } };
+  body.sig = await signEvent(body); body.pub = ME.pubJwk; persistAppend(body);
+  mxFork(mxFreeze());                                  // the prophecy lives in its own forked dimension
+  const cap = { id: body.sig.slice(0, 12), from: body.from, claim: body.claim, unlock: body.unlock, dimension: MX_DIM, _verdict: false };
+  CAPSULES.push(cap);
+  return { id: cap.id, from: cap.from, dimension: cap.dimension, unlock: cap.unlock, sig: body.sig };
+}
+function mxCapsuleBase(){
+  const base = {}; const vs = (typeof voxelState === "function") ? voxelState() : { blocks: [] };
+  for (const b of (vs.blocks || [])) base["vox:" + b.x + "," + b.y + "," + b.z] = b.block;
+  return base;
+}
+function mxUnlocked(cap){
+  const u = cap.unlock || {};
+  if (u.frame != null) return MX_FRAME > u.frame;
+  if (u.utc) return _utc() > String(u.utc);
+  return true;
+}
+async function mxOpenCapsules(){
+  const base = mxCapsuleBase(); const out = [];
+  for (const cap of CAPSULES){
+    if (!mxUnlocked(cap)){ out.push({ id: cap.id, claim: cap.claim, unlock: cap.unlock, status: "sealed", dimension: cap.dimension }); continue; }
+    const m = mxMerge(base, [{ key: cap.claim.key, val: cap.claim.val }]);
+    const kept = m.kept.length > 0, verdict = kept ? m.kept[0] : m.rejected[0];
+    const status = kept ? "fulfilled" : "broken";
+    if (!cap._verdict){                                // sign the verdict permanently (once)
+      const vb = { schema: "rapp-commons-capsule-verdict/1.0", from: ME.rappid, ts: _utc(), capsule: cap.id, status, reason: verdict.reason };
+      vb.sig = await signEvent(vb); vb.pub = ME.pubJwk; persistAppend(vb); cap._verdict = true;
+    }
+    out.push({ id: cap.id, claim: cap.claim, unlock: cap.unlock, status, verdict: { reason: verdict.reason }, dimension: cap.dimension });
+  }
+  return out;
+}
+
+// GENESIS CRUCIBLE — two rival builder loops grow signed voxel towers; the laggard
+// adopts the leader's blueprint (the double jump on real signed artifacts).
+const CRUCIBLE = { history: [], A: null, B: null };
+function crucibleState(){
+  const A = CRUCIBLE.A, B = CRUCIBLE.B, h = CRUCIBLE.history;
+  return { history: h, A: A ? A.cells : 0, B: B ? B.cells : 0,
+    winner: (A && B) ? (A.cells >= B.cells ? "A" : "B") : null,
+    converged: (A && B) ? Math.abs(A.cells - B.cells) <= 1 : false,
+    first_gap: h.length ? h[0].gap_before : 0,                  // the gap BEFORE the laggard adopted
+    last_gap: (A && B) ? Math.abs(A.cells - B.cells) : 0 };     // the gap after all rounds
+}
+async function mxCrucible(rounds){
+  rounds = rounds || 4;
+  const A = { tag: "A", cells: 0, base: { x: 90, z: 90 } }, B = { tag: "B", cells: 0, base: { x: 95, z: 95 } };
+  async function lay(loop, n){ for (let i = 0; i < n; i++){ await voxelAppendOp("place", loop.base.x + loop.cells, 0, loop.base.z, "crucible-" + loop.tag); loop.cells++; } }
+  await lay(A, 3); await lay(B, 1);                    // A leads; B is the laggard
+  CRUCIBLE.history = [];
+  for (let r = 0; r < rounds; r++){
+    const gapBefore = Math.abs(A.cells - B.cells);
+    const leader = (A.cells >= B.cells) ? A : B, lag = (A.cells >= B.cells) ? B : A;
+    const need = leader.cells - lag.cells;             // the laggard adopts the leader's blueprint (matches it)
+    if (need > 0) await lay(lag, need);
+    CRUCIBLE.history.push({ round: r, leader: leader.tag, gap_before: gapBefore, A: A.cells, B: B.cells });
+  }
+  CRUCIBLE.A = A; CRUCIBLE.B = B;
+  return crucibleState();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -4154,6 +4266,16 @@ boot();
     fork:       (t) => (typeof mxFork === "function" ? mxFork(t) : null),
     merge:      (base, cands) => (typeof mxMerge === "function" ? mxMerge(base, cands) : null),
     doubleJump: (n) => (typeof mxDoubleJump === "function" ? mxDoubleJump(n) : null),
+    // MATRIX EVOLUTION (round 1): MEMENTO (re-derive the world at any past 4D coord from the
+    // signed stream, verify-gated), TIME CAPSULE (sealed signed prophecy, merge-adjudicated),
+    // GENESIS CRUCIBLE (two builder loops; the laggard adopts the leader — double jump on voxels).
+    timeline:     () => (typeof mxTimeline === "function" ? mxTimeline() : []),
+    rewind:       (t) => (typeof mxRewind === "function" ? mxRewind(t) : null),
+    rewindCommit: () => (typeof mxRewindCommit === "function" ? mxRewindCommit() : null),
+    sealCapsule:  (claim, unlock) => (typeof mxSealCapsule === "function" ? mxSealCapsule(claim, unlock) : null),
+    openCapsules: () => (typeof mxOpenCapsules === "function" ? mxOpenCapsules() : []),
+    crucible:     (r) => (typeof mxCrucible === "function" ? mxCrucible(r) : null),
+    crucibleState:() => (typeof crucibleState === "function" ? crucibleState() : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)
