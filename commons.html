@@ -4918,6 +4918,8 @@ boot();
       coverage: +CloudDome.material.uniforms.uCoverage.value.toFixed(3), scrollT: +CloudDome.material.uniforms.uTime.value.toFixed(3) }),
     celestial: () => ({ sun: { y: +SunDisc.position.y.toFixed(1), visible: SunDisc.visible },
       moon: { y: +MoonDisc.position.y.toFixed(1), opacity: +MoonDisc.material.uniforms.uOpacity.value.toFixed(3) } }),
+    genesis: () => ({ dimension: "RAPP Commons", pk: "sky·1778521758000", born: 1778521758000, rappid: "rappid:dimension:0c0ba7d21766be26e61700893fd94",
+      declaration: "one dimension that made contact with time at its genesis commit; others can join", join: "open", spec: "/MOMENT_SPEC.md" }),
     shadows: () => ({ enabled: renderer.shadowMap.enabled === true, type: (renderer.shadowMap.type === THREE.PCFSoftShadowMap ? "PCFSoft" : "other"),
       mapSize: sun.shadow.mapSize.x, frustum: (sun.shadow.camera.right - sun.shadow.camera.left), bias: sun.shadow.bias, normalBias: sun.shadow.normalBias, radius: sun.shadow.radius, castShadow: sun.castShadow === true, followsPlayer: true }),
     bloom: () => { if (!BloomHalos) return { present: false }; var ch = BloomHalos.children, tex = ch[0] && ch[0].material.map, add = true, share = true, dw = true, maxOp = 0;

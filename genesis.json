@@ -1,0 +1,15 @@
+{
+  "dimension": "RAPP Commons",
+  "kind": "rappid:dimension",
+  "rappid": "rappid:dimension:0c0ba7d21766be26e61700893fd94",
+  "pk": "sky·1778521758000",
+  "born_ms": 1778521758000,
+  "born_iso": "2026-05-11T17:49:18Z",
+  "witness": "the genesis commit of kody-w/rapp-commons — the un-backdateable wall-clock that proves this dimension made contact with time",
+  "declaration": "The RAPP Commons is one dimension: an organism that made contact with this exact moment in time. It is the genesis dimension of the Moment universe — the first to exist on the chain. Others can join. Every Moment is itself a dimension born of its own instant; any dimension may anchor to this one to continue the world. The dimension grows as long as commits extend the chain, and it can never die while a single clone survives.",
+  "join": "open",
+  "anchors": "rappid:moment:*",
+  "world": "https://kody-w.github.io/rapp-commons/commons.html",
+  "spec": "https://kody-w.github.io/rapp-commons/MOMENT_SPEC.md",
+  "chain": { "repo": "kody-w/rapp-commons", "kind": "git-blockchain", "genesisBlock": "validate via hologram/lineage/chain.json" }
+}

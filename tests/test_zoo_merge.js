@@ -39,5 +39,18 @@ const Bs = Object.assign({}, base, { k: base.k.map((f, i) => i === 0 ? Object.as
 const msp = Merge.mergeOrganism(base, A, Bs);
 ok("cross-species is REJECTED (genesis mismatch)", msp.viable === false && /cross-species/.test(msp.reason), msp.reason);
 
+// --- OVERLAY: lay N dimensions of the same moment over each other (dream-catcher composite) ---
+(function () {
+  const bent2 = (at, u, ds) => Object.assign({}, H.valueAt(base.k, at), { at: at, u: u, s: Math.max(0.05, Math.min(0.95, (H.valueAt(base.k, at).s || 0.4) + ds)) });
+  const D0 = Object.assign({}, base, { k: base.k.concat([bent2(20, 1, 0.06)]).sort((x, y) => x.at - y.at), _gen: base.k.length + 1, _stress: 0 });
+  const D1 = Object.assign({}, base, { k: base.k.concat([bent2(50, 2, 0.07)]).sort((x, y) => x.at - y.at), _gen: base.k.length + 1, _stress: 0 });
+  const D2 = Object.assign({}, base, { k: base.k.concat([bent2(80, 3, 0.06)]).sort((x, y) => x.at - y.at), _gen: base.k.length + 1, _stress: 0 });
+  const ov = Merge.overlay([D0, D1, D2]);
+  ok2("overlay of 3 dimensions is viable", ov.viable === true, ov.reason);
+  ok2("overlay composites all consistent layers (union of grown frames)", ov.composite.k.filter(f => f.u != null).length === 3, ov.frames);
+  ok2("overlay records a layer per dimension", ov.layers.length === 3 && ov.layers[1].inherited === 1);
+  ok2("a different moment cannot overlay (genesis mismatch)", Merge.overlay([D0, Object.assign({}, D1, { k: D1.k.map((f, i) => i === 0 ? Object.assign({}, f, { h: (f.h + 90) % 360 }) : f) })]).viable === false);
+  function ok2(n, c, e) { if (c) pass++; else { fail++; console.log("FAIL:", n, e || ""); } }
+})();
 console.log(`\nzoo_merge: ${pass}/${pass + fail} passed` + (fail ? "  *** RED ***" : "  ALL GREEN"));
 process.exit(fail ? 1 : 0);

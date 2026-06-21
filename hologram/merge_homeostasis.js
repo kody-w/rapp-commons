@@ -42,7 +42,30 @@ function mergeDrops(oData, aData, bData) {
   return { drops: out, perPk: perPk, aborted: aborted };
 }
 
-module.exports = { mergeOrganism: mergeOrganism, mergeDrops: mergeDrops };
+// OVERLAY — lay N dimensions of the SAME moment over each other and merge them coherently with the
+// DREAM CATCHER. All dimensions must share the genesis genome (they are the same moment, the same pk);
+// their grown frames are woven together one layer at a time via weaveFrame — consistent overlays are
+// inherited, contradictions are resisted, and the result is ONE coherent composite. This is how many
+// contributors / many forks of a single moment compose into a richer whole.
+function overlay(dimensions) {
+  dimensions = (dimensions || []).filter(function (d) { return d && Array.isArray(d.k); });
+  if (!dimensions.length) return { viable: false, reason: "no dimensions", composite: null };
+  const g0 = G.canonGenesis(dimensions[0].k);
+  for (let i = 1; i < dimensions.length; i++) if (G.canonGenesis(dimensions[i].k) !== g0) return { viable: false, reason: "dimension " + i + " is a different moment (genesis mismatch)", composite: null };
+  let merged = Object.assign({}, dimensions[0], { k: dimensions[0].k.slice(), _gen: dimensions[0]._gen != null ? dimensions[0]._gen : dimensions[0].k.length, _stress: dimensions[0]._stress || 0 });
+  const have = {}; merged.k.forEach(function (f) { if (f.u != null) have[f.at + "|" + f.u] = 1; });
+  const layers = [{ dimension: 0, inherited: merged.k.filter(function (f) { return f.u != null; }).length, rejected: 0 }];
+  for (let d = 1; d < dimensions.length; d++) {
+    let inh = 0, rej = 0;
+    dimensions[d].k.filter(function (f) { return f.u != null && !have[f.at + "|" + f.u]; }).sort(function (a, b) { return a.at - b.at; })
+      .forEach(function (f) { const w = Fid.weaveFrame(merged, f); merged = w.organism; if (w.woven) { have[f.at + "|" + f.u] = 1; inh++; } else rej++; });
+    layers.push({ dimension: d, inherited: inh, rejected: rej });
+  }
+  const hs = H.homeostasis({ k: merged.k, gen: merged._gen, stress: merged._stress });
+  return { viable: hs.alive, composite: merged, dimensions: dimensions.length, frames: merged.k.length, stress: hs.stress, alive: hs.alive, layers: layers };
+}
+
+module.exports = { mergeOrganism: mergeOrganism, mergeDrops: mergeDrops, overlay: overlay };
 
 // GIT DRIVER ENTRY: argv = %O %A %B %P  (ancestor, ours-and-output, theirs, path). Exit nonzero => conflict.
 if (require.main === module) {

@@ -1,0 +1,51 @@
+<!-- (c) 2026 Kody Wildfeuer - PolyForm Noncommercial 1.0.0, see /LICENSE - part of The RAPP Zoo -->
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Resolve — a Moment gateway</title>
+<style>
+:root{--bg:#06080d;--ink:#e8edf4;--mut:#8b95a5;--card:#10141d;--line:#1c2433;--pa:#4ade80;--pb:#38bdf8}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Helvetica Neue,Arial,sans-serif}
+#bar{position:sticky;top:0;display:flex;align-items:center;gap:12px;padding:14px 22px;background:#06080df2;border-bottom:1px solid var(--line)}
+#bar b{background:linear-gradient(90deg,var(--pa),var(--pb));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sp{flex:1}.btn{border:1px solid #2a3650;background:#182030;border-radius:10px;padding:8px 13px;font-weight:700;font-size:13px;color:var(--ink);text-decoration:none}
+.btn.cta{background:linear-gradient(90deg,var(--pa),var(--pb));color:#05121a;border:0}
+.wrap{max-width:880px;margin:0 auto;padding:20px 22px 80px}
+h1{font-size:30px;margin:10px 0 2px}.sub{color:var(--mut);margin:0 0 18px}
+.row{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #141b27;font-size:14px;flex-wrap:wrap}
+.row .k{width:120px;color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+.row .v{flex:1;font-family:ui-monospace,monospace;word-break:break-all}
+.tags{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.tag{background:#16202f;border:1px solid #2a3650;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:700}
+pre{background:#0b0f18;border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;font-size:12px;max-height:50vh}
+.note{color:var(--mut);font-size:12px;margin-top:10px}
+</style></head>
+<body>
+<div id="bar"><b>↗ Resolve</b><span class="btn" style="padding:3px 9px;font-size:11px">a Moment gateway</span><div class="sp"></div><a class="btn" href="./">Feed</a></div>
+<div class="wrap" id="wrap"><h1>Resolving…</h1></div>
+<script src="organism.js"></script><script src="rappid.js"></script><script src="resolve.js"></script>
+<script>
+function decode(t){ try{ return JSON.parse(decodeURIComponent(escape(atob(t.replace(/-/g,"+").replace(/_/g,"/"))))); }catch(e){ return null; } }
+function esc(s){ return (s==null?"":""+s).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+function row(k,v){ return '<div class="row"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+(function(){
+  var q=new URLSearchParams(location.search), m=null, token=q.get("m");
+  if(token) m=decode(token);
+  else if(q.get("id")){ var id=q.get("id").trim();
+    if(/·\d+$/.test(id)||/^\d{10,}$/.test(id)){ m=window.Organism.fromPk(id.replace(/^(\d+)$/,"sky·$1")); token=null; } }
+  if(!m||!m.pk){ document.getElementById("wrap").innerHTML='<h1>Not resolvable</h1><p class="sub">Pass <code>?m=&lt;token&gt;</code> or <code>?id=&lt;pk&gt;</code> (e.g. <code>?id=sky·1778521758000</code>).</p>'; return; }
+  var doc=window.Resolve.document(m,{ token: token });
+  // crawler meta (social + marketplace)
+  window.Resolve.metaTags(doc).forEach(function(t){ var meta=document.createElement("meta"); meta.setAttribute(/^og:|^moment:/.test(t[0])?"property":"name", t[0]); meta.setAttribute("content", t[1]); document.head.appendChild(meta); });
+  if(q.get("format")==="json"){ document.getElementById("wrap").innerHTML='<h1>'+esc(doc.name)+'</h1><p class="sub">machine resolution document (ERC-721 / OpenSea compatible + RAPP Eternity)</p><pre>'+esc(JSON.stringify(doc,null,2))+'</pre>'; return; }
+  document.getElementById("wrap").innerHTML =
+    '<h1>'+esc(doc.name)+'</h1><p class="sub">'+esc(doc.description.split(" http")[0])+'</p>'+
+    '<div class="tags">'+doc.attributes.map(function(a){ return '<span class="tag">'+esc(a.trait_type)+': '+esc(a.value)+'</span>'; }).join("")+'</div>'+
+    '<p style="margin:14px 0"><a class="btn cta" href="'+doc.animation_url+'">▶ Walk the live hologram</a> &nbsp; <a class="btn" href="?'+(token?"m="+encodeURIComponent(token):"id="+encodeURIComponent(doc.pk))+'&format=json">{ } resolution JSON</a></p>'+
+    row("rappid", esc(doc.rappid))+
+    row("pk (spacetime)", esc(doc.pk))+
+    row("owner", doc.owner?esc(doc.owner):"unowned")+
+    row("dimension", esc(doc.dimension)+' <span class="note">(joins the genesis Commons)</span>')+
+    row("sig suite", esc(doc.sig_suite))+
+    row("chain", esc(doc.chain.repo)+' · '+esc(doc.chain.kind))+
+    row("animation_url", '<a href="'+doc.animation_url+'" style="color:var(--pb)">'+esc(doc.animation_url)+'</a>')+
+    '<p class="note">This is a universal gateway: any system — a wallet, an NFT marketplace, another world entirely — can fetch this document, embed the live hologram via <code>animation_url</code>, verify ownership, and trade it. The <code>sources</code> array ties in external data to continue the dimension; the <code>dimension</code> anchor lets it join others over the same moment.</p>';
+})();
+</script></body></html>

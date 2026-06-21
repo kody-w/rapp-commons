@@ -201,6 +201,22 @@ Each organism is scored into a portable **32-D fingerprint** by sampling its who
 
 ---
 
+## 11½. Dimensions, the genesis Commons & overlay
+
+- **The Commons is a dimension.** The RAPP Commons world (`commons.html`) is itself an organism that **made contact with time** at its genesis commit (`sky·1778521758000`, `rappid:dimension:0c0ba7…`, 2026-05-11 17:49:18 UTC). It is the **genesis dimension** — the first to exist on the chain. `commonsAgent.genesis()` declares it; `genesis.json` is its manifest, proven not by a signature but by the chain's genesis block (the un-backdateable first commit).
+- **Every Moment is a dimension**, born of its own instant. By default a Moment **joins** the genesis Commons (its resolution `dimension` anchor), and any dimension may anchor to any other — *others can join*.
+- **Overlay.** Many dimensions of the **same** moment (sharing one genesis genome / pk) can be **laid over each other and merged coherently** via the **dream-catcher** (`overlay()` folds each layer's grown frames through `weaveFrame`): consistent overlays are inherited, contradictions resisted, the result is one coherent composite. A different moment (genesis mismatch) cannot overlay. This is how many contributors over a single moment compose into a richer whole.
+
+## 11¾. The Gateway (universal resolution & marketplace interop)
+
+A rappid is a **gateway**. `Resolve.document(moment)` produces one standard document any system — a wallet, an NFT marketplace, another world entirely — can fetch to render, verify, extend, and trade the Moment:
+
+- **NFT/marketplace-native** (ERC-721 / OpenSea-compatible): `name`, `description`, `image`, **`animation_url`** (the live `?dial=<pk>` hologram — marketplaces embed it, so the *actual walkable Moment renders in-place*), `external_url`, `attributes` (biome/keyframes/born/… as traits).
+- **RAPP Eternity extensions:** `rappid`, `pk`, `born`, `owner` (deed-resolved `rappid:keeper`), `sig_suite`, `chain` (the git-blockchain + its validator), `dimension` (the dimension it joins).
+- **Extensible — `sources`:** external references the owner ties in to **continue the dimension into any system, even outside this ecosystem**.
+
+`resolve.html?{m|id}=…` is the human + `?format=json` machine gateway, emitting OpenGraph/Twitter-player meta so public crawlers and marketplaces index it. The Moment becomes accessible to the full public marketplace with **zero servers** — a static document on the CDN, the live hologram one dial away.
+
 ## 12. Invariants (conformance)
 
 A conforming implementation **MUST**:

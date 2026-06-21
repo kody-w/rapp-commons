@@ -724,6 +724,13 @@ async def run():
                       bool(sh.get("enabled") and sh.get("type") == "PCFSoft" and (sh.get("frustum") or 0) >= 200
                            and sh.get("bias") == -0.0006 and sh.get("normalBias") == 0.04 and sh.get("radius") == 4
                            and sh.get("cast") and sh.get("follows")), sh)
+
+                # THE GENESIS DIMENSION — the Commons knows the moment it made contact with time.
+                gen = await ev("""async ()=>{try{const g=window.commonsAgent.genesis();
+                    return { dim:g.dimension, born:g.born, hasRappid:/^rappid:dimension:/.test(g.rappid||""), open:(g.join==="open") };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("genesis_dimension",
+                      bool(gen.get("dim") == "RAPP Commons" and gen.get("born") == 1778521758000 and gen.get("hasRappid") and gen.get("open")), gen)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
