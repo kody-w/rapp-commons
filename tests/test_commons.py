@@ -642,6 +642,20 @@ async def run():
                 check("fidelity_terrain",
                       bool(terr.get("ground") and terr.get("plazaFlat") and (terr.get("rimRelief") or 0) > 3
                            and terr.get("sampler") and terr.get("floraIntact")), terr)
+
+                # FIDELITY: StarField celestial vault — fades in at night, out by day, deterministic.
+                stars = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const sf=scene.getObjectByName('StarField');
+                    const isPts=(sf&&sf.isPoints===true&&sf.geometry.attributes.position.count===1800);
+                    setTimeOfDay(0.0); const night=A.stars().opacity;
+                    setTimeOfDay(0.5); const noon=A.stars().opacity;
+                    setTimeOfDay(0.42);
+                    const f1=A.stars().firstStar, f2=A.stars().firstStar;
+                    return { pts:!!isPts, nightFull:(night>0.85), noonGone:(noon<0.05),
+                             deterministic:(JSON.stringify(f1)===JSON.stringify(f2)) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_stars",
+                      bool(stars.get("pts") and stars.get("nightFull") and stars.get("noonGone") and stars.get("deterministic")), stars)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
