@@ -715,6 +715,15 @@ async def run():
                 check("fidelity_bloom",
                       bool(bloom.get("isGroup") and (bloom.get("halos") or 0) >= 8 and bloom.get("matches")
                            and bloom.get("additive") and bloom.get("shared") and bloom.get("noDW") and bloom.get("swells")), bloom)
+
+                # FIDELITY: grounded sun shadows — widened frustum, soft PCF, follows the player.
+                sh = await ev("""async ()=>{try{const s=window.commonsAgent.shadows();
+                    return { enabled:s.enabled, type:s.type, frustum:s.frustum, bias:s.bias, normalBias:s.normalBias, radius:s.radius, cast:s.castShadow, follows:s.followsPlayer };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_shadows",
+                      bool(sh.get("enabled") and sh.get("type") == "PCFSoft" and (sh.get("frustum") or 0) >= 200
+                           and sh.get("bias") == -0.0006 and sh.get("normalBias") == 0.04 and sh.get("radius") == 4
+                           and sh.get("cast") and sh.get("follows")), sh)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")

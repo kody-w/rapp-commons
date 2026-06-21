@@ -482,7 +482,12 @@ scene.add(ambient);
 const sun = new THREE.DirectionalLight(0x88aaff, 0.7);
 sun.position.set(30,60,20); sun.castShadow = true;
 sun.shadow.mapSize.set(1024,1024);
-scene.add(sun);
+// FIDELITY: grounded sun shadows — the directional shadow had only the ±5 default frustum, so nothing was
+// shadowed. Widen it to cover the world, soften it, and let sun.target follow the player so it stays useful.
+sun.shadow.camera.left = -120; sun.shadow.camera.right = 120; sun.shadow.camera.top = 120; sun.shadow.camera.bottom = -120;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 260; sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.04; sun.shadow.radius = 4;
+scene.add(sun); scene.add(sun.target);
 // FIDELITY: clock-driven HemisphereLight — sky/ground bounce that touches every surface (box undersides,
 // the creature, daises, flora), warm-over-warm at golden hour, cool-blue-over-slate at night. No shadow map.
 const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x202828, 0.0); hemi.name = "HemiBounce"; scene.add(hemi);
@@ -3328,6 +3333,7 @@ function animate(){
   godRays.position.copy(camera.position).addScaledVector(sky.material.uniforms.sunDir.value, 45);
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
   if (BloomHalos){ var _bt = StarField.material.uniforms.uTime.value; for (var _bi=0;_bi<BloomHalos.children.length;_bi++){ var _bs=BloomHalos.children[_bi]; _bs.scale.setScalar(_bs.userData.baseScale*(1+Math.sin(_bt*2+_bi)*0.06)); } }   // gentle bloom breathing
+  sun.target.position.set(camera.position.x, 0, camera.position.z); sun.target.updateMatrixWorld();   // keep the shadow frustum over the player
   particles.position.y = Math.sin(t*0.3)*0.5;
   dayNightTick(dt);   // slow day→night sky/fog/sun tint
   if (typeof creatureTick === "function") creatureTick(dt);   // the Lineage creature roams its habitat
@@ -4912,6 +4918,8 @@ boot();
       coverage: +CloudDome.material.uniforms.uCoverage.value.toFixed(3), scrollT: +CloudDome.material.uniforms.uTime.value.toFixed(3) }),
     celestial: () => ({ sun: { y: +SunDisc.position.y.toFixed(1), visible: SunDisc.visible },
       moon: { y: +MoonDisc.position.y.toFixed(1), opacity: +MoonDisc.material.uniforms.uOpacity.value.toFixed(3) } }),
+    shadows: () => ({ enabled: renderer.shadowMap.enabled === true, type: (renderer.shadowMap.type === THREE.PCFSoftShadowMap ? "PCFSoft" : "other"),
+      mapSize: sun.shadow.mapSize.x, frustum: (sun.shadow.camera.right - sun.shadow.camera.left), bias: sun.shadow.bias, normalBias: sun.shadow.normalBias, radius: sun.shadow.radius, castShadow: sun.castShadow === true, followsPlayer: true }),
     bloom: () => { if (!BloomHalos) return { present: false }; var ch = BloomHalos.children, tex = ch[0] && ch[0].material.map, add = true, share = true, dw = true, maxOp = 0;
       for (var i = 0; i < ch.length; i++){ if (ch[i].material.blending !== THREE.AdditiveBlending) add = false; if (ch[i].material.map !== tex) share = false; if (ch[i].material.depthWrite !== false) dw = false; if (ch[i].material.opacity > maxOp) maxOp = ch[i].material.opacity; }
       return { present: true, halos: ch.length, additive: add, sharedTexture: share, noDepthWrite: dw, nightGlow: +maxOp.toFixed(3) }; },
