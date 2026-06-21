@@ -315,6 +315,20 @@
   }
   W.dialAt = dialAt;
 
+  // LINEAGE — git-as-harness capability 4 (read side): the family tree (forks = species, merges = hybrids).
+  async function openLineage(pk) {
+    pk = pk || (S.moment && S.moment.pk); if (!pk) return;
+    $("bio").className = ""; $("biohdr").innerHTML = "Lineage · <b>" + esc(pk) + "</b>"; $("biosub").innerHTML = ""; $("biobody").innerHTML = '<div class="bm">reading the family tree…</div>';
+    var safe = pk.replace(/[^\w·.-]/g, "_"), ln;
+    try { ln = await (await fetch("lineage/" + encodeURIComponent(safe) + ".lineage.json?_=" + Math.floor(perf() * 1000))).json(); }
+    catch (e) { $("biobody").innerHTML = '<div class="bm">A single unbranched lineage — this organism has not speciated. Its only ancestor is its birth coordinate <b style="color:var(--pb)">' + esc(pk) + '</b>.</div>'; return; }
+    $("biosub").innerHTML = ((ln.branches || []).length) + " branch(es) · " + ((ln.merges || []).length) + " hybridization(s) · ancestor " + (ln.ancestor || "—");
+    var rows = (ln.branches || []).map(function (b) { return '<div class="bch"><span class="bi">🜃</span><div><div class="bk">' + esc(b.name) + '</div><div class="bd">tip ' + (b.tip || "") + '</div></div></div>'; }).join("");
+    rows += (ln.merges || []).map(function (mg) { return '<div class="bch' + (mg.survived ? '' : ' anom') + '"><span class="bi">' + (mg.survived ? "⚭" : "✖") + '</span><div><div class="bk">' + (mg.survived ? "hybridized " : "sterile cross ") + esc(mg.with || "") + '</div><div class="bd">+' + (mg.inherited || 0) + ' / -' + (mg.rejected || 0) + '</div></div></div>'; }).join("");
+    $("biobody").innerHTML = rows || '<div class="bm">single lineage</div>';
+  }
+  W.openLineage = openLineage;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -579,7 +593,7 @@
     fetch("moments.json").then(function (r) { return r.json(); }).then(function (j) { W.__EXTRA_MOMENTS__ = j.moments || j; if (S.mode === "feed") renderFeed(); }).catch(function () {});
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
-    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); if (q.has("grew")) setTimeout(function () { openGrew(dorg.pk); }, 350); if (q.get("at")) setTimeout(function () { dialAt(dorg.pk, parseInt(q.get("at"), 10)); }, 100); requestAnimationFrame(tick); return; } }
+    if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); if (q.has("grew")) setTimeout(function () { openGrew(dorg.pk); }, 350); if (q.get("at")) setTimeout(function () { dialAt(dorg.pk, parseInt(q.get("at"), 10)); }, 100); if (q.has("lineage")) setTimeout(function () { openLineage(dorg.pk); }, 350); requestAnimationFrame(tick); return; } }
     if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);
