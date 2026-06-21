@@ -731,6 +731,24 @@ async def run():
                 }catch(e){return {err:String(e)}}}""", {}) or {}
                 check("genesis_dimension",
                       bool(gen.get("dim") == "RAPP Commons" and gen.get("born") == 1778521758000 and gen.get("hasRappid") and gen.get("open")), gen)
+
+                # FIDELITY: articulated walk rig — legs swing about the hip as the creature moves.
+                rig = await ev("""async ()=>{try{
+                    spawnCreature({explore:0.7,exploit:0.5,cooperate:0.5,aggress:0.3});
+                    const leg0=scene.getObjectByName('creature-leg-0'), leg1=scene.getObjectByName('creature-leg-1'), leg2=scene.getObjectByName('creature-leg-2');
+                    const isGroup=!!(leg0 && leg0.type==='Group' && leg0.children.length===1 && leg0.children[0].isMesh);
+                    const gp0=CREATURE.gaitPhase||0;
+                    CREATURE.target=new THREE.Vector3(600,0,600);
+                    let signs=[]; for(let i=0;i<14;i++){ creatureTick(0.05); signs.push(Math.sign(leg0.rotation.x)); }
+                    const changedSign=signs.some((s,i)=>i>0 && s!==0 && signs[i-1]!==0 && s!==signs[i-1]);
+                    return { isGroup, gaitIncreased:(CREATURE.gaitPhase>gp0), changedSign,
+                             pairClose:(Math.abs(leg0.rotation.x-leg2.rotation.x)<0.001),
+                             antiPhase:(Math.sign(leg0.rotation.x)!==Math.sign(leg1.rotation.x)),
+                             legs:commonsAgent.creatureRig().legs };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_walkrig",
+                      bool(rig.get("isGroup") and rig.get("gaitIncreased") and rig.get("changedSign")
+                           and rig.get("pairClose") and rig.get("antiPhase") and rig.get("legs") == 4), rig)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
