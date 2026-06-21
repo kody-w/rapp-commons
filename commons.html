@@ -321,6 +321,9 @@ const sun = new THREE.DirectionalLight(0x88aaff, 0.7);
 sun.position.set(30,60,20); sun.castShadow = true;
 sun.shadow.mapSize.set(1024,1024);
 scene.add(sun);
+// FIDELITY: clock-driven HemisphereLight — sky/ground bounce that touches every surface (box undersides,
+// the creature, daises, flora), warm-over-warm at golden hour, cool-blue-over-slate at night. No shadow map.
+const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x202828, 0.0); hemi.name = "HemiBounce"; scene.add(hemi);
 
 /* ─────────────────────────────────────────────────────────────────────────
    1b. DAY-NIGHT CYCLE (additive) — a slow clock tints the sky dome, fog, sun,
@@ -336,12 +339,12 @@ const LANTERNS = { items: [], litPhases: ["night","dusk"], lit:false };
 const DAYNIGHT = {
   t: 0.42, dayLength: 600, auto: true,
   keys: [
-    { t:0.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10 },
-    { t:0.22, top:0x243b6b, bot:0xd98a5a, fog:0x6a5a7a, amb:0.66, sun:0xffb070, sunI:0.55, horizon:0xe9a060, haze:0.90 },
-    { t:0.42, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25 },
-    { t:0.60, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25 },
-    { t:0.80, top:0x3a2f6b, bot:0xe07a4a, fog:0x6a4a5a, amb:0.60, sun:0xff8a50, sunI:0.48, horizon:0xe07a4a, haze:0.90 },
-    { t:1.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10 }
+    { t:0.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10, hemiSky:0x223a66, hemiGround:0x0a0e16, hemiI:0.22 },
+    { t:0.22, top:0x243b6b, bot:0xd98a5a, fog:0x6a5a7a, amb:0.66, sun:0xffb070, sunI:0.55, horizon:0xe9a060, haze:0.90, hemiSky:0xffc98a, hemiGround:0x3a2a20, hemiI:0.45 },
+    { t:0.42, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25, hemiSky:0xbfe0ff, hemiGround:0x2a3030, hemiI:0.65 },
+    { t:0.60, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25, hemiSky:0xbfe0ff, hemiGround:0x2a3030, hemiI:0.65 },
+    { t:0.80, top:0x3a2f6b, bot:0xe07a4a, fog:0x6a4a5a, amb:0.60, sun:0xff8a50, sunI:0.48, horizon:0xe07a4a, haze:0.90, hemiSky:0xff9a6a, hemiGround:0x2a1a18, hemiI:0.40 },
+    { t:1.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10, hemiSky:0x223a66, hemiGround:0x0a0e16, hemiI:0.22 }
   ]
 };
 function _dnLerp(a, b, f){
@@ -368,6 +371,10 @@ function applyTimeOfDay(t){
   sun.color.setHex(_dnLerp(a.sun, b.sun, f));
   sun.intensity = a.sunI + (b.sunI - a.sunI)*f;
   ambient.intensity = a.amb + (b.amb - a.amb)*f;
+  // HemiBounce: lerp the sky/ground bounce with the clock (warm at golden hour, cool-blue at night).
+  hemi.color.setHex(_dnLerp(a.hemiSky != null ? a.hemiSky : 0xbfe0ff, b.hemiSky != null ? b.hemiSky : 0xbfe0ff, f));
+  hemi.groundColor.setHex(_dnLerp(a.hemiGround != null ? a.hemiGround : 0x2a3030, b.hemiGround != null ? b.hemiGround : 0x2a3030, f));
+  hemi.intensity = (a.hemiI != null ? a.hemiI : 0.65) + ((b.hemiI != null ? b.hemiI : 0.65) - (a.hemiI != null ? a.hemiI : 0.65)) * f;
   // the sun arcs across the sky: noon (t≈0.5) overhead, low at dawn/dusk.
   const ang = (t - 0.25) * Math.PI * 2;
   sun.position.set(Math.cos(ang)*60, Math.max(2, Math.sin(ang)*70), Math.sin(ang)*40);
@@ -4716,6 +4723,7 @@ boot();
     creatureProfile: (traits) => (typeof creatureProfile === "function" ? creatureProfile(traits) : null),
     // FIDELITY probes
     tone: () => ({ toneMapping: renderer.toneMapping, exposure: +renderer.toneMappingExposure.toFixed(3), outputEncoding: renderer.outputEncoding }),
+    hemi: () => ({ sky: "#" + hemi.color.getHexString(), ground: "#" + hemi.groundColor.getHexString(), intensity: +hemi.intensity.toFixed(3), warmAtGolden: (hemi.color.r >= hemi.color.b) }),
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
     flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),

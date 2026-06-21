@@ -617,6 +617,20 @@ async def run():
                       bool(flora.get("group") and flora.get("treesInst") and (flora.get("treeCount") or 0) >= 300
                            and (flora.get("total") or 0) >= 1200 and (flora.get("draws") or 99) <= 5
                            and (flora.get("clear") or -1) > 0 and flora.get("deterministic")), flora)
+
+                # FIDELITY: clock-driven HemisphereLight (sky/ground bounce, golden-hour graded).
+                hemi = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const exists=(scene.getObjectByName('HemiBounce')&&scene.getObjectByName('HemiBounce').isHemisphereLight===true);
+                    setTimeOfDay(0.22); const dawn=A.hemi();
+                    setTimeOfDay(0.0); const night=A.hemi();
+                    setTimeOfDay(0.5); const noon=A.hemi();
+                    setTimeOfDay(0.42);
+                    return { exists:!!exists, warmDawn:(dawn.warmAtGolden===true), coolNoon:(noon.warmAtGolden===false),
+                             dawnBrighter:(dawn.intensity>night.intensity), tinted:(dawn.sky!==noon.sky) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_hemi",
+                      bool(hemi.get("exists") and hemi.get("warmDawn") and hemi.get("coolNoon")
+                           and hemi.get("dawnBrighter") and hemi.get("tinted")), hemi)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
