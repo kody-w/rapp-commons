@@ -60,6 +60,10 @@ button.ghost{background:transparent}
 #fill{height:100%;width:0;background:linear-gradient(90deg,var(--pa),var(--pb))}
 #ptitle{position:fixed;top:64px;left:18px;z-index:9;font-weight:800;font-size:17px;text-shadow:0 2px 10px #000}
 #ptitle .au{color:var(--mut);font-size:13px;font-weight:600}
+#scanhint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9;pointer-events:none;
+  background:#0b0f18cc;border:1px solid #2a3650;border-radius:22px;padding:9px 16px;font-size:13px;font-weight:700;color:var(--ink);
+  box-shadow:0 4px 20px #0007;animation:fadehint 2.6s ease forwards}
+@keyframes fadehint{0%{opacity:0}12%{opacity:1}70%{opacity:1}100%{opacity:0}}
 /* share modal */
 #share{position:fixed;inset:0;z-index:20;background:#06080dcc;display:flex;align-items:center;justify-content:center}
 #sheet{background:#0e131d;border:1px solid #243049;border-radius:18px;padding:22px;width:min(420px,92vw);text-align:center}
@@ -135,6 +139,7 @@ button.ghost{background:transparent}
 </div>
 
 <div id="ptitle" class="hide"></div>
+<div id="scanhint" class="hide">✋ drag to rotate · scroll / pinch to zoom — scanning</div>
 <div id="pc" class="hide">
   <button id="ppBtn" onclick="togglePlay()">❚❚</button>
   <button onclick="restart()">⟲</button>

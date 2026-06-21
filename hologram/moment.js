@@ -227,6 +227,42 @@
     camera.position.copy(cur); camera.lookAt(look);
   }
 
+  // SCAN MODE — when paused, you take the camera and orbit the frozen organism to inspect it.
+  function scanTarget() { var c = FORM ? FORM.position : new THREE.Vector3(), by = FORM ? FORM.bodyY : 1.5; return new THREE.Vector3(c.x, by * 0.6, c.z); }
+  function initScan() {
+    var t = scanTarget(), off = camera.position.clone().sub(t), r = Math.max(4, off.length());
+    S.scan = { theta: Math.atan2(off.z, off.x), phi: Math.acos(Math.max(-1, Math.min(1, off.y / r))), radius: r };
+  }
+  function scanCam() {
+    if (!S.scan) initScan();
+    var t = scanTarget(), s = S.scan, sp = Math.sin(s.phi);
+    camera.position.set(t.x + s.radius * sp * Math.cos(s.theta), t.y + s.radius * Math.cos(s.phi), t.z + s.radius * sp * Math.sin(s.theta));
+    camera.lookAt(t); cur.copy(camera.position); look.copy(t);   // sync the smoothed state so resuming play won't jump
+  }
+  function scanPaused() { return S.mode === "play" && !S.playing; }
+  function setScanHint(on) { var h = D.getElementById("scanhint"); if (h) h.className = on ? "" : "hide"; }
+  W.setScanHint = setScanHint; W.initScan = initScan;
+  W.scanState = function () { return { scan: S.scan ? { theta: +S.scan.theta.toFixed(4), phi: +S.scan.phi.toFixed(4), radius: +S.scan.radius.toFixed(3) } : null, pf: Math.round(S.pf), playing: S.playing, cam: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) } }; };
+  (function () {
+    var dragging = false, lx = 0, ly = 0, pinch = 0, cv = D.getElementById("c");
+    if (!cv) return;
+    function down(x, y) { if (!scanPaused()) return; if (!S.scan) initScan(); dragging = true; lx = x; ly = y; cv.style.cursor = "grabbing"; }
+    function move(x, y) { if (!dragging || !scanPaused() || !S.scan) return; var dx = x - lx, dy = y - ly; lx = x; ly = y;
+      S.scan.theta -= dx * 0.01; S.scan.phi = Math.max(0.12, Math.min(Math.PI - 0.12, S.scan.phi - dy * 0.01)); }
+    function up() { dragging = false; cv.style.cursor = scanPaused() ? "grab" : ""; }
+    function zoom(f) { if (!scanPaused()) return; if (!S.scan) initScan(); S.scan.radius = Math.max(3.5, Math.min(48, S.scan.radius * f)); }
+    cv.addEventListener("mousedown", function (e) { down(e.clientX, e.clientY); });
+    W.addEventListener("mousemove", function (e) { move(e.clientX, e.clientY); });
+    W.addEventListener("mouseup", up);
+    cv.addEventListener("wheel", function (e) { if (!scanPaused()) return; e.preventDefault(); zoom(e.deltaY > 0 ? 1.08 : 0.93); }, { passive: false });
+    cv.addEventListener("touchstart", function (e) { if (!scanPaused()) return; if (e.touches.length === 1) down(e.touches[0].clientX, e.touches[0].clientY);
+      else if (e.touches.length === 2) pinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); }, { passive: true });
+    cv.addEventListener("touchmove", function (e) { if (!scanPaused()) return;
+      if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY);
+      else if (e.touches.length === 2) { var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); if (pinch) zoom(pinch / d); pinch = d; } }, { passive: true });
+    cv.addEventListener("touchend", up);
+  })();
+
   // ---- main loop ----
   var last = perf();
   function tick() {
@@ -242,6 +278,7 @@
         FORM.scale.setScalar(1 + beat * 0.045);
         if (FORM.heartLight) FORM.heartLight.intensity = FORM.baseLI * (1 + beat * 0.65); }
       if (moving) camTick(dt);
+      else if (S.mode === "play") scanCam();   // paused → you orbit the frozen organism to scan it
       if (S.mode === "play") updatePC();
     } else { camera.position.set(0, 6, 16); camera.lookAt(0, 1, 0); }
     renderer.render(scene, camera); requestAnimationFrame(tick);
@@ -255,7 +292,7 @@
 
   function go(mode) {
     S.mode = mode;
-    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo"].forEach(hide);
+    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint"].forEach(hide);
     $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "zoo") { history.replaceState(0, 0, location.pathname + "?zoo"); show("zoo"); renderZoo(); }
@@ -298,9 +335,9 @@
       if (ok && m.pub) $("ptitle").innerHTML += ' <span class="au" style="color:var(--pa)">✓ signed ' + (m.pub.x || "").slice(0, 10) + '…</span>';
     });
   }
-  W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; };
-  W.restart = function () { S.pf = 0; S.playing = true; $("ppBtn").textContent = "❚❚"; };
-  W.scrubAt = function (e) { var r = $("track").getBoundingClientRect(); S.pf = Math.max(0, Math.min(99, (e.clientX - r.left) / r.width * 99)); S.playing = false; $("ppBtn").textContent = "▶"; applyFrame(S.pf, true); };
+  W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; if (!S.playing) { initScan(); setScanHint(true); } else setScanHint(false); };
+  W.restart = function () { S.pf = 0; S.playing = true; $("ppBtn").textContent = "❚❚"; setScanHint(false); };
+  W.scrubAt = function (e) { var r = $("track").getBoundingClientRect(); S.pf = Math.max(0, Math.min(99, (e.clientX - r.left) / r.width * 99)); S.playing = false; $("ppBtn").textContent = "▶"; applyFrame(S.pf, true); initScan(); setScanHint(true); };
   function updatePC() { $("fl").textContent = "FRAME " + Math.round(S.pf) + " / 99"; $("fill").style.width = (S.pf / 99 * 100) + "%"; }
   W.remix = function () { if (S.moment) { go("create"); loadIntoCreate(S.moment); } };
 
