@@ -47,6 +47,10 @@ button.ghost{background:transparent}
 #zoogrid2 a.card{text-decoration:none;color:inherit;display:block}
 #zoogrid2 .vit{height:5px;background:#1a2230;border-radius:4px;margin:9px 0 3px;overflow:hidden}
 #zoogrid2 .vit i{display:block;height:100%;border-radius:4px}
+#keeper{position:fixed;top:58px;left:0;right:0;bottom:0;overflow-y:auto;z-index:6;padding:8px 18px 80px}
+#keepgrid{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+#keepgrid a.card{text-decoration:none;color:inherit;display:block}
+#keepgrid .kmt{grid-column:1/-1;color:var(--mut);padding:30px;text-align:center}
 /* create panel */
 #create{position:fixed;top:58px;left:0;bottom:0;width:330px;z-index:8;background:rgba(10,14,21,.96);border-right:1px solid #1c2433;overflow-y:auto;padding:16px}
 #create h3{margin:4px 0 12px;font-size:16px}
@@ -112,6 +116,7 @@ button.ghost{background:transparent}
   <button class="ghost" id="navMint" onclick="openMint()" style="display:none">◈ HoloPress</button>
   <button class="ghost" onclick="document.getElementById('eggfile').click()" title="import a companion seed (.egg)">⬆ Plant seed</button>
   <button class="ghost" onclick="go('zoo')">🦋 My Zoo</button>
+  <button class="ghost" onclick="location.href='keepers.html'">🔑 Keepers</button>
   <button class="ghost" onclick="mintWild()" title="catch an organism tied to your exact place & moment">🌍 Wild</button>
   <button class="ghost" onclick="dial()" title="summon an organism by its address">📡 Dial</button>
   <button class="ghost" onclick="location.href='drops.html'">◳ Drop</button>
@@ -147,6 +152,13 @@ button.ghost{background:transparent}
   <div id="zoogrid2"></div>
 </div>
 
+<div id="keeper" class="hide">
+  <div id="zoohdr">
+    <h1 id="keephdr"></h1>
+    <p class="zk" id="keepsub"></p>
+  </div>
+  <div id="keepgrid"></div>
+</div>
 <div id="create" class="hide">
   <h3>Plant a companion</h3>
   <div class="row"><label>Title</label><input type="text" id="cTitle" maxlength="40" placeholder="my moment" value="untitled"></div>

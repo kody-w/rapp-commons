@@ -47,7 +47,7 @@ async function boot(){
   var s,h; try{ s=await (await fetch("stats.json?_="+Date.now())).json(); }catch(e){ document.getElementById("kpis").innerHTML="<p class='sub'>No stats yet — the next tick scrapes them.</p>"; return; }
   try{ h=await (await fetch("stats_history.json?_="+Date.now())).json(); }catch(e){ h={snaps:[s]}; }
   document.getElementById("kpis").innerHTML =
-    kpi(s.organisms,"organisms")+kpi(s.born,"born of a UTC instant")+kpi(s.zookeepers,"zookeepers")+
+    kpi(s.organisms,"organisms")+kpi(s.born,"born of a UTC instant")+'<a href="keepers.html" style="text-decoration:none">'+kpi(s.zookeepers,"zookeepers →")+'</a>'+
     kpi(s.totalFrames,"total frames")+kpi((s.finestGapMs!=null?s.finestGapMs+" ms":"—"),"finest gap")+kpi(s.avgFrames,"avg frames / organism");
   var bm=s.biomes||{}, max=Math.max.apply(null,Object.keys(bm).map(function(k){return bm[k];}).concat([1]));
   document.getElementById("biomes").innerHTML = Object.keys(bm).sort(function(a,b){return bm[b]-bm[a];}).map(function(k){

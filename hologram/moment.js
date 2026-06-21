@@ -190,7 +190,7 @@
   async function renderZoo() {
     var k = await getKey(); var fp = (k && k.pub && k.pub.x) ? k.pub.x.slice(0, 16) : "—";
     var z = loadZoo();
-    $("zookeeper").innerHTML = "zookeeper <b style='color:var(--ink)'>" + esc(fp) + "…</b> &nbsp;·&nbsp; " + z.length + " companion" + (z.length === 1 ? "" : "s") + " in your care";
+    $("zookeeper").innerHTML = "zookeeper <b style='color:var(--ink)'>" + esc(fp) + "…</b> &nbsp;·&nbsp; " + z.length + " companion" + (z.length === 1 ? "" : "s") + " in your care &nbsp;·&nbsp; <a onclick=\"openKeeper()\" style='color:var(--pb);cursor:pointer'>visit your public zoo →</a>";
     var g = $("zoogrid");
     if (!z.length) { g.innerHTML = '<div class="empty">Your menagerie is empty. <a onclick="go(\'create\')">🌱 Plant your first companion →</a></div>'; return; }
     g.innerHTML = z.slice().reverse().map(function (m) {
@@ -329,6 +329,28 @@
   }
   W.openLineage = openLineage;
 
+  // SOCIAL LAYER — visit a zookeeper's menagerie by their key. A keeper's identity is their signing-key
+  // fingerprint; their public companions are the warehouse organisms they signed. Serverless, no accounts.
+  async function openKeeper(fp) {
+    var mine = false;
+    if (!fp) { var k = await getKey(); fp = (k && k.pub && k.pub.x) ? k.pub.x.slice(0, 16) : null; mine = true; }
+    if (!fp) { toast("no zookeeper key"); return; }
+    go("keeper"); history.replaceState(0, 0, location.pathname + "?keeper=" + encodeURIComponent(fp));
+    $("keephdr").innerHTML = (mine ? "Your public zoo" : "Zookeeper") + " · <b style='color:var(--pb)'>" + esc(fp) + "…</b>";
+    $("keepsub").textContent = "reading the public warehouse…";
+    var wh; try { wh = await (await fetch("warehouse.json?_=" + Math.floor(perf() * 1000))).json(); }
+    catch (e) { $("keepsub").textContent = "the public warehouse is unavailable"; return; }
+    var theirs = (wh.organisms || []).filter(function (o) { return o.signer === fp; });
+    var biomes = {}; theirs.forEach(function (o) { biomes[o.b] = (biomes[o.b] || 0) + 1; });
+    var top = Object.keys(biomes).sort(function (a, b) { return biomes[b] - biomes[a]; })[0];
+    $("keepsub").innerHTML = theirs.length + " companion" + (theirs.length === 1 ? "" : "s") + " in the public zoo" + (top ? " · mostly " + top : "") +
+      (mine ? ' · <span style="color:var(--pa)">this is you — share this link</span>' : '');
+    $("keepgrid").innerHTML = theirs.map(function (o) { var mm = decode(o.token);
+      return '<a class="card" href="./?m=' + o.token + '"><div class="thumb" style="' + thumbStyle(mm) + '"><span class="tag">✓ ' + esc(o.b) + '</span><span class="play beat">♥</span></div><div class="meta"><div class="ti">' + esc(o.t) + '</div><div class="au">' + esc(o.a) + '</div></div></a>';
+    }).join("") || '<div class="kmt">No public companions yet' + (mine ? ' — once one of yours reaches the commons it appears here for visitors.' : '.') + '</div>';
+  }
+  W.openKeeper = openKeeper;
+
   // ---- playback state ----
   var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
   function perf() { return W.performance.now() / 1000; }
@@ -416,11 +438,12 @@
 
   function go(mode) {
     S.mode = mode;
-    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint", "kindred"].forEach(hide);
+    ["feed", "create", "pc", "ptitle", "share", "mint", "zoo", "scanhint", "kindred", "keeper"].forEach(hide);
     $("navRemix").style.display = "none"; $("navShare").style.display = "none"; $("navMint").style.display = "none"; $("navEgg").style.display = "none"; $("navPip").style.display = "none"; $("navKindred").style.display = "none"; $("navBio").style.display = "none"; if ($("bio")) $("bio").className = "hide";
     if (mode === "feed") { history.replaceState(0, 0, location.pathname); show("feed"); renderFeed(); }
     if (mode === "zoo") { history.replaceState(0, 0, location.pathname + "?zoo"); show("zoo"); renderZoo(); }
     if (mode === "kindred") { show("kindred"); }
+    if (mode === "keeper") { show("keeper"); }
     if (mode === "create") { show("create"); initCreate(); }
     if (mode === "play") { show("pc"); show("ptitle"); $("navShare").style.display = ""; $("navRemix").style.display = ""; $("navMint").style.display = ""; $("navEgg").style.display = ""; $("navKindred").style.display = ""; $("navBio").style.display = ""; $("navPip").style.display = ((D.pictureInPictureEnabled !== false) ? "" : "none"); }
   }
@@ -594,6 +617,7 @@
     if (q.get("mint")) { var mm = decode(q.get("mint")); if (mm) { S.moment = mm; S.frames = expand(mm); setBiome(mm.b || "savanna"); requestAnimationFrame(tick); openMint(parseInt(q.get("n"), 10) || 50); return; } }
     if (q.get("m")) { var m = decode(q.get("m")); if (m) { openPlay(m, false); requestAnimationFrame(tick); return; } }
     if (q.get("dial")) { var dorg = W.Organism && W.Organism.fromPk(q.get("dial")); if (dorg) { openPlay(dorg, false); if (q.has("bio")) setTimeout(function () { openBio(dorg.pk); }, 350); if (q.has("grew")) setTimeout(function () { openGrew(dorg.pk); }, 350); if (q.get("at")) setTimeout(function () { dialAt(dorg.pk, parseInt(q.get("at"), 10)); }, 100); if (q.has("lineage")) setTimeout(function () { openLineage(dorg.pk); }, 350); requestAnimationFrame(tick); return; } }
+    if (q.get("keeper")) { openKeeper(q.get("keeper")); requestAnimationFrame(tick); return; }
     if (q.has("zoo")) { go("zoo"); requestAnimationFrame(tick); return; }
     if (q.has("create")) { go("create"); requestAnimationFrame(tick); return; }
     go("feed"); requestAnimationFrame(tick);
