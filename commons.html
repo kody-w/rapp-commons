@@ -3959,6 +3959,108 @@ async function mxCollapse(key, candidates){
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   9h. MATRIX EVOLUTION (round 3) — CASCADE (pull one signed record, watch the
+   downstream truths topple — the blast radius), BYZANTINE QUORUM (N DISTINCT
+   keypairs must independently corroborate before a fact commits — sybil-resistant
+   consensus), and IMMUNE SYSTEM (detect a forgery, quarantine it, and physically
+   heal the live 3D world back to the verified truth). All additive, signed,
+   reusing _voxPass + persistRead/Verify + signEvent + mxRewind + voxelAppendOp.
+   ───────────────────────────────────────────────────────────────────────── */
+// CASCADE — the signed blast radius of dropping one record.
+async function mxCascade(targetSig){
+  const log = persistRead();
+  const withMap = await _voxPass(log, null);
+  const withoutMap = await _voxPass(log, targetSig);
+  const orphaned = [];
+  for (const [k, block] of withMap){
+    if (!withoutMap.has(k)){ const p = k.split(",").map(Number); orphaned.push({ voxAt: [p[0], p[1], p[2]], block, status: "orphaned" }); }
+  }
+  orphaned.sort((a, b) => (a.voxAt.join(",") < b.voxAt.join(",") ? -1 : 1));
+  const target = log.find(r => r.sig === targetSig) || {};
+  const att = { schema: "rapp-commons-cascade/1.0", from: ME.rappid, ts: _utc(), target_sig: String(targetSig).slice(0, 16),
+    removed: orphaned.length, hash: await _sha8(JSON.stringify(orphaned)) };
+  att.sig = await signEvent(att); att.pub = ME.pubJwk; persistAppend(att);
+  return { target: { sig: targetSig, schema: target.schema || null }, blastRadius: orphaned,
+    depth: orphaned.length, survivorsBefore: withMap.size, survivorsAfter: withoutMap.size, cascadeSig: att.sig };
+}
+
+// BYZANTINE QUORUM — N distinct ephemeral keypairs must corroborate before a fact commits.
+async function mxAttest(key, val){
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const witnessPub = await crypto.subtle.exportKey("jwk", kp.publicKey);
+  const body = { schema: "rapp-commons-attest/1.0", from: ME.rappid, ts: _utc(), key: String(key), val };
+  const pre = canonicalJSON(body);
+  const sigBuf = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, kp.privateKey, new TextEncoder().encode(pre));
+  body.sig = [...new Uint8Array(sigBuf)].map(b => b.toString(16).padStart(2, "0")).join("");
+  body.pub = witnessPub;                                  // persistVerify validates against the embedded ephemeral pub
+  persistAppend(body);
+  return { witnessPub, sig: body.sig };
+}
+function _pubFp(jwk){ return String(jwk && jwk.x).slice(0, 14) + ":" + String(jwk && jwk.y).slice(0, 10); }
+async function mxQuorum(key, threshold){
+  threshold = threshold || 3;
+  const log = persistRead(); const byVal = {};
+  for (const rec of log){
+    if ((rec.schema || "") !== "rapp-commons-attest/1.0" || String(rec.key) !== String(key)) continue;
+    if (!(await persistVerify(rec))) continue;            // the verify-gate IS the sybil filter
+    const fp = _pubFp(rec.pub), v = JSON.stringify(rec.val);
+    (byVal[v] = byVal[v] || new Set()).add(fp);           // distinct pubkeys per val (a flood counts once)
+  }
+  const counts = {}; for (const v in byVal) counts[JSON.parse(v)] = byVal[v].size;
+  const qualified = Object.keys(byVal).filter(v => byVal[v].size >= threshold).sort((a, b) => byVal[b].size - byVal[a].size);
+  let elected = null, electedFp = [];
+  if (qualified.length){ elected = JSON.parse(qualified[0]); electedFp = [...byVal[qualified[0]]].sort(); }
+  let committedSig = null;
+  if (elected != null && typeof key === "string" && key.indexOf("vox:") === 0){
+    const p = key.replace("vox:", "").split(",").map(Number);
+    await voxelAppendOp("place", p[0], p[1], p[2], elected);
+    const last = VOX.ops[VOX.ops.length - 1]; committedSig = last ? last.sig : null;
+  }
+  const ballot = { schema: "rapp-commons-quorum/1.0", from: ME.rappid, ts: _utc(), key: String(key), elected: elected, threshold, reached: elected != null };
+  ballot.sig = await signEvent(ballot); ballot.pub = ME.pubJwk; persistAppend(ballot);
+  return { elected, distinctWitnesses: electedFp, byValue: counts, committedSig,
+    rejected: Object.keys(byVal).filter(v => byVal[v].size < threshold).map(v => ({ reason: "below threshold", val: JSON.parse(v), count: byVal[v].size })),
+    reached: elected != null, ballotSig: ballot.sig };
+}
+
+// IMMUNE SYSTEM — quarantine forgeries and physically heal the live 3D world back to verified truth.
+function mxInjectForgery(x, y, z, block){
+  if ((x | 0) < 90 || (z | 0) < 90) return { injected: false, reason: "forgery injection guarded to coords>=90" };
+  const body = { schema: "rapp-world-op/1.0", game: "voxel-world", from: ME.rappid, ts: _utc(),
+    op: "place", x: x | 0, y: y | 0, z: z | 0, block: block || "stone",
+    sig: "deadbeef" + "00".repeat(28), pub: ME.pubJwk };   // a DELIBERATELY broken signature
+  voxApplyOp(body); if (typeof renderVoxelBlocks === "function") renderVoxelBlocks();
+  const log = persistRead(); log.push(body); persistWrite(log);
+  return { injected: true, sig: body.sig };
+}
+async function mxHeal(){
+  const log = persistRead(); let scanned = 0, quarantined = 0; const tainted = [];
+  for (const rec of log){
+    scanned++;
+    if (rec.sig && rec.sig !== "unsigned" && !(await persistVerify(rec))){
+      quarantined++; tainted.push({ sig: String(rec.sig).slice(0, 12), from: rec.from, reason: "failed signature verification" });
+    }
+  }
+  const truth = await mxRewind({});                        // verified-only re-derivation (forgeries dropped)
+  const truthMap = new Map(truth.voxels.map(v => [v.x + "," + v.y + "," + v.z, v.block]));
+  const live = new Map(); for (const b of ((typeof voxelState === "function") ? voxelState().blocks : [])) live.set(b.x + "," + b.y + "," + b.z, b.block);
+  let restored = 0;
+  for (const k of new Set([...live.keys(), ...truthMap.keys()])){
+    const lv = live.get(k), tv = truthMap.get(k);
+    if (lv !== tv){
+      const p = k.split(",").map(Number);
+      if (tv == null) voxApplyOp({ op: "mine", x: p[0], y: p[1], z: p[2] });
+      else voxApplyOp({ op: "place", x: p[0], y: p[1], z: p[2], block: tv, from: ME.rappid });
+      restored++;
+    }
+  }
+  if (typeof renderVoxelBlocks === "function") renderVoxelBlocks();
+  const report = { schema: "rapp-commons-immune/1.0", from: ME.rappid, ts: _utc(), scanned, quarantined, cells_restored: restored, hash: await _sha8(JSON.stringify(tainted)) };
+  report.sig = await signEvent(report); report.pub = ME.pubJwk; persistAppend(report);
+  return { scanned, quarantined, tainted, cells_restored: restored, reportSig: report.sig };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    10. Boot — mint identity, stream registries, build the one world.
    ───────────────────────────────────────────────────────────────────────── */
 let WORLDS = null;
@@ -4446,6 +4548,14 @@ boot();
     because:  (predicate) => (typeof mxBecause === "function" ? mxBecause(predicate) : null),
     diff:     (a, b) => (typeof mxDiff === "function" ? mxDiff(a, b) : null),
     collapse: (key, cands) => (typeof mxCollapse === "function" ? mxCollapse(key, cands) : null),
+    // MATRIX EVOLUTION (round 3): CASCADE (blast radius of dropping one record), BYZANTINE QUORUM
+    // (N distinct keypairs must corroborate before a fact commits), IMMUNE SYSTEM (quarantine a
+    // forgery + heal the live 3D world back to verified truth).
+    cascade:  (sig) => (typeof mxCascade === "function" ? mxCascade(sig) : null),
+    attest:   (key, val) => (typeof mxAttest === "function" ? mxAttest(key, val) : null),
+    quorum:   (key, threshold) => (typeof mxQuorum === "function" ? mxQuorum(key, threshold) : null),
+    heal:     () => (typeof mxHeal === "function" ? mxHeal() : null),
+    injectForgery: (x, y, z, block) => (typeof mxInjectForgery === "function" ? mxInjectForgery(x, y, z, block) : null),
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

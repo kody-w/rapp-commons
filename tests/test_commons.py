@@ -503,6 +503,60 @@ async def run():
                 check("evo_collapse",
                       bool(coll.get("survivor") == "gold" and coll.get("committed") and coll.get("bracket")
                            and coll.get("forks") and coll.get("in_world")), coll)
+
+                # EVO round 3 — CASCADE: pull one signed record, watch the downstream truths topple.
+                casc = await ev("""async ()=>{try{
+                    const A=window.commonsAgent;
+                    await A.voxelPlace(170,6,170,'red'); await A.voxelPlace(171,6,171,'blue');
+                    const log=JSON.parse(localStorage.getItem('rapp-commons:persist:log/1')||'[]');
+                    const op=log.find(r=>r.schema==='rapp-world-op/1.0'&&r.op==='place'&&r.x===170&&r.y===6&&r.z===170);
+                    const c=await A.cascade(op.sig); const c2=await A.cascade(op.sig);
+                    const stillRed=A.voxelState().blocks.some(b=>b.x===170&&b.z===170&&b.block==='red');
+                    const e=await A.cascade('deadbeef-not-a-sig');
+                    return { orphaned170:c.blastRadius.some(b=>b.voxAt[0]===170&&b.voxAt[1]===6&&b.voxAt[2]===170),
+                             not171:c.blastRadius.every(b=>b.voxAt[0]!==171),
+                             shrank:(c.survivorsAfter<c.survivorsBefore),
+                             sig:(typeof c.cascadeSig==='string'&&c.cascadeSig.length>0),
+                             readonly:stillRed, deterministic:(JSON.stringify(c2.blastRadius)===JSON.stringify(c.blastRadius)),
+                             empty:(e.blastRadius.length===0&&e.depth===0) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_cascade",
+                      bool(casc.get("orphaned170") and casc.get("not171") and casc.get("shrank") and casc.get("sig")
+                           and casc.get("readonly") and casc.get("deterministic") and casc.get("empty")), casc)
+
+                # BYZANTINE QUORUM: N distinct keypairs must corroborate before a fact commits.
+                quo = await ev("""async ()=>{try{
+                    const A=window.commonsAgent; const key='vox:92,4,92';
+                    await A.attest(key,'gold'); await A.attest(key,'gold'); await A.attest(key,'gold'); await A.attest(key,'iron');
+                    const q=await A.quorum(key,3);
+                    const cur=A.voxelState().blocks.find(b=>b.x===92&&b.z===92);
+                    const q5=await A.quorum(key,5);
+                    const cur5=A.voxelState().blocks.find(b=>b.x===92&&b.z===92);
+                    return { elected:q.elected, witnesses:(q.distinctWitnesses||[]).length, committed:(typeof q.committedSig==='string'),
+                             reached:q.reached, in_world:(cur&&cur.block==='gold'),
+                             gate:(q5.reached===false&&q5.committedSig==null&&cur5&&cur5.block==='gold') };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_quorum",
+                      bool(quo.get("elected") == "gold" and (quo.get("witnesses") or 0) >= 3 and quo.get("committed")
+                           and quo.get("reached") and quo.get("in_world") and quo.get("gate")), quo)
+
+                # IMMUNE SYSTEM: inject a forgery, then heal — quarantine it + restore the true 3D world.
+                imm = await ev("""async ()=>{try{
+                    const A=window.commonsAgent;
+                    await A.voxelPlace(170,5,170,'gold');             // honest
+                    A.injectForgery(170,5,170,'iron');               // a forged op claims iron (broken sig)
+                    const before=A.voxelState().blocks.find(b=>b.x===170&&b.y===5&&b.z===170);
+                    const h=await A.heal();
+                    const after=A.voxelState().blocks.find(b=>b.x===170&&b.y===5&&b.z===170);
+                    const h2=await A.heal();
+                    return { lie_surfaced:(before&&before.block==='iron'),
+                             quarantined:(h.quarantined>=1), tainted:((h.tainted||[]).length>=1),
+                             restored:(h.cells_restored>=1), healed:(after&&after.block==='gold'),
+                             report:(typeof h.reportSig==='string'), idempotent:(h2.cells_restored===0) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("evo_immune",
+                      bool(imm.get("quarantined") and imm.get("tainted") and imm.get("restored")
+                           and imm.get("healed") and imm.get("report") and imm.get("idempotent")), imm)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
