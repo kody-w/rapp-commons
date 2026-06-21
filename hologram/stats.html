@@ -1,0 +1,76 @@
+<!-- (c) 2026 Kody Wildfeuer - PolyForm Noncommercial 1.0.0, see /LICENSE - part of The RAPP Zoo -->
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Zoo Desk — vital signs of the RAPP Zoo</title>
+<style>
+:root{--bg:#06080d;--ink:#e8edf4;--mut:#8b95a5;--card:#10141d;--line:#1c2433;--pa:#4ade80;--pb:#38bdf8;--pc:#fb7185;--pd:#fbbf24}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Helvetica Neue,Arial,sans-serif}
+a{color:inherit}#bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;padding:14px 22px;background:#06080df2;border-bottom:1px solid var(--line)}
+#bar b{background:linear-gradient(90deg,var(--pa),var(--pb));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sp{flex:1}.btn{border:1px solid #2a3650;background:#182030;border-radius:10px;padding:8px 13px;font-weight:700;font-size:13px;color:var(--ink);text-decoration:none}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 22px 80px}
+h1{font-size:32px;margin:14px 0 2px}.sub{color:var(--mut);margin:0 0 22px;max-width:760px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:18px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px}
+.kpi .n{font-size:30px;font-weight:900;line-height:1}.kpi .l{color:var(--mut);font-size:12px;font-weight:700;letter-spacing:.5px;margin-top:6px;text-transform:uppercase}
+h2{font-size:15px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin:28px 0 12px}
+.bars{display:flex;flex-direction:column;gap:8px;max-width:560px}
+.brow{display:flex;align-items:center;gap:10px;font-size:13px}.brow .bn{width:78px;color:var(--mut)}
+.brow .bt{flex:1;height:14px;background:#121826;border-radius:7px;overflow:hidden}.brow .bf{height:100%;border-radius:7px}
+.brow .bv{width:42px;text-align:right;font-weight:700}
+.finds{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.find{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px}
+.find .ft{font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--pb)}
+.find .fv{font-size:19px;font-weight:800;margin:7px 0 3px}.find .fd{color:var(--mut);font-size:13px}
+#spark{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.note{color:var(--mut);font-size:12px;margin-top:8px}
+</style></head>
+<body>
+<div id="bar"><b>📊 The Zoo Desk</b><span class="btn" style="padding:3px 9px;font-size:11px">git-scraped every tick</span>
+  <div class="sp"></div><a class="btn" href="./">Feed</a><a class="btn" href="drops.html">Stream</a><a class="btn" href="market.html">Market</a></div>
+<div class="wrap">
+  <h1>Vital signs of the RAPP Zoo</h1>
+  <p class="sub">A snapshot of the whole menagerie, computed from the static warehouse and committed to the repo every tick. Because each commit is a point in time, the git history of <code>stats.json</code> <i>is</i> the time-series database — the Simon Willison git-scraping pattern, applied to a living ecosystem.</p>
+  <div class="kpis" id="kpis"></div>
+  <h2>Biome distribution</h2>
+  <div class="bars" id="biomes"></div>
+  <h2>Findings</h2>
+  <div class="finds" id="finds"></div>
+  <h2>Population over time</h2>
+  <div id="spark"></div>
+</div>
+<script>
+var BC={savanna:"#cbb26a",canyon:"#d08a5a",forest:"#4ade80",volcanic:"#fb7185",void:"#8b7ff5"};
+function kpi(n,l){ return '<div class="kpi"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>'; }
+function find(t,v,d){ return '<div class="find"><div class="ft">'+t+'</div><div class="fv">'+v+'</div><div class="fd">'+d+'</div></div>'; }
+function fmtTs(ms){ if(!ms) return "—"; return new Date(ms).toISOString().replace("T"," ").slice(0,19)+" UTC"; }
+async function boot(){
+  var s,h; try{ s=await (await fetch("stats.json?_="+Date.now())).json(); }catch(e){ document.getElementById("kpis").innerHTML="<p class='sub'>No stats yet — the next tick scrapes them.</p>"; return; }
+  try{ h=await (await fetch("stats_history.json?_="+Date.now())).json(); }catch(e){ h={snaps:[s]}; }
+  document.getElementById("kpis").innerHTML =
+    kpi(s.organisms,"organisms")+kpi(s.born,"born of a UTC instant")+kpi(s.zookeepers,"zookeepers")+
+    kpi(s.totalFrames,"total frames")+kpi((s.finestGapMs!=null?s.finestGapMs+" ms":"—"),"finest gap")+kpi(s.avgFrames,"avg frames / organism");
+  var bm=s.biomes||{}, max=Math.max.apply(null,Object.keys(bm).map(function(k){return bm[k];}).concat([1]));
+  document.getElementById("biomes").innerHTML = Object.keys(bm).sort(function(a,b){return bm[b]-bm[a];}).map(function(k){
+    return '<div class="brow"><div class="bn">'+k+'</div><div class="bt"><div class="bf" style="width:'+(bm[k]/max*100)+'%;background:'+(BC[k]||"#888")+'"></div></div><div class="bv">'+bm[k]+'</div></div>';
+  }).join("");
+  var f=[];
+  if(s.dominantBiome) f.push(find("Dominant habitat", s.dominantBiome, (Math.round((bm[s.dominantBiome]/s.organisms)*100))+"% of the zoo lives here"));
+  if(s.rarest) f.push(find("The loneliest organism", s.rarest.t, "no kin within Δ"+s.rarest["lonelinessΔ"]+" — a "+s.rarest.b+" one of a kind"));
+  if(s.twins) f.push(find("Closest twins", s.twins.a+" & "+s.twins.b, "only "+s.twins.distance+" apart in fingerprint space"));
+  if(s.deepest) f.push(find("Deepest in time", s.deepest.t, s.deepest.frames+" frames of fidelity grown"));
+  if(s.streamSpanS) f.push(find("Densest slice", s.streamSpanS+"s", s.born+" organisms born in that window"));
+  f.push(find("Born between", fmtTs(s.earliestBorn).slice(0,19), "and "+fmtTs(s.latestBorn).slice(11,23)));
+  document.getElementById("finds").innerHTML = f.join("");
+  // population sparkline over the rolling time-series
+  var snaps=(h.snaps||[]).filter(function(x){return x.organisms!=null;});
+  var W=1000,H=120,pad=8;
+  if(snaps.length<2){ document.getElementById("spark").innerHTML='<p class="note">One snapshot so far — the trend line draws itself as ticks accumulate. The full history lives in git.</p>'; return; }
+  var xs=snaps.map(function(x,i){return i;}), ys=snaps.map(function(x){return x.organisms;});
+  var ymax=Math.max.apply(null,ys),ymin=Math.min.apply(null,ys), xr=xs.length-1||1, yr=(ymax-ymin)||1;
+  var pts=snaps.map(function(x,i){ return (pad+i/xr*(W-2*pad)).toFixed(1)+","+(H-pad-(x.organisms-ymin)/yr*(H-2*pad)).toFixed(1); }).join(" ");
+  document.getElementById("spark").innerHTML='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="height:130px">'+
+    '<polyline points="'+pts+'" fill="none" stroke="#4ade80" stroke-width="2.5"/></svg>'+
+    '<div class="note">'+snaps.length+' snapshots · '+ymin+' → '+ymax+' organisms · git history holds them all</div>';
+}
+boot();
+</script></body></html>

@@ -14,7 +14,9 @@ function add(m) {
   if (seen.has(key)) return; seen.add(key);
   const clean = stripLocal(m);
   orgs.push({ t: m.t || "untitled", a: m.a || "@anon", b: m.b || "savanna",
-    drop: m.drop ? { date: m.drop.date, hour: m.drop.hour, won_by: m.drop.won_by } : undefined,
+    drop: m.drop ? { date: m.drop.date, hour: m.drop.hour, won_by: m.drop.won_by, gap_ms: m.drop.gap_ms } : undefined,
+    born: (m.born != null ? m.born : undefined), frames: (m.k || []).length,
+    signer: (m.pub && m.pub.x) ? m.pub.x.slice(0, 16) : undefined,
     signed: !!m.sig, token: tokenOf(clean), fp: F.fingerprint(m) });
 }
 (((load(dir + "/moments.json") || {}).moments) || []).forEach(add);
