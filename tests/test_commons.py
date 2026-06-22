@@ -589,6 +589,19 @@ async def run():
                 check("fidelity_tone",
                       bool(tone.get("aces") and tone.get("srgb") and tone.get("breathes") and tone.get("bounds")), tone)
 
+                # FIDELITY: AerialFog — FogExp2 depth haze, clock-driven density, horizon-tinted colour.
+                fog = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const f=A.fog();
+                    setTimeOfDay(0.42); const noon=A.fog();
+                    setTimeOfDay(0.80); const dusk=A.fog();
+                    setTimeOfDay(0.42);
+                    return { exp2:(f.type==='FogExp2'), dense:(f.density>0),
+                             denserAtDusk:(dusk.density>noon.density),
+                             colorShifts:(dusk.color!==noon.color) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_aerialfog",
+                      bool(fog.get("exp2") and fog.get("dense") and fog.get("denserAtDusk") and fog.get("colorShifts")), fog)
+
                 # FIDELITY: scattering sky dome v2 — three-band gradient + clock-driven horizon haze + sun glow.
                 sky = await ev("""async ()=>{try{const A=window.commonsAgent;
                     const exists=(scene.getObjectByName('SkyDome')&&scene.getObjectByName('SkyDome').isMesh);

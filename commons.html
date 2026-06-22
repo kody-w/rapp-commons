@@ -254,7 +254,10 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 const TONE = { base: 1.05, nightBoost: 0.55 };
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(DNA.fogColor, DNA.fogNear, DNA.fogFar);
+// FIDELITY: AerialFog — clock-tinted EXPONENTIAL depth haze. FogExp2 has no near/far cliff (every
+// MeshStandardMaterial respects it for free), so distant geometry dissolves smoothly into the sky band.
+// Density rides the day-night clock (thin at noon, thick at night/golden hour) in applyTimeOfDay().
+scene.fog = new THREE.FogExp2(DNA.fogColor, 0.0042);
 
 const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 1000);
 camera.position.set(0, DNA.cameraHeight, 0);
@@ -506,12 +509,12 @@ const LANTERNS = { items: [], litPhases: ["night","dusk"], lit:false };
 const DAYNIGHT = {
   t: 0.42, dayLength: 600, auto: true,
   keys: [
-    { t:0.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10, hemiSky:0x223a66, hemiGround:0x0a0e16, hemiI:0.22 },
-    { t:0.22, top:0x243b6b, bot:0xd98a5a, fog:0x6a5a7a, amb:0.66, sun:0xffb070, sunI:0.55, horizon:0xe9a060, haze:0.90, hemiSky:0xffc98a, hemiGround:0x3a2a20, hemiI:0.45 },
-    { t:0.42, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25, hemiSky:0xbfe0ff, hemiGround:0x2a3030, hemiI:0.65 },
-    { t:0.60, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25, hemiSky:0xbfe0ff, hemiGround:0x2a3030, hemiI:0.65 },
-    { t:0.80, top:0x3a2f6b, bot:0xe07a4a, fog:0x6a4a5a, amb:0.60, sun:0xff8a50, sunI:0.48, horizon:0xe07a4a, haze:0.90, hemiSky:0xff9a6a, hemiGround:0x2a1a18, hemiI:0.40 },
-    { t:1.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10, hemiSky:0x223a66, hemiGround:0x0a0e16, hemiI:0.22 }
+    { t:0.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10, hemiSky:0x223a66, hemiGround:0x0a0e16, hemiI:0.22, fogD:0.011 },
+    { t:0.22, top:0x243b6b, bot:0xd98a5a, fog:0x6a5a7a, amb:0.66, sun:0xffb070, sunI:0.55, horizon:0xe9a060, haze:0.90, hemiSky:0xffc98a, hemiGround:0x3a2a20, hemiI:0.45, fogD:0.0075 },
+    { t:0.42, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25, hemiSky:0xbfe0ff, hemiGround:0x2a3030, hemiI:0.65, fogD:0.0042 },
+    { t:0.60, top:0x2a6fc4, bot:0x9fd0ff, fog:0x9fc4e8, amb:1.00, sun:0xfff4d6, sunI:0.95, horizon:0xbfe0ff, haze:0.25, hemiSky:0xbfe0ff, hemiGround:0x2a3030, hemiI:0.65, fogD:0.0042 },
+    { t:0.80, top:0x3a2f6b, bot:0xe07a4a, fog:0x6a4a5a, amb:0.60, sun:0xff8a50, sunI:0.48, horizon:0xe07a4a, haze:0.90, hemiSky:0xff9a6a, hemiGround:0x2a1a18, hemiI:0.40, fogD:0.0075 },
+    { t:1.00, top:0x05060f, bot:0x0a0e1a, fog:0x05060f, amb:0.32, sun:0x33406a, sunI:0.18, horizon:0x0a0e1a, haze:0.10, hemiSky:0x223a66, hemiGround:0x0a0e16, hemiI:0.22, fogD:0.011 }
   ]
 };
 function _dnLerp(a, b, f){
@@ -535,6 +538,10 @@ function applyTimeOfDay(t){
   sky.material.uniforms.top.value.setHex(_dnLerp(a.top, b.top, f));
   sky.material.uniforms.bot.value.setHex(_dnLerp(a.bot, b.bot, f));
   scene.fog.color.setHex(_dnLerp(a.fog, b.fog, f));
+  // FIDELITY: AerialFog — density rides the clock (thin at noon, thick at night/golden hour); then tint
+  // the haze toward the live horizon band so distant geometry dissolves INTO the sky with no seam.
+  scene.fog.density = (a.fogD != null ? a.fogD : 0.0042) + ((b.fogD != null ? b.fogD : 0.0042) - (a.fogD != null ? a.fogD : 0.0042)) * f;
+  scene.fog.color.lerp(new THREE.Color(_dnLerp(a.horizon, b.horizon, f)), 0.5);
   sun.color.setHex(_dnLerp(a.sun, b.sun, f));
   sun.intensity = a.sunI + (b.sunI - a.sunI)*f;
   ambient.intensity = a.amb + (b.amb - a.amb)*f;
@@ -4860,6 +4867,11 @@ boot();
     timeOfDay:    () => (typeof timeOfDay    === "function" ? timeOfDay()      : null),
     setTimeOfDay: (t)  => (typeof setTimeOfDay === "function" ? setTimeOfDay(t)  : null),
     advanceTime:  (dt) => (typeof advanceTime  === "function" ? advanceTime(dt)  : null),
+    // AERIAL FOG (additive, visual): exponential depth haze whose density rides the clock and whose
+    // colour dissolves into the live horizon band. fog() -> {type, density, color, tracksClock}.
+    fog: () => ({ type: (scene.fog && scene.fog.isFogExp2) ? "FogExp2" : (scene.fog ? "Fog" : null),
+                  density: scene.fog ? +(scene.fog.density||0).toFixed(5) : 0,
+                  color: scene.fog ? "#"+scene.fog.color.getHexString() : null, tracksClock: true }),
     // NIGHT LANTERNS (additive, visual): warm lanterns that glow when the clock
     // is dark. lanterns() -> [{at:{x,z}, on}] (on tracks night/dusk).
     lanterns:     () => (typeof lanternsState === "function" ? lanternsState()  : []),
