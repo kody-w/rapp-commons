@@ -406,7 +406,8 @@
   W.openKeeper = openKeeper;
 
   // ---- playback state ----
-  var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf() };
+  var S = { mode: "feed", moment: null, frames: null, pf: 0, playing: true, dur: 14, lastBuild: 0, t0: perf(),
+            camOff: { theta: 0, height: 0, radius: 0 }, orbitT: 0, dragging: false };   // persistent camera offset + auto-orbit clock
   function perf() { return W.performance.now() / 1000; }
   function applyFrame(pf, force) {
     if (!S.frames) return;
@@ -420,47 +421,41 @@
   var cur = new THREE.Vector3(14, 8, 14), look = new THREE.Vector3(0, 1.5, 0);
   function camTick(dt) {
     var c = FORM ? FORM.position : new THREE.Vector3(), by = FORM ? FORM.bodyY : 1.5;
-    var ang = S.t * 0.32, r = 6.6 + Math.sin(S.t * 0.5) * 1.8;
-    var pos = new THREE.Vector3(c.x + Math.cos(ang) * r, by * 0.6 + 2 + Math.sin(S.t * 0.4) * 1.1, c.z + Math.sin(ang) * r);
-    var k = 1 - Math.pow(0.02, dt);
+    // auto-orbit runs on its OWN clock (orbitT) so grabbing the frame freezes it; your drag adds a PERSISTENT
+    // offset (camOff) that survives into resumed playback — reframe once, then watch it play back from your angle.
+    var ang = S.orbitT * 0.32 + S.camOff.theta, r = Math.max(3, 6.6 + Math.sin(S.orbitT * 0.5) * 1.8 + S.camOff.radius);
+    var pos = new THREE.Vector3(c.x + Math.cos(ang) * r, Math.max(0.6, by * 0.6 + 2 + Math.sin(S.orbitT * 0.4) * 1.1 + S.camOff.height), c.z + Math.sin(ang) * r);
+    var k = S.dragging ? 0.6 : (1 - Math.pow(0.02, dt));   // responsive while you drag, smooth otherwise
     cur.lerp(pos, k); look.lerp(new THREE.Vector3(c.x, by * 0.6, c.z), k);
     camera.position.copy(cur); camera.lookAt(look);
   }
 
-  // SCAN MODE — when paused, you take the camera and orbit the frozen organism to inspect it.
-  function scanTarget() { var c = FORM ? FORM.position : new THREE.Vector3(), by = FORM ? FORM.bodyY : 1.5; return new THREE.Vector3(c.x, by * 0.6, c.z); }
-  function initScan() {
-    var t = scanTarget(), off = camera.position.clone().sub(t), r = Math.max(4, off.length());
-    S.scan = { theta: Math.atan2(off.z, off.x), phi: Math.acos(Math.max(-1, Math.min(1, off.y / r))), radius: r };
-  }
-  function scanCam() {
-    if (!S.scan) initScan();
-    var t = scanTarget(), s = S.scan, sp = Math.sin(s.phi);
-    camera.position.set(t.x + s.radius * sp * Math.cos(s.theta), t.y + s.radius * Math.cos(s.phi), t.z + s.radius * sp * Math.sin(s.theta));
-    camera.lookAt(t); cur.copy(camera.position); look.copy(t);   // sync the smoothed state so resuming play won't jump
-  }
-  function scanPaused() { return S.mode === "play" && !S.playing; }
+  // GRAB-TO-REFRAME — grab the frame any time (playing OR paused): it FREEZES while you drag, and the
+  // perspective you set PERSISTS, so playback resumes from your new angle. camOff is that persistent offset.
   function setScanHint(on) { var h = D.getElementById("scanhint"); if (h) h.className = on ? "" : "hide"; }
-  W.setScanHint = setScanHint; W.initScan = initScan;
-  W.scanState = function () { return { scan: S.scan ? { theta: +S.scan.theta.toFixed(4), phi: +S.scan.phi.toFixed(4), radius: +S.scan.radius.toFixed(3) } : null, pf: Math.round(S.pf), playing: S.playing, cam: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) } }; };
+  W.setScanHint = setScanHint;
+  W.camState = function () { return { camOff: { theta: +S.camOff.theta.toFixed(4), height: +S.camOff.height.toFixed(3), radius: +S.camOff.radius.toFixed(3) }, dragging: S.dragging, orbitT: +S.orbitT.toFixed(3), pf: Math.round(S.pf), playing: S.playing, cam: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) } }; };
+  W.scanState = W.camState;   // back-compat alias
+  W.resetCam = function () { S.camOff.theta = 0; S.camOff.height = 0; S.camOff.radius = 0; };
   (function () {
     var dragging = false, lx = 0, ly = 0, pinch = 0, cv = D.getElementById("c");
     if (!cv) return;
-    function down(x, y) { if (!scanPaused()) return; if (!S.scan) initScan(); dragging = true; lx = x; ly = y; cv.style.cursor = "grabbing"; }
-    function move(x, y) { if (!dragging || !scanPaused() || !S.scan) return; var dx = x - lx, dy = y - ly; lx = x; ly = y;
-      S.scan.theta -= dx * 0.01; S.scan.phi = Math.max(0.12, Math.min(Math.PI - 0.12, S.scan.phi - dy * 0.01)); }
-    function up() { dragging = false; cv.style.cursor = scanPaused() ? "grab" : ""; }
-    function zoom(f) { if (!scanPaused()) return; if (!S.scan) initScan(); S.scan.radius = Math.max(3.5, Math.min(48, S.scan.radius * f)); }
+    function grab() { return S.mode === "play" && !!S.frames; }   // reframe whenever a hologram is loaded in the player
+    function down(x, y) { if (!grab()) return; dragging = true; S.dragging = true; lx = x; ly = y; cv.style.cursor = "grabbing"; setScanHint(true); }
+    function move(x, y) { if (!dragging) return; var dx = x - lx, dy = y - ly; lx = x; ly = y;
+      S.camOff.theta -= dx * 0.008; S.camOff.height = Math.max(-4, Math.min(11, S.camOff.height + dy * 0.05)); }
+    function up() { if (!dragging) return; dragging = false; S.dragging = false; cv.style.cursor = "grab"; setScanHint(false); }
+    function zoom(d) { if (!grab()) return; S.camOff.radius = Math.max(-5, Math.min(34, S.camOff.radius + d)); }
     cv.addEventListener("mousedown", function (e) { down(e.clientX, e.clientY); });
     W.addEventListener("mousemove", function (e) { move(e.clientX, e.clientY); });
     W.addEventListener("mouseup", up);
-    cv.addEventListener("wheel", function (e) { if (!scanPaused()) return; e.preventDefault(); zoom(e.deltaY > 0 ? 1.08 : 0.93); }, { passive: false });
-    cv.addEventListener("touchstart", function (e) { if (!scanPaused()) return; if (e.touches.length === 1) down(e.touches[0].clientX, e.touches[0].clientY);
+    cv.addEventListener("wheel", function (e) { if (!grab()) return; e.preventDefault(); zoom(e.deltaY > 0 ? 1.6 : -1.6); }, { passive: false });
+    cv.addEventListener("touchstart", function (e) { if (!grab()) return; if (e.touches.length === 1) down(e.touches[0].clientX, e.touches[0].clientY);
       else if (e.touches.length === 2) pinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); }, { passive: true });
-    cv.addEventListener("touchmove", function (e) { if (!scanPaused()) return;
+    cv.addEventListener("touchmove", function (e) {
       if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY);
-      else if (e.touches.length === 2) { var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); if (pinch) zoom(pinch / d); pinch = d; } }, { passive: true });
-    cv.addEventListener("touchend", up);
+      else if (e.touches.length === 2) { var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); if (pinch) zoom((pinch - d) * 0.06); pinch = d; } }, { passive: true });
+    cv.addEventListener("touchend", function () { pinch = 0; up(); });
   })();
 
   // ---- main loop ----
@@ -470,15 +465,15 @@
     if ((S.mode === "play" || S.mode === "create" || S.pip) && S.frames) {
       // play: honor pause. create: no auto-advance. PiP while navigated away: keep looping.
       var playing = (S.mode === "play") ? S.playing : (S.mode === "create" ? false : true);
-      var moving = (S.mode === "create") || playing;     // PAUSE = a true freeze-frame: stop the clock, bob, AND camera
-      if (playing) { S.pf += dt * (99 / S.dur); if (S.pf >= 99) S.pf = 0; }
+      // GRABBING the frame freezes it: pf, bob, beat AND the auto-orbit clock all hold while you reframe.
+      var moving = ((S.mode === "create") || playing) && !S.dragging;
+      if (moving) { S.pf += dt * (99 / S.dur); if (S.pf >= 99) S.pf = 0; S.orbitT += dt; }
       if (FORM && moving) FORM.position.y = Math.abs(Math.sin(now * 5)) * 0.1;
       applyFrame(S.pf, false);
       if (FORM) { var beat = moving ? heartbeat(now) : 0;   // the companion's heartbeat — pulse the body + glow
         FORM.scale.setScalar(1 + beat * 0.045);
         if (FORM.heartLight) FORM.heartLight.intensity = FORM.baseLI * (1 + beat * 0.65); }
-      if (moving) camTick(dt);
-      else if (S.mode === "play") scanCam();   // paused → you orbit the frozen organism to scan it
+      camTick(dt);   // always drive the camera — auto-orbits when moving, follows your drag (persistent offset) when grabbed
       if (S.mode === "play") updatePC();
     } else { camera.position.set(0, 6, 16); camera.lookAt(0, 1, 0); }
     renderer.render(scene, camera); requestAnimationFrame(tick);
@@ -544,9 +539,9 @@
       if (W.Ownership) resolveOwner(m).then(function (d) { if (d && d.owner) $("ptitle").innerHTML += ' <span class="au" style="color:var(--pa)">· owned by ' + esc((d.ownerRappid || "").replace("rappid:keeper:", "").slice(0, 14)) + '…' + (d.transfers ? " (" + d.transfers + "↦)" : "") + '</span>'; });
     }
   }
-  W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; if (!S.playing) { initScan(); setScanHint(true); } else setScanHint(false); };
+  W.togglePlay = function () { S.playing = !S.playing; $("ppBtn").textContent = S.playing ? "❚❚" : "▶"; setScanHint(!S.playing); };
   W.restart = function () { S.pf = 0; S.playing = true; $("ppBtn").textContent = "❚❚"; setScanHint(false); };
-  W.scrubAt = function (e) { var r = $("track").getBoundingClientRect(); S.pf = Math.max(0, Math.min(99, (e.clientX - r.left) / r.width * 99)); S.playing = false; $("ppBtn").textContent = "▶"; applyFrame(S.pf, true); initScan(); setScanHint(true); };
+  W.scrubAt = function (e) { var r = $("track").getBoundingClientRect(); S.pf = Math.max(0, Math.min(99, (e.clientX - r.left) / r.width * 99)); S.playing = false; $("ppBtn").textContent = "▶"; applyFrame(S.pf, true); setScanHint(true); };
   function updatePC() { $("fl").textContent = "FRAME " + Math.round(S.pf) + " / 99"; $("fill").style.width = (S.pf / 99 * 100) + "%"; }
   W.remix = function () { if (S.moment) { go("create"); loadIntoCreate(S.moment); } };
 
