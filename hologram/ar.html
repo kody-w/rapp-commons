@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>RAPP Moment — place it in your world (AR)</title>
+<style>
+  html,body{margin:0;height:100%;background:#05070d;overflow:hidden;font:13px/1.45 ui-monospace,Menlo,monospace;color:#dff;touch-action:none;}
+  #cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#05070d;}
+  #gl{position:fixed;inset:0;width:100%;height:100%;z-index:1;}
+  #ui{position:fixed;left:0;right:0;bottom:0;z-index:3;padding:14px 16px calc(14px + env(safe-area-inset-bottom));
+      background:linear-gradient(to top,rgba(3,7,14,.82),transparent);display:flex;flex-direction:column;gap:10px;align-items:center;}
+  #hint{position:fixed;top:14px;left:0;right:0;z-index:3;text-align:center;color:#bfefff;}
+  #hint b{color:#fff}
+  .btn{appearance:none;border:1px solid #6cf;background:rgba(8,20,34,.7);color:#dff;padding:11px 18px;border-radius:30px;
+       font:600 14px ui-monospace,Menlo,monospace;letter-spacing:.02em;backdrop-filter:blur(6px);}
+  .btn:active{background:#6cf;color:#021}
+  .row{display:flex;gap:10px;align-items:center;background:rgba(8,20,34,.6);border:1px solid rgba(108,204,255,.3);
+       border-radius:24px;padding:8px 14px;backdrop-filter:blur(6px);}
+  #scale{width:150px}
+  .badge{position:fixed;top:42px;left:0;right:0;z-index:3;text-align:center;color:#9fe1ff;font-size:11px}
+</style>
+</head>
+<body>
+  <video id="cam" playsinline autoplay muted></video>
+  <canvas id="gl"></canvas>
+  <div id="hint">point your camera at the floor · <b>tap to place</b></div>
+  <div class="badge" id="badge"></div>
+  <div id="ui">
+    <div class="row"><span>size</span><input id="scale" type="range" min="0.15" max="3" step="0.05" value="0.8"><span id="sv">0.8 m</span></div>
+    <button class="btn" id="enter">▶ Place in your world</button>
+  </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="homeostasis.js"></script>
+<script src="organism.js"></script>
+<script>
+(function(){
+  function decode(s){try{s=s.replace(/-/g,"+").replace(/_/g,"/");return JSON.parse(decodeURIComponent(escape(atob(s))));}catch(e){return null;}}
+  var q=new URLSearchParams(location.search);
+  // resolve the organism from ?m=<token> or ?dial=<pk> (default: a demo)
+  var rec=null;
+  if(q.get("m")) rec=decode(q.get("m"));
+  else if(q.get("dial") && window.Organism) rec=window.Organism.fromPk(q.get("dial"));
+  if(!rec && window.Organism) rec=window.Organism.fromPk("sky·1782000000000");
+  var H=window.Homeostasis;
+  var f=(H&&rec)?H.valueAt(rec.k,50):{s:0.5,l:0.4,p:0.3,g:0.6,h:200,x:0,z:0};
+  document.getElementById("badge").textContent=(rec&&rec.t?rec.t:"Moment")+(rec&&rec.b?(" · "+rec.b):"")+" · "+(rec&&rec.pk?rec.pk:"");
+
+  // ---- build the organism form (faithful to the hologram player's buildForm) ----
+  function hsl(h){var c=new THREE.Color();c.setHSL((((h%360)+360)%360)/360,0.72,0.56);return c;}
+  function buildForm(f){
+    var g=new THREE.Group();
+    var size=0.55+f.s*1.1, col=hsl(f.h);
+    var mat=new THREE.MeshStandardMaterial({color:col,roughness:0.5,metalness:0.1,emissive:col,emissiveIntensity:0.25+f.g*0.7});
+    var bodyY=0.5+f.l*0.6;
+    var body=new THREE.Mesh(new THREE.BoxGeometry(size*1.7,size,size*1.1),mat);body.position.y=bodyY;g.add(body);
+    var head=new THREE.Mesh(new THREE.BoxGeometry(size*0.75,size*0.75,size*0.75),mat);head.position.set(size*1.05,bodyY+size*0.25,0);g.add(head);
+    [-0.22,0.22].forEach(function(dz){var e=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xffe08a,emissiveIntensity:1.3}));e.position.set(size*1.45,bodyY+size*0.35,dz*size);g.add(e);});
+    var legLen=0.4+f.l*1.1;
+    [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(function(s){var lg=new THREE.Mesh(new THREE.BoxGeometry(0.14,legLen,0.14),mat);lg.position.set(s[0]*size*0.6,bodyY-size*0.5-legLen/2,s[1]*size*0.4);g.add(lg);});
+    var ns=Math.max(0,Math.round(f.p*6));
+    for(var i=0;i<ns;i++){var sp=new THREE.Mesh(new THREE.ConeGeometry(0.14,0.4+f.p*0.6,5),new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.5}));sp.position.set(((i+0.5)/ns-0.5)*size*1.2,bodyY+size*0.55,0);g.add(sp);}
+    var lt=new THREE.PointLight(col,0.6+f.g*2.2,22);lt.position.set(0,bodyY+1.2,0);g.add(lt);
+    g.userData={lt:lt,baseLI:0.6+f.g*2.2,bodyY:bodyY};
+    return g;
+  }
+
+  var renderer=new THREE.WebGLRenderer({canvas:document.getElementById("gl"),alpha:true,antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);
+  var scene=new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff,0x223344,0.9));
+  var sun=new THREE.DirectionalLight(0xffffff,0.8);sun.position.set(3,8,4);scene.add(sun);
+  var camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.01,100);
+  var FORM=buildForm(f);
+  // ground shadow disc so it sits in the world
+  var shadow=new THREE.Mesh(new THREE.CircleGeometry(1,32),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.28}));
+  shadow.rotation.x=-Math.PI/2;
+  var pivot=new THREE.Group();pivot.add(shadow);pivot.add(FORM);
+  // normalize to a real-world height, then apply the size slider (metres)
+  var box=new THREE.Box3().setFromObject(FORM),h0=Math.max(0.001,(box.max.y-box.min.y));
+  function setMeters(m){var s=m/h0;FORM.scale.setScalar(s);shadow.scale.setScalar(s*1.3);}
+  setMeters(0.8);
+  var slider=document.getElementById("scale"),sv=document.getElementById("sv");
+  slider.oninput=function(){setMeters(parseFloat(slider.value));sv.textContent=parseFloat(slider.value).toFixed(2)+" m";};
+
+  function pulse(t){var b=Math.abs(Math.sin(t*3))*1;FORM.scale.x;var beat=0.04*Math.abs(Math.sin(t*5));FORM.children[0]&&0;var lt=FORM.userData.lt;if(lt)lt.intensity=FORM.userData.baseLI*(1+beat*8);FORM.rotation.y+=0.004;}
+
+  // ================= WebXR immersive-AR (true placement; Android Chrome) =================
+  var xrSupported=false;
+  if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported("immersive-ar").then(function(ok){xrSupported=ok;if(ok)document.getElementById("enter").textContent="▶ Enter AR (place on a surface)";}).catch(function(){});}
+
+  var reticle,hitSource=null,placed=false;
+  function startXR(){
+    var overlay=document.getElementById("ui");
+    navigator.xr.requestSession("immersive-ar",{requiredFeatures:["hit-test"],optionalFeatures:["dom-overlay"],domOverlay:{root:document.body}}).then(function(session){
+      renderer.xr.enabled=true;renderer.xr.setReferenceSpaceType("local");renderer.xr.setSession(session);
+      document.getElementById("hint").textContent="move your phone to find a surface · tap to place";
+      reticle=new THREE.Mesh(new THREE.RingGeometry(0.07,0.09,32).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0x6cf}));
+      reticle.matrixAutoUpdate=false;reticle.visible=false;scene.add(reticle);pivot.visible=false;
+      session.requestReferenceSpace("viewer").then(function(vs){session.requestHitTestSource({space:vs}).then(function(s){hitSource=s;});});
+      var localSpace;session.requestReferenceSpace("local").then(function(s){localSpace=s;});
+      session.addEventListener("select",function(){if(reticle&&reticle.visible){pivot.position.setFromMatrixPosition(reticle.matrix);pivot.visible=true;placed=true;document.getElementById("hint").textContent="placed — walk around it";}});
+      renderer.setAnimationLoop(function(t,frame){
+        if(frame&&hitSource){var refSpace=renderer.xr.getReferenceSpace();var hits=frame.getHitTestResults(hitSource);
+          if(hits.length){var pose=hits[0].getPose(refSpace);reticle.visible=!placed;reticle.matrix.fromArray(pose.transform.matrix);}else reticle.visible=false;}
+        pulse(t/1000);renderer.render(scene,camera);
+      });
+    }).catch(function(e){fallbackCamera();});
+  }
+
+  // ================= camera-feed + look-around fallback (iOS/desktop) =================
+  var started=false;
+  function fallbackCamera(){
+    scene.add(pivot);pivot.position.set(0,-0.4,-2.2);   // ~2.2 m in front, on the floor
+    camera.position.set(0,0,0);
+    var cam=document.getElementById("cam");
+    navigator.mediaDevices&&navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false})
+      .then(function(stream){cam.srcObject=stream;document.getElementById("hint").textContent="your creature is in the room · drag to orbit · pinch / slider to size";})
+      .catch(function(){cam.style.background="radial-gradient(circle at 50% 30%,#0a1a2f,#05070d)";document.getElementById("hint").textContent="camera unavailable — showing the creature on a backdrop";});
+    // gyro look-around (best effort), else touch-orbit
+    var yaw=0,pitch=0,useGyro=false;
+    function onGyro(e){if(e.alpha==null)return;useGyro=true;var z=THREE.MathUtils.degToRad(e.alpha||0),x=THREE.MathUtils.degToRad(e.beta||0),y=THREE.MathUtils.degToRad(e.gamma||0);var euler=new THREE.Euler(x-Math.PI/2,y,-z,"YXZ");camera.quaternion.setFromEuler(euler);}
+    window.addEventListener("deviceorientation",onGyro,true);
+    // touch / mouse orbit (works everywhere)
+    var dragging=false,lx=0,ly=0,pinch=0;
+    var c=renderer.domElement;
+    function down(x,y){dragging=true;lx=x;ly=y;}
+    function move(x,y){if(!dragging||useGyro)return;yaw-=(x-lx)*0.005;pitch=Math.max(-1.2,Math.min(1.2,pitch-(y-ly)*0.005));lx=x;ly=y;
+      camera.position.set(Math.sin(yaw)*2.2,0,Math.cos(yaw)*2.2-0.0);camera.lookAt(pivot.position);}
+    c.addEventListener("mousedown",function(e){down(e.clientX,e.clientY);});
+    window.addEventListener("mousemove",function(e){move(e.clientX,e.clientY);});
+    window.addEventListener("mouseup",function(){dragging=false;});
+    c.addEventListener("touchstart",function(e){if(e.touches.length===1)down(e.touches[0].clientX,e.touches[0].clientY);else if(e.touches.length===2)pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);},{passive:true});
+    c.addEventListener("touchmove",function(e){if(e.touches.length===1)move(e.touches[0].clientX,e.touches[0].clientY);else if(e.touches.length===2){var d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);if(pinch){var nv=Math.max(0.15,Math.min(3,parseFloat(slider.value)*(d/pinch)));slider.value=nv;setMeters(nv);sv.textContent=nv.toFixed(2)+" m";}pinch=d;}},{passive:true});
+    renderer.setAnimationLoop(function(t){pulse(t/1000);renderer.render(scene,camera);});
+  }
+
+  document.getElementById("enter").addEventListener("click",function(){
+    if(started)return;started=true;document.getElementById("enter").style.display="none";
+    // iOS needs an explicit motion-permission gesture
+    if(typeof DeviceOrientationEvent!=="undefined"&&DeviceOrientationEvent.requestPermission){DeviceOrientationEvent.requestPermission().catch(function(){});}
+    if(xrSupported)startXR();else fallbackCamera();
+  });
+
+  addEventListener("resize",function(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
+  // render a preview immediately so the page isn't blank before "Place"
+  scene.add(pivot);pivot.position.set(0,-0.4,-2.2);camera.position.set(0,0,0);camera.lookAt(0,-0.2,-2.2);
+  renderer.setAnimationLoop(function(t){pulse(t/1000);renderer.render(scene,camera);});
+})();
+</script>
+</body>
+</html>
