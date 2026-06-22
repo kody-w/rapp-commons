@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fractal Moment — a world within a frame within a world</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: #cfefff; }
+  .bg { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  /* the portal: a window in this world that plays the Moment embedded inside it */
+  .portal { position: fixed; right: 5%; bottom: 7%; width: 42%; height: 42%;
+    border: 2px solid #6cf; border-radius: 12px; overflow: hidden; background: #000;
+    box-shadow: 0 0 46px rgba(108,204,255,.55), inset 0 0 26px rgba(0,0,0,.6);
+    animation: pulse 3.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{ box-shadow:0 0 40px rgba(108,204,255,.45),inset 0 0 26px rgba(0,0,0,.6);} 50%{ box-shadow:0 0 70px rgba(108,204,255,.8),inset 0 0 26px rgba(0,0,0,.6);} }
+  .portal iframe { width: 100%; height: 100%; border: 0; }
+  .label { position: fixed; left: 14px; top: 12px; z-index: 9; padding: 6px 11px;
+    background: rgba(4,10,18,.6); border: 1px solid rgba(108,204,255,.35); border-radius: 8px;
+    backdrop-filter: blur(6px); letter-spacing: .02em; }
+  .label b { color: #fff; }
+  .plabel { position: absolute; left: 8px; top: 7px; z-index: 9; font-size: 11px;
+    padding: 3px 8px; background: rgba(4,10,18,.7); border-radius: 6px; color: #9fe1ff; }
+</style>
+</head>
+<body>
+  <iframe class="bg" id="bg" title="hologram"></iframe>
+  <div class="label" id="label">loading fractal…</div>
+  <div class="portal" id="portal" style="display:none">
+    <div class="plabel" id="plabel">↳ inside</div>
+    <iframe id="pf" title="embedded moment"></iframe>
+  </div>
+<script>
+  // base64url -> record (matches moment.js encode/decode)
+  function decode(s){ try { s = s.replace(/-/g,"+").replace(/_/g,"/"); return JSON.parse(decodeURIComponent(escape(atob(s)))); } catch(e){ return null; } }
+
+  var q = new URLSearchParams(location.search);
+  var depth = parseInt(q.get("d") || "6", 10);   // safety cap (also bounds the self-referential hall of mirrors)
+  var lvl = parseInt(q.get("lvl") || "1", 10);
+
+  function render(tok){
+    var rec = (tok && decode(tok)) || {};
+    document.getElementById("bg").src = "./index.html?m=" + encodeURIComponent(tok || "");
+    // a Moment can embed another by token, or embed ITSELF via the "self" sentinel
+    var selfRef = rec.embed === "self";
+    var child = selfRef ? tok : rec.embed;
+    document.getElementById("label").innerHTML =
+      "FRACTAL MOMENT &nbsp;·&nbsp; depth <b>" + lvl + "</b> &nbsp;·&nbsp; <b>" + (rec.t || "?") + "</b>" +
+      (rec.b ? " &nbsp;·&nbsp; " + rec.b : "") +
+      (selfRef ? " &nbsp;·&nbsp; ♾ embeds itself" : (rec.embed ? " &nbsp;·&nbsp; ↳ contains a Moment" : " &nbsp;·&nbsp; ◦ the seed (no deeper)"));
+    if (child && depth > 0) {
+      document.getElementById("portal").style.display = "block";
+      document.getElementById("plabel").textContent = selfRef ? "♾ itself" : "↳ inside";
+      document.getElementById("pf").src = "./fractal.html?m=" + encodeURIComponent(child) +
+        "&d=" + (depth - 1) + "&lvl=" + (lvl + 1);
+    }
+  }
+
+  var tok = q.get("m");
+  if (tok) {
+    render(tok);
+  } else {
+    // bare URL -> a baked demo. ?demo=chain (4 distinct nested worlds) | ?demo=mirror (hall of mirrors)
+    var which = q.get("demo") || "chain";
+    fetch("./fractals.json").then(function(r){ return r.json(); })
+      .then(function(j){ render(j[which] || j.chain); })
+      .catch(function(){ document.getElementById("label").textContent = "fractal demo unavailable (pass ?m=<token>)"; });
+  }
+</script>
+</body>
+</html>
