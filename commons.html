@@ -429,6 +429,44 @@ function lakeStep(dt){
   return { waterLevel: +CommonsLake.position.y.toFixed(2), ripplePhase: +u.uTime.value.toFixed(3),
            reflectsHorizon: "#" + u.uHorizon.value.getHexString() };
 }
+// FIDELITY: LAKE CAUSTICS — sunlit dancing light on the lake floor. ONE CircleGeometry(LAKE.r-1) laid flat
+// just above the carved basin floor (y = LAKE.floor + 0.06), centred on the lake. A cheap procedural shader
+// sums two ridged abs(sin) layers of distorted UVs scrolling OPPOSITE on uTime — caustic = pow(1 - |sin*sin|, 8)
+// — masked by a radial falloff that fades at the deep centre + the rim. The caustic light is multiplied by
+// uSunColor*uDayGate, both COPIED every frame from CommonsLake's water shader (lakeStep refreshes them) so the
+// floor light locks to the mirror water above: bright sunlit caustics by day, gone at night. AdditiveBlending,
+// no depth write, drawn UNDER the water surface. uTime via causticsStep(dt), hooked beside lakeStep.
+const LakeCaustics = new THREE.Mesh(new THREE.CircleGeometry(LAKE.r - 1, 48),
+  new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+    uniforms:{ uTime:{value:0}, uSunColor:{value:new THREE.Color(0xfff4d6)}, uDayGate:{value:1.0} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uTime,uDayGate; uniform vec3 uSunColor; varying vec2 vUv;
+      void main(){
+        vec2 p = (vUv - 0.5) * 14.0;                                  // lake-floor space
+        // two distorted UV fields scrolling in OPPOSITE directions
+        vec2 a = p + vec2( uTime*0.6, -uTime*0.4) + 1.3*sin(p.yx*0.9 + uTime*0.7);
+        vec2 b = p + vec2(-uTime*0.5,  uTime*0.6) + 1.1*sin(p.yx*1.3 - uTime*0.5);
+        float n1 = sin(a.x) * sin(a.y);
+        float n2 = sin(b.x) * sin(b.y);
+        float caustic = pow(1.0 - abs(n1 * n2), 8.0);                 // ridged caustic web
+        float r = length(vUv - 0.5) * 2.0;                           // 0 centre -> 1 rim
+        float mask = smoothstep(0.15, 0.45, r) * smoothstep(1.0, 0.7, r);   // fade at deep centre + rim
+        float a2 = caustic * mask * uDayGate;
+        gl_FragColor = vec4(uSunColor * a2, a2);
+      }` }));
+LakeCaustics.name = "LakeCaustics";
+LakeCaustics.rotateX(-Math.PI/2);
+LakeCaustics.position.set(LAKE.cx, LAKE.floor + 0.06, LAKE.cz);   // just above the carved basin floor (-3.34)
+LakeCaustics.renderOrder = 0; LakeCaustics.frustumCulled = false; scene.add(LakeCaustics);
+// advance the caustics clock + LOCK its sun colour / day gate to the live water shader above (which lakeStep
+// refreshes). Called beside lakeStep(dt) in animate() AND lakeStep(0) in applyTimeOfDay() so it's deterministic.
+function causticsStep(dt){
+  const u = LakeCaustics.material.uniforms, lu = CommonsLake.material.uniforms;
+  u.uTime.value += (+dt || 0);
+  u.uSunColor.value.copy(lu.uSunColor.value);
+  u.uDayGate.value = lu.uDayGate.value;
+  return { phase: +u.uTime.value.toFixed(3), dayGate: +u.uDayGate.value.toFixed(3) };
+}
 // FIDELITY: WET SHORELINE & FOAM BAND — ONE flat ring welded to the carved shore so the lake doesn't float on
 // the land. Every ring vertex is snapped to groundHeight()+0.03 so it hugs the basin lip; a NormalBlending
 // wet-sand shader darkens/saturates the tone toward the waterline (vUv.y: 0 dry outer -> 1 inner waterline),
@@ -524,14 +562,21 @@ function gradeUpdate(){
 }
 // FIDELITY: procedural BLOOM HALOS — additive sprite glow on every light source, ONE shared radial texture,
 // swelling after dark and near-zero at noon. No EffectComposer. Built once the scene's lights all exist.
-var BloomHalos = null;
-function buildBloomHalos(){
-  if (BloomHalos) return;
+var BloomHalos = null, BloomRadialTex = null;
+// the shared 128px radial CanvasTexture for every additive glow (bloom halos + the sun-flare ghosts). Built
+// once, lazily, with no asset/network — both buildBloomHalos() and buildSunFlare() pull from it.
+function bloomRadialTexture(){
+  if (BloomRadialTex) return BloomRadialTex;
   var cv = document.createElement("canvas"); cv.width = cv.height = 128;
   var cx = cv.getContext("2d"), grd = cx.createRadialGradient(64,64,0,64,64,64);
   grd.addColorStop(0,"rgba(255,255,255,1)"); grd.addColorStop(0.28,"rgba(255,255,255,0.5)"); grd.addColorStop(1,"rgba(255,255,255,0)");
   cx.fillStyle = grd; cx.fillRect(0,0,128,128);
-  var haloTex = new THREE.CanvasTexture(cv);
+  BloomRadialTex = new THREE.CanvasTexture(cv);
+  return BloomRadialTex;
+}
+function buildBloomHalos(){
+  if (BloomHalos) return;
+  var haloTex = bloomRadialTexture();
   var grp = new THREE.Group(); grp.name = "BloomHalos"; grp.renderOrder = 4; var sources = [];
   scene.traverse(function(o){
     if (o.isPointLight) sources.push({ obj:o, color:o.color, isLight:true, base:Math.max(0.001,o.intensity) });
@@ -656,6 +701,135 @@ function contactShadowUpdate(){
     m.compose(p, q, s); ContactShadows.setMatrixAt(i, m); sum += rr;
   }
   ContactShadows.instanceMatrix.needsUpdate = true; ud.meanScale = sum / an.length;
+}
+// FIDELITY: ANAMORPHIC SUN FLARE — an occlusion-gated additive lens flare pinned to the camera EXACTLY like
+// GradePass (the SAME camera-pinned near-plane quad math gradeResize() uses). ONE 'SunFlare' Group of additive
+// Sprites: a core + ~8 ghosts strung along the sun→screen-centre axis (reusing the shared BloomHalos radial
+// texture) plus ONE 256×16 horizontal-gradient streak texture built once at boot (no asset/network). Every
+// frame sunFlareStep() projects the LIVE sun to NDC, maps that NDC onto the near-plane quad, and gates the
+// master opacity to 0 below the horizon / when not facing the sun / when occluded by world geometry — so it
+// never lights up where it shouldn't and every shipped test stays green. ~8 sprites, no render target.
+var SunFlare = null, SunFlareStreakTex = null;
+const _sfData = { ghosts:0, facing:0, occluded:false, intensity:0, lowSunBoost:0 };
+function sunFlareStreakTexture(){
+  if (SunFlareStreakTex) return SunFlareStreakTex;
+  var cv = document.createElement("canvas"); cv.width = 256; cv.height = 16;
+  var cx = cv.getContext("2d"), grd = cx.createLinearGradient(0,0,256,0);
+  grd.addColorStop(0,"rgba(255,255,255,0)"); grd.addColorStop(0.5,"rgba(255,255,255,1)"); grd.addColorStop(1,"rgba(255,255,255,0)");
+  cx.fillStyle = grd; cx.fillRect(0,0,256,16);
+  SunFlareStreakTex = new THREE.CanvasTexture(cv);
+  return SunFlareStreakTex;
+}
+// the static occluder list (rebuilt lazily) the flare raycasts against — a small set of solid world meshes.
+var _sfOccluders = null, _sfOccFrame = 0;
+function _sfBuildOccluders(){
+  var list = [];
+  scene.traverse(function(o){
+    if (!o.isMesh || o.material === undefined) return;
+    var n = o.name || "";
+    if (n === "SunFlare" || n === "GradePass" || n === "godRays" || n === "GroundMist" || n === "CommonsLake"
+        || n === "LakeShoreBand" || n === "CloudDome" || n === "ContactShadows" || n === "AuroraCurtains"
+        || n === "SunDisc" || n === "MoonDisc" || n === "BloomHalos" || n === "LightCones") return;
+    if (o === sky) return;
+    if (o.material && (o.material.transparent === true && (o.material.opacity||1) < 0.99)) return;
+    if (o.material && o.material.blending === THREE.AdditiveBlending) return;
+    list.push(o);
+  });
+  _sfOccluders = list;
+}
+function buildSunFlare(){
+  if (SunFlare) return SunFlare;
+  var grp = new THREE.Group(); grp.name = "SunFlare"; grp.renderOrder = 9998; grp.frustumCulled = false;
+  var haloTex = bloomRadialTexture(), streakTex = sunFlareStreakTexture();
+  var warm = new THREE.Color(0xfff0c0), cool = new THREE.Color(0xb0d8ff);
+  function spr(tex, baseScale){
+    var m = new THREE.SpriteMaterial({ map:tex, color:0xffffff, blending:THREE.AdditiveBlending,
+      depthTest:false, depthWrite:false, transparent:true, opacity:0 });
+    var s = new THREE.Sprite(m); s.frustumCulled = false; s.renderOrder = 9998;
+    s.userData = { baseScale: baseScale }; grp.add(s); return s;
+  }
+  // the streak (anamorphic horizontal bar through the sun) + the bright core, both at the sun position.
+  var streak = spr(streakTex, 1); streak.userData.role = "streak"; streak.scale.set(9, 0.55, 1);
+  var core = spr(haloTex, 2.4);   core.userData.role  = "core";
+  // ~8 ghosts strung along the sun→centre axis at k in [-0.35,0.15,0.4,0.7,1.0] (+a few extra), warm/cool alt.
+  var ks = [-0.35, 0.15, 0.4, 0.55, 0.7, 0.85, 1.0, 1.25];
+  var ghosts = [];
+  for (var i=0;i<ks.length;i++){
+    var g = spr(haloTex, Math.max(0.4, Math.abs(ks[i]) * 2.2));
+    g.userData.role = "ghost"; g.userData.k = ks[i];
+    g.material.color.copy((i % 2 === 0) ? warm : cool);
+    ghosts.push(g);
+  }
+  grp.userData = { core:core, streak:streak, ghosts:ghosts };
+  scene.add(grp); SunFlare = grp;
+  return grp;
+}
+const _sfSun = new THREE.Vector3(), _sfFwd = new THREE.Vector3(), _sfRight = new THREE.Vector3(),
+      _sfUp = new THREE.Vector3(), _sfWorldDir = new THREE.Vector3(), _sfRay = new THREE.Raycaster(),
+      _sfNdc = new THREE.Vector3(), _sfCenter = new THREE.Vector3();
+function sunFlareStep(dt){
+  if (!SunFlare) { return Object.assign({ present:false }, _sfData); }
+  var sunDir = sky.material.uniforms.sunDir.value;
+  // camera basis
+  camera.getWorldDirection(_sfFwd);
+  _sfRight.set(1,0,0).applyQuaternion(camera.quaternion);
+  _sfUp.set(0,1,0).applyQuaternion(camera.quaternion);
+  var facing = THREE.MathUtils.clamp(_sfFwd.dot(sunDir), 0, 1);
+  _sfData.facing = +facing.toFixed(4);
+  // low-sun boost (god-rays idiom) + day gate (god-rays idiom) + above-horizon gate.
+  var lowSun = 1.0 - THREE.MathUtils.smoothstep(sunDir.y, 0.1, 0.6);
+  var dayGate = THREE.MathUtils.smoothstep(ambient.intensity, 0.45, 0.72);
+  _sfData.lowSunBoost = +((0.4 + 0.6 * lowSun)).toFixed(4);
+  // project the live sun to NDC; if it's behind the camera, kill the flare outright.
+  _sfSun.copy(sunDir).multiplyScalar(440).add(camera.position);
+  _sfNdc.copy(_sfSun).project(camera);
+  var behind = (_sfNdc.z > 1.0) || (facing <= 0);
+  // OCCLUSION (cached, re-cast every ~6 frames): does any solid world mesh block the line to the sun?
+  _sfOccFrame++;
+  if (_sfOccluders === null || (_sfOccFrame % 6) === 0){
+    if (_sfOccluders === null) _sfBuildOccluders();
+    _sfRay.set(camera.position, sunDir);
+    _sfRay.far = 400;
+    var hits = _sfRay.intersectObjects(_sfOccluders, true);
+    _sfData.occluded = (hits.length > 0 && hits[0].distance < 400);
+  }
+  // master opacity: facing^3 * lowSun boost * day gate, zeroed below horizon / behind / occluded.
+  var master = Math.pow(facing, 3) * (0.4 + 0.6 * lowSun) * dayGate;
+  if (sunDir.y <= 0.0 || behind || _sfData.occluded) master = 0;
+  _sfData.intensity = +master.toFixed(4);
+  // near-plane quad math (the SAME gradeResize() uses): place the group on the near plane just ahead.
+  var distQuad = 0.2;
+  var halfH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * distQuad;
+  var halfW = halfH * camera.aspect;
+  camera.getWorldDirection(_sfWorldDir);
+  var ud = SunFlare.userData;
+  // tint the core/streak from the live sun colour.
+  var sc = sun.color;
+  function placeNdc(spr, nx, ny){
+    spr.position.copy(camera.position).addScaledVector(_sfWorldDir, distQuad)
+       .addScaledVector(_sfRight, nx * halfW).addScaledVector(_sfUp, ny * halfH);
+  }
+  if (master <= 0){
+    for (var i=0;i<SunFlare.children.length;i++) SunFlare.children[i].material.opacity = 0;
+  } else {
+    var sx = _sfNdc.x, sy = _sfNdc.y;
+    // core + streak sit at the sun; tinted by the sun colour.
+    placeNdc(ud.core, sx, sy); ud.core.material.color.copy(sc); ud.core.material.opacity = master * 0.9;
+    ud.core.scale.setScalar(ud.core.userData.baseScale * (0.0009 + halfW) * 1.0 * 6.0);
+    placeNdc(ud.streak, sx, sy); ud.streak.material.color.copy(sc); ud.streak.material.opacity = master * 0.7;
+    ud.streak.scale.set(halfW * 1.4, halfH * 0.10, 1);
+    // ghosts strung along the line from the sun toward screen centre (0,0).
+    for (var gi=0; gi<ud.ghosts.length; gi++){
+      var g = ud.ghosts[gi], k = g.userData.k;
+      var gx = sx + k * (0 - sx), gy = sy + k * (0 - sy);
+      placeNdc(g, gx, gy);
+      g.material.opacity = master * (0.42 / (1 + Math.abs(k) * 1.2));
+      var gs = (0.5 + Math.abs(k)) * halfW * 2.6;
+      g.scale.setScalar(Math.max(0.02, gs));
+    }
+  }
+  _sfData.ghosts = ud.ghosts.length;
+  return Object.assign({ present:true, group:"SunFlare" }, _sfData);
 }
 // FIDELITY: a drifting fBm CLOUDSCAPE — a second dome just inside the sky, scrolling value-noise clouds
 // that thicken at dusk and thin by day, lit by the sun's direction. Transparent, no texture, 4 octaves.
@@ -785,6 +959,83 @@ function greatTreeStep(dt){
   const glow = +(night * 2.4).toFixed(3);
   GreatTreeHeart.material.emissiveIntensity = glow;
   GreatTree.userData.glow = glow;
+  return { glow };
+}
+// FIDELITY: THE LANTERN SPIRE — a stone watchtower landmark seated SOUTH of spawn (z=+150), opposite the
+// Heartwood (z=-150) so the two anchor the world's N/S axis. A tapered stone shaft (course-banded + swelled
+// like the GreatTree trunk idiom), a crenellated crown of merlons, cardinal window slits, and a brazier
+// beacon at the top whose emissive + PointLight kindle after dark (night-gated by the SAME nightness scalar
+// as the stars/aurora) — so the beacon reflects in CommonsLake via the existing mirror. ~15 low-poly meshes.
+var LanternSpire = null, LanternBrazier = null, LanternBeacon = null;
+function buildLanternSpire(){
+  if (LanternSpire) return LanternSpire;
+  const g = new THREE.Group(); g.name = "LanternSpire";
+  const sx = 0, sz = 150, sy = (typeof groundHeight === "function" ? groundHeight(sx, sz) : 0);
+  g.position.set(sx, sy, sz);
+  const stone = new THREE.MeshStandardMaterial({ color:0x8a8378, roughness:0.95, metalness:0.0, flatShading:true });
+  const dark  = new THREE.MeshStandardMaterial({ color:0x2a2722, roughness:0.9, flatShading:true });
+  // SHAFT — tapered stone cylinder; side verts swelled by a low-freq sin(y) + a banded radius step (floor(y/3)
+  // parity) so it reads as stacked stone courses (the GreatTree trunk idiom).
+  const shaftH = 34;
+  const sgeo = new THREE.CylinderGeometry(2.2, 4.0, shaftH, 8, 7);
+  const sp = sgeo.attributes.position;
+  for (let i = 0; i < sp.count; i++){ const y = sp.getY(i);
+    const swell = 1 + 0.05 * Math.sin(y * 0.5);                       // gentle low-freq swell along the shaft
+    const course = 1 + ((Math.floor((y + shaftH/2) / 3) % 2) ? 0.035 : 0.0);   // banded radius step = courses
+    const k = swell * course;
+    sp.setX(i, sp.getX(i) * k); sp.setZ(i, sp.getZ(i) * k); }
+  sgeo.computeVertexNormals();
+  const shaft = new THREE.Mesh(sgeo, stone); shaft.position.y = shaftH/2; shaft.castShadow = true; g.add(shaft);
+  // CROWN — a short cap cylinder + a ring of 8 small box merlons (crenellations) around its lip.
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 2.4, 1.6, 8), stone);
+  cap.position.y = shaftH + 0.8; cap.castShadow = true; g.add(cap);
+  const merlonR = 2.7;
+  for (let i = 0; i < 8; i++){
+    const ang = (i / 8) * Math.PI * 2;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.1, 0.7), stone);
+    m.position.set(Math.cos(ang) * merlonR, shaftH + 2.0, Math.sin(ang) * merlonR);
+    m.castShadow = true; g.add(m);
+  }
+  // WINDOW SLITS — 4 thin dark boxes on the cardinal faces partway up the shaft.
+  for (let i = 0; i < 4; i++){
+    const ang = (i / 4) * Math.PI * 2;
+    const w = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.4, 0.3), dark);
+    const rad = 3.2;
+    w.position.set(Math.cos(ang) * rad, shaftH * 0.6, Math.sin(ang) * rad);
+    w.lookAt(w.position.x * 2, w.position.y, w.position.z * 2);
+    g.add(w);
+  }
+  // BEACON — an icosa brazier (emissive) + ONE PointLight at the very top, both kindled after dark by spireStep.
+  LanternBrazier = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4, 1),
+    new THREE.MeshStandardMaterial({ color:0x2a1c0a, emissive:0xffb24d, emissiveIntensity:0.0, roughness:0.5, flatShading:true }));
+  LanternBrazier.position.y = shaftH + 2.2; LanternBrazier.castShadow = true; g.add(LanternBrazier);
+  LanternBeacon = new THREE.PointLight(0xffb070, 0, 60); LanternBeacon.position.y = shaftH + 2.4; g.add(LanternBeacon);
+  // a floating label above the spire (the existing makeLabel sprite idiom).
+  if (typeof makeLabel === "function"){ const lbl = makeLabel("The Lantern Spire", 0xffd9a0, shaftH + 5.0); g.add(lbl); }
+  const topReach = shaftH + 3.0;
+  g.userData = { height: +topReach.toFixed(2), glow: 0 };
+  scene.add(g); LanternSpire = g;
+  // register a navigable place via the EXISTING list()/travelTo mechanism (additive — never disturbs the
+  // shipped square/voxel/nexus/words/poker areas).
+  if (typeof makeAreaInteractable === "function"){
+    makeAreaInteractable({
+      pos: new THREE.Vector3(sx, (typeof DNA !== "undefined" ? DNA.cameraHeight : 1.6), sz),
+      radius: 8, type: "area", label: "The Lantern Spire", slug: "lantern-spire",
+      blurb: "A stone watchtower south of the commons whose brazier kindles after dark.",
+      action: () => { travelTo(Object.assign(new THREE.Vector3(sx, DNA.cameraHeight, sz), { label:"The Lantern Spire" })); if (typeof hideRoomHud === "function") hideRoomHud(); }
+    });
+  }
+  return g;
+}
+// night-gate the brazier beacon (kindles after dark, dark at noon) — called beside greatTreeStep so it reflects
+// in CommonsLake and updates the instant the clock moves. Returns the live glow for deterministic tests.
+function spireStep(dt){
+  if (!LanternSpire || !LanternBrazier || !LanternBeacon) return { glow: 0 };
+  const night = 1.0 - Math.min(1, Math.max(0, (ambient.intensity - 0.3) / 0.7));   // same nightness idiom
+  const glow = +(night * 3.0).toFixed(3);
+  LanternBrazier.material.emissiveIntensity = glow;
+  LanternBeacon.intensity = +(night * 2.2).toFixed(3);
+  LanternSpire.userData.glow = glow;
   return { glow };
 }
 // FIDELITY: CELESTIAL BODIES — a real sun disc and a phased moon riding the sky opposite each other.
@@ -1153,7 +1404,9 @@ function applyTimeOfDay(t){
   if (typeof bloomUpdate === "function") bloomUpdate();            // bloom halos swell after dark
   if (typeof gradeUpdate === "function") gradeUpdate();            // cinematic grade tints harder at night
   if (typeof lakeStep === "function") lakeStep(0);                 // FIDELITY: refresh the lake's mirrored sky uniforms the instant the clock moves
+  if (typeof causticsStep === "function") causticsStep(0);        // FIDELITY: re-lock the lake-floor caustics to the water shader the instant the clock moves
   if (typeof greatTreeStep === "function") greatTreeStep(0);       // FIDELITY: re-gate the Heartwood glow the instant the clock moves
+  if (typeof spireStep === "function") spireStep(0);              // FIDELITY: re-kindle the Lantern Spire beacon the instant the clock moves
   if (typeof contactShadowUpdate === "function") contactShadowUpdate();   // FIDELITY: tighten/darken contact AO with the sun, fade at night
   if (typeof auroraUpdate === "function") auroraUpdate();          // FIDELITY: night aurora glows only after dark
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
@@ -3972,12 +4225,15 @@ function animate(){
   grade.material.uniforms.uTime.value += dt;
   grade.quaternion.copy(camera.quaternion);
   grade.position.copy(camera.position).add(camera.getWorldDirection(_gradeTmp).multiplyScalar(0.2));
+  if (typeof sunFlareStep === "function") sunFlareStep(dt);   // FIDELITY: project the live sun + gate the occlusion-aware lens flare
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
   GroundMist.material.uniforms.uTime.value += dt;                                              // drift the ground-mist noise field
   GroundMist.position.set(camera.position.x, 3, camera.position.z);                            // keep the mist sheet centred under the player
   if (typeof lakeStep === "function") lakeStep(dt);                                            // FIDELITY: ripple the lake + mirror the LIVE sky uniforms (no render target)
+  if (typeof causticsStep === "function") causticsStep(dt);                                    // FIDELITY: dance the lake-floor caustics, locked to the water shader above
   if (typeof shorelineStep === "function") shorelineStep(dt);                                  // FIDELITY: animate the wet shoreline's foam lap-line
   if (typeof greatTreeStep === "function") greatTreeStep(dt);                                  // FIDELITY: night-gate the Heartwood glow (reflects in the lake)
+  if (typeof spireStep === "function") spireStep(dt);                                          // FIDELITY: kindle the Lantern Spire beacon after dark (reflects in the lake)
   if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
   if (typeof stormStep === "function") stormStep(dt);                                            // FIDELITY: advance the (default-off) storm front — rain ramp, strikes, flash decay
@@ -5320,9 +5576,11 @@ async function boot(){
   if (typeof buildGrassField === "function") buildGrassField();   // FIDELITY: instanced grass-tuft meadow carpets the ground
   if (typeof buildRockOutcrops === "function") buildRockOutcrops();   // FIDELITY: instanced rock outcrops welded into steep terrain
   if (typeof buildGreatTree === "function") buildGreatTree();         // FIDELITY: the Heartwood — hero GreatTree landmark north of the lake
+  if (typeof buildLanternSpire === "function") buildLanternSpire();   // FIDELITY: the Lantern Spire — stone watchtower landmark south of spawn
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
   if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
   if (typeof buildContactShadows === "function") buildContactShadows();   // FIDELITY: grounding AO blobs under every standing thing
+  if (typeof buildSunFlare === "function") buildSunFlare();               // FIDELITY: occlusion-gated anamorphic sun flare pinned to the camera
   if (typeof attachGaze === "function") attachGaze();             // FIDELITY: living gaze — heads/eyes track the player
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
@@ -5828,6 +6086,12 @@ boot();
     lightCones: () => { if (!LightCones) return { present: false, cones: 0 }; var ch = LightCones.children, add = true, ndw = true, maxN = 0;
       for (var i = 0; i < ch.length; i++){ if (ch[i].material.blending !== THREE.AdditiveBlending) add = false; if (ch[i].material.depthWrite !== false) ndw = false; var n = ch[i].material.uniforms.uNight.value; if (n > maxN) maxN = n; }
       return { present: true, cones: ch.length, additive: add, noDepthWrite: ndw, nightGlow: +maxN.toFixed(3) }; },
+    // ANAMORPHIC SUN FLARE (additive, visual): an occlusion-gated lens flare pinned to the camera. sunFlare()
+    // -> {present, group:'SunFlare', ghosts, facing:(camForward·sunDir), occluded, intensity:(master opacity),
+    // lowSunBoost}. Gates to 0 below the horizon / when not facing the sun / when occluded. Drive it
+    // deterministically (no rendering) via sunFlareStep(dt) which projects the LIVE sun + recomputes the gate.
+    sunFlare:     () => { if (!SunFlare) return { present: false }; return sunFlareStep(0); },
+    sunFlareStep: (dt) => (typeof sunFlareStep === "function" ? sunFlareStep(+dt || 0) : null),
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
     flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),
@@ -5891,6 +6155,16 @@ boot();
         plazaFlat: (Math.abs(groundHeight(0, 0)) < 0.05 && Math.abs(groundHeight(10, 0)) < 0.05),
         reflectsHorizon: "#" + u.uHorizon.value.getHexString(), ripplePhase: +u.uTime.value.toFixed(3) }; },
     lakeStep: (dt) => (typeof lakeStep === "function" ? lakeStep(+dt || 0.016) : null),
+    // LAKE CAUSTICS (additive, visual): sunlit dancing light on the lake floor, a procedural caustic web on
+    // ONE flat disc just above the carved basin floor, its sun colour + day gate LOCKED every frame to the
+    // CommonsLake water shader above. caustics() -> {present, name:'LakeCaustics', floorY, phase, dayGate,
+    // sunColor:'#hex', radius}. causticsStep(dt) advances the clock + re-locks the uniforms (deterministic).
+    caustics: () => { const m = scene.getObjectByName("LakeCaustics"); if (!m) return { present: false };
+      const u = m.material.uniforms;
+      return { present: true, name: "LakeCaustics", floorY: +m.position.y.toFixed(2),
+        phase: +u.uTime.value.toFixed(3), dayGate: +u.uDayGate.value.toFixed(3),
+        sunColor: "#" + u.uSunColor.value.getHexString(), radius: LAKE.r - 1 }; },
+    causticsStep: (dt) => (typeof causticsStep === "function" ? causticsStep(+dt || 0.016) : null),
     // WET SHORELINE (visual): ONE flat ring welded to the carved shore (groundHeight()+0.03 at every vertex)
     // with a wet-sand/foam shader. shoreline() -> {present, name, innerR, outerR, hugsTerrain:(every ring
     // vertex's world-Y is within 0.06 of groundHeight at its x,z), foamPhase}. shorelineStep(dt) advances foam.
@@ -5909,6 +6183,13 @@ boot();
       const ud = m.userData || {};
       return { present: true, pos: { x: +m.position.x.toFixed(1), y: +m.position.y.toFixed(1), z: +m.position.z.toFixed(1) },
         height: ud.height || 0, limbs: ud.limbs || 0, glow: ud.glow || 0 }; },
+    // THE LANTERN SPIRE (visual): a stone watchtower landmark south of spawn (z=+150), opposite the Heartwood,
+    // with a brazier beacon that kindles after dark and reflects in CommonsLake. spire() -> {present, height,
+    // glow:(current night-gated emissiveIntensity), mirrorsLake:true}. Glow rides the same nightness scalar as
+    // the stars/aurora (beacons at night, dark at noon). Registered as a navigable place via list()/travelTo.
+    spire: () => { const m = scene.getObjectByName("LanternSpire"); if (!m) return { present: false };
+      const ud = m.userData || {};
+      return { present: true, height: ud.height || 0, glow: ud.glow || 0, mirrorsLake: true }; },
     // CONTACT SHADOWS (visual): ONE InstancedMesh of soft AO discs grounding every standing thing on the
     // terrain. contactShadows() -> {count, opacity, meanScale, name, grounded:(every instance's world-Y
     // matches groundHeight(x,z) within eps)}. opacity + meanScale ride the sun (crisp at noon, soft at dusk).

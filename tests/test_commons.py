@@ -1111,6 +1111,107 @@ async def run():
                            and gtree.get("lakeOk")
                            and (gtree.get("aurOn") or 0) > 0.6 and (gtree.get("ffOn") or 0) > 0.9),
                       gtree)
+
+                # FIDELITY: ANAMORPHIC SUN FLARE — an occlusion-gated additive lens flare pinned to the camera
+                # like GradePass (renderOrder 9998, just under GradePass's 9999). ONE 'SunFlare' Group of
+                # additive sprites: a core + streak + ~8 ghosts strung along the sun→centre axis. Each frame
+                # sunFlareStep() projects the LIVE sun to NDC, maps it onto the SAME near-plane quad gradeResize
+                # uses, and gates master opacity to 0 below the horizon / when not facing the sun / when occluded.
+                # Probe: exists + ghosts>0; daytime facing the sun → facing>0.8 && intensity>0; midnight → 0;
+                # turn 180° away from the sun → facing≈0 && intensity===0. Driven via the deterministic
+                # sunFlareStep() hook so it needs no rendering.
+                flare = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const g=scene.getObjectByName('SunFlare');
+                    const exists=!!(g&&g.type==='Group'); const renderOrder=g?g.renderOrder:0;
+                    const base=A.sunFlare();
+                    // DAYTIME, facing the sun: point the camera straight at the live sun direction.
+                    setTimeOfDay(0.42);
+                    const sd=sky.material.uniforms.sunDir.value;
+                    const o=camera; o.position.set(0,1.6,0);
+                    o.lookAt(o.position.x+sd.x, o.position.y+sd.y, o.position.z+sd.z); o.updateMatrixWorld(true);
+                    const facingSun=A.sunFlareStep(0);
+                    // MIDNIGHT: sun below the horizon -> flare must be fully dark regardless of where we look.
+                    setTimeOfDay(0.0); const nightSF=A.sunFlareStep(0);
+                    // BACK to day, then turn 180° AWAY from the sun -> facing≈0, intensity 0.
+                    setTimeOfDay(0.42);
+                    o.lookAt(o.position.x-sd.x, o.position.y-sd.y, o.position.z-sd.z); o.updateMatrixWorld(true);
+                    const awaySF=A.sunFlareStep(0);
+                    setTimeOfDay(0.42);
+                    return { exists, group:base.group, renderOrder, ghosts:base.ghosts,
+                             facing:facingSun.facing, intensity:facingSun.intensity,
+                             nightInt:nightSF.intensity, awayFacing:awaySF.facing, awayInt:awaySF.intensity };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_sunflare",
+                      bool(flare.get("exists") and flare.get("group") == "SunFlare"
+                           and flare.get("renderOrder") == 9998
+                           and (flare.get("ghosts") or 0) > 0
+                           and (flare.get("facing") or 0) > 0.8 and (flare.get("intensity") or 0) > 0
+                           and flare.get("nightInt") == 0
+                           and (flare.get("awayFacing") if flare.get("awayFacing") is not None else 1) < 0.05
+                           and flare.get("awayInt") == 0),
+                      flare)
+
+                # FIDELITY: LAKE CAUSTICS — sunlit dancing light on the lake floor. ONE 'LakeCaustics' disc laid
+                # flat just above the carved basin floor (y≈-3.34), centred on the lake, additive-blended. The
+                # caustic light is multiplied by uSunColor*uDayGate, both COPIED every frame from the CommonsLake
+                # water shader (lakeStep refreshes them) so the floor light locks to the mirror water above —
+                # bright by day, gone at night. uTime advances via the deterministic causticsStep(dt) hook.
+                # Probe: exists, floorY≈-3.34, within LAKE.r of the lake centre, dayGate>0.5 at noon and ≈0 at
+                # midnight, phase strictly increases on positive dt, material.blending===AdditiveBlending.
+                caus = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('LakeCaustics');
+                    const exists=!!(m&&m.isMesh);
+                    const additive=!!(m&&m.material.blending===THREE.AdditiveBlending);
+                    const wp=new THREE.Vector3(); if(m) m.getWorldPosition(wp);
+                    const dist=Math.hypot(wp.x-LAKE.cx, wp.z-LAKE.cz);
+                    setTimeOfDay(0.5); A.lakeStep(0); const noon=A.causticsStep(0);
+                    setTimeOfDay(0.0); A.lakeStep(0); const night=A.causticsStep(0);
+                    setTimeOfDay(0.42); A.lakeStep(0);
+                    const p1=A.causticsStep(0.5).phase, p2=A.causticsStep(0.5).phase;
+                    const probe=A.caustics();
+                    return { exists, additive, floorY:probe.floorY, dist, withinLakeR:(dist<LAKE.r),
+                             noonGate:noon.dayGate, nightGate:night.dayGate, advances:(p2>p1),
+                             name:probe.name, radius:probe.radius };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_caustics",
+                      bool(caus.get("exists") and caus.get("name") == "LakeCaustics"
+                           and abs((caus.get("floorY") if caus.get("floorY") is not None else 0) - (-3.34)) < 0.05
+                           and caus.get("withinLakeR") is True
+                           and (caus.get("noonGate") or 0) > 0.5
+                           and (caus.get("nightGate") if caus.get("nightGate") is not None else 1) < 0.05
+                           and caus.get("advances") and caus.get("additive") is True),
+                      caus)
+
+                # FIDELITY: THE LANTERN SPIRE — a stone watchtower landmark south of spawn (z=+150), opposite
+                # the Heartwood (z=-150), built once at boot: a course-banded tapered stone shaft, crenellated
+                # crown, cardinal window slits, and a brazier beacon (emissive + PointLight) at the top that
+                # KINDLES after dark — night-gated by the SAME nightness scalar as the stars/aurora, so it
+                # reflects in CommonsLake via the existing mirror. Registered as a navigable place via the
+                # EXISTING list()/travelTo mechanism (additive — never disturbs the shipped areas). Probe:
+                # present, height in [34,40]; noon→glow<0.05; midnight→glow>1.5; world z≈150; 'The Lantern Spire'
+                # appears in commonsAgent.list(). spireStep() night-gates the beacon the instant the clock moves.
+                spire = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('LanternSpire');
+                    const exists=!!m; const wp=new THREE.Vector3(); if(m) m.getWorldPosition(wp);
+                    const base=A.spire();
+                    setTimeOfDay(0.5); A.timeOfDay(); const noon=A.spire().glow;
+                    setTimeOfDay(0.0); const night=A.spire().glow;
+                    setTimeOfDay(0.42);
+                    const names=(A.list()||[]).map(p=>(p.name||p.slug||p).toString().toLowerCase());
+                    const listed=names.some(n=>n.indexOf('lantern spire')>=0 || n.indexOf('lantern-spire')>=0);
+                    return { present:base.present, height:base.height, mirrorsLake:base.mirrorsLake,
+                             worldZ:+wp.z.toFixed(1), noon, night, listed,
+                             names: names };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_spire",
+                      bool(spire.get("present")
+                           and 34 <= (spire.get("height") or 0) <= 40
+                           and spire.get("mirrorsLake") is True
+                           and abs((spire.get("worldZ") if spire.get("worldZ") is not None else 0) - 150) < 2
+                           and (spire.get("noon") if spire.get("noon") is not None else 1) < 0.05
+                           and (spire.get("night") or 0) > 1.5
+                           and spire.get("listed")),
+                      spire)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
