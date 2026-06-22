@@ -1,0 +1,22 @@
+name: 🎴 Submit a Hologram Cartridge
+description: Contribute your own hologram (any cartridge, any traits) to the RAPP Zoo. Processed automatically by GitHub Actions — no server.
+title: "[moment] "
+labels: ["moment-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A hologram is a **cartridge** — a portable, tradeable record where *everything is a trait*. Build one in the [creator](https://kody-w.github.io/rapp-commons/hologram/?create), hit **Share**, and paste the `?m=…` token below. Or paste raw cartridge JSON. **Every frame needs only `at`** (the time axis); add any traits you like — a player renders what it understands. An agent can POST this issue via the GitHub API to contribute programmatically.
+  - type: textarea
+    id: cartridge
+    attributes:
+      label: Your cartridge — a `?m=` token, a ```json``` block, or raw JSON
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: join
+    attributes:
+      label: Join a moment / dimension (optional)
+      description: "A pk or rappid to anchor your holo to — e.g. join: sky·1778521758000 (the genesis Commons)."
+      placeholder: "join: sky·1778521758000"

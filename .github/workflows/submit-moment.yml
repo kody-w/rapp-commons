@@ -1,0 +1,46 @@
+name: Submit a Moment (cartridge)
+on:
+  issues:
+    types: [opened, edited]
+permissions:
+  contents: write
+  issues: write
+jobs:
+  ingest:
+    if: contains(toJson(github.event.issue.labels), 'moment-submission') || startsWith(github.event.issue.title, '[moment]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate + ingest the cartridge
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          printf '%s' "$BODY" > /tmp/body.txt
+          node hologram/submit_moment.js /tmp/body.txt
+      - name: Commit if accepted (rebase for concurrency with the troll)
+        run: |
+          if node -e "try{process.exit(require('/tmp/submit_result.json').ok?0:1)}catch(e){process.exit(1)}"; then
+            node hologram/build_warehouse.js || true
+            git config user.name "moment-bot"
+            git config user.email "moment-bot@users.noreply.github.com"
+            git add hologram/moments.json hologram/submissions.json hologram/warehouse.json
+            git commit -m "submit: ingest cartridge from #${{ github.event.issue.number }}" || exit 0
+            for i in 1 2 3; do
+              git pull --rebase origin "${{ github.event.repository.default_branch }}" || true
+              git push origin "HEAD:${{ github.event.repository.default_branch }}" && break || sleep 4
+            done
+          fi
+      - name: Reply on the issue (the API response)
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let r; try { r = require('/tmp/submit_result.json'); } catch (e) { r = { ok:false, reason:'the processor did not run' }; }
+            const body = r.ok
+              ? `✅ **Accepted** — your hologram cartridge **"${r.title}"** (${r.frames} frames; traits: \`${(r.traits||[]).join(', ')||'—'}\`${r.anchor?`; joined \`${r.anchor}\``:''}) is now showcased on the RAPP Zoo, streamed live from this repo's raw data.\n\n▶ **Walk it:** ${r.dial}\n\nThanks for contributing your cartridge.`
+              : `❌ **Not ingested** — ${r.reason}\n\nEdit this issue with a valid cartridge (a \`?m=\` token, a fenced \`\`\`json\`\`\` block, or raw JSON with an \`at\`-keyed \`k\` frame array — every frame needs only \`at\`; everything else is an open trait) and I'll re-check automatically.`;
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            if (r.ok) await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, state: 'closed' });
