@@ -1251,6 +1251,118 @@ async def run():
                            and lc.get("verifyTamper") is False
                            and lc.get("fromMatchesProbe") is True),
                       lc)
+
+                # FIDELITY: THE LAKESPAN — an arched stone footbridge humping over CommonsLake on the N/S chord,
+                # built once at boot: a deck lofted from ~24 box segments along y=apex*sin(PI*t), railing posts +
+                # top-rails, tapered abutments seated via groundHeight(), and 2 emissive braziers + 2 PointLights
+                # that kindle after dark (night-gated by the SAME nightness scalar as the spire). Registered as a
+                # navigable place via the EXISTING list()/travelTo mechanism (slug 'lakespan'). Probe: present,
+                # spanLength, apexY above the water surface, lanterns===2, glow night-gated. The bounding-box
+                # z-extent must cover the lake (>= 2*LAKE.r); 'lakespan' joins list() with NO venue regression.
+                lspan = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('Lakespan');
+                    const exists=!!m;
+                    const bb=m?new THREE.Box3().setFromObject(m):null;
+                    const zext=bb?(bb.max.z-bb.min.z):0;
+                    const waterY=LAKE.floor+2.9;
+                    const before=(A.list()||[]).map(p=>(p.slug||p.name||p).toString().toLowerCase());
+                    setTimeOfDay(0.0); const nightGlow=A.lakespan().glow;
+                    setTimeOfDay(0.5); const dayGlow=A.lakespan().glow;
+                    setTimeOfDay(0.42);
+                    const probe=A.lakespan();
+                    const names=(A.list()||[]).map(p=>(p.slug||p.name||p).toString().toLowerCase());
+                    const hasSlug=names.some(n=>n.indexOf('lakespan')>=0);
+                    return { exists, name:probe.name, spanLength:probe.spanLength, apexY:probe.apexY,
+                             aboveWater:(probe.apexY>waterY), lanterns:probe.lanterns,
+                             zext:+zext.toFixed(2), zEnough:(zext>=2*LAKE.r),
+                             nightGlow, dayGlow, hasSlug, listLen:names.length, beforeLen:before.length };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_lakespan",
+                      bool(lspan.get("exists") and lspan.get("name") == "Lakespan"
+                           and lspan.get("zEnough") is True
+                           and lspan.get("aboveWater") is True
+                           and lspan.get("lanterns") == 2
+                           and (lspan.get("nightGlow") or 0) > 1.5
+                           and (lspan.get("dayGlow") if lspan.get("dayGlow") is not None else 1) < 0.1
+                           and lspan.get("hasSlug") is True),
+                      lspan)
+
+                # FIDELITY: KOI POND — a small rigged school of koi swimming just beneath the CommonsLake mirror.
+                # Each koi is a kinematic chain (head + 2 body pivots + a tail fin) whose traveling sine yields a
+                # fish S-curve; the school wanders a confined lissajous/circular path (planar radius < LAKE.r-1.5
+                # about the lake centre), y just under the water plane, facing velocity. Built once, seeded fresh
+                # ('KOIP'), zero per-frame allocation, NEVER touching the lake/ripple uniforms. Probe: present,
+                # count===8, waveAmp>0 after stepping (bodies undulating), every koi stays inside the lake and
+                # submerged. We drive koiStep over several frames and assert the sampled koi never leaves the lake.
+                koi = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('KoiSchool');
+                    const exists=!!m;
+                    const maxR=LAKE.r;
+                    let everInside=true, maxWave=0;
+                    for (let f=0; f<30; f++){
+                      A.koiStep(0.1);
+                      const p=A.koi();
+                      if (p.waveAmp>maxWave) maxWave=p.waveAmp;
+                      if (!p.inLake) everInside=false;
+                      // sample koi #0's planar dist from the lake centre directly off the scene graph.
+                      const k0=_koi[0].grp;
+                      if (Math.hypot(k0.position.x, k0.position.z) >= maxR) everInside=false;
+                    }
+                    const probe=A.koi();
+                    setTimeOfDay(0.42); A.koiStep(0);
+                    return { exists, name:probe.name, count:probe.count, maxWave,
+                             inLake:probe.inLake, submerged:probe.submerged };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_koi",
+                      bool(koi.get("exists") and koi.get("name") == "KoiSchool"
+                           and koi.get("count") == 8
+                           and (koi.get("maxWave") or 0) > 0.001
+                           and koi.get("inLake") is True
+                           and koi.get("submerged") == koi.get("count")),
+                      koi)
+
+                # FIDELITY: THE WHISPERING GROVE — a torii-gated walkable birch garden seated east of the commons
+                # (~(95,_,20)), clear of the plaza, off the radiating paths, and a safe distance from the lake /
+                # GreatTree / Lantern Spire. ~9 slender birch ring a moss disc; a vermilion torii gate faces the
+                # approach; a stacked stone lantern (ishidoro) glows after dark. The birch leaves sway on the
+                # SHARED wind clock (WINDFX.mats via injectWind — no new sway layer). Registered as a navigable
+                # place via the EXISTING list()/travelTo mechanism (slug 'whispering-grove'). Probe: present,
+                # trees===9, hasTorii, offPlaza, glow night-gated; min distance from the other landmarks safe;
+                # 'whispering-grove' joins list() reachable via goto, with NO venue regression.
+                grove = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('WhisperingGrove');
+                    const exists=!!m;
+                    const before=(A.list()||[]).map(p=>(p.slug||p.name||p).toString().toLowerCase());
+                    const probe=A.grove();
+                    const c=probe.centre||{x:0,z:0};
+                    const dLake=Math.hypot(c.x-LAKE.cx, c.z-LAKE.cz);
+                    const gt=scene.getObjectByName('GreatTree'); const ls=scene.getObjectByName('LanternSpire');
+                    const dTree=gt?Math.hypot(c.x-gt.position.x, c.z-gt.position.z):999;
+                    const dSpire=ls?Math.hypot(c.x-ls.position.x, c.z-ls.position.z):999;
+                    setTimeOfDay(0.0); const nightGlow=A.grove().glow;
+                    setTimeOfDay(0.5); const dayGlow=A.grove().glow;
+                    setTimeOfDay(0.42);
+                    const names=(A.list()||[]).map(p=>(p.slug||p.name||p).toString().toLowerCase());
+                    const hasSlug=names.some(n=>n.indexOf('whispering-grove')>=0 || n.indexOf('whispering grove')>=0);
+                    const goneto=A.goto('Whispering Grove');
+                    const reached=!!(goneto && !goneto.error);
+                    return { exists, name:probe.name, trees:probe.trees, hasTorii:probe.hasTorii,
+                             offPlaza:probe.offPlaza, nightGlow, dayGlow, hasSlug, reached,
+                             minLandmark:+Math.min(dLake,dTree,dSpire).toFixed(1),
+                             beforeLen:before.length, listLen:names.length };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_grove",
+                      bool(grove.get("exists") and grove.get("name") == "WhisperingGrove"
+                           and grove.get("trees") == 9
+                           and grove.get("hasTorii") is True
+                           and grove.get("offPlaza") is True
+                           and (grove.get("minLandmark") or 0) > 40
+                           and (grove.get("nightGlow") or 0) > 1.0
+                           and (grove.get("dayGlow") if grove.get("dayGlow") is not None else 1) < 0.1
+                           and grove.get("hasSlug") is True
+                           and grove.get("reached") is True
+                           and grove.get("listLen") >= grove.get("beforeLen")),
+                      grove)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")

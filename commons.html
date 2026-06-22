@@ -1038,6 +1038,280 @@ function spireStep(dt){
   LanternSpire.userData.glow = glow;
   return { glow };
 }
+// FIDELITY: THE LAKESPAN — an arched stone footbridge humping over CommonsLake on the N/S chord. The deck is
+// lofted from ~24 short box segments along a parametric semicircle y = apex*sin(PI*t) (apex ~3.5u above the
+// water surface), each segment oriented by lookAt(next sample) for a smooth hump. Low-poly railing posts +
+// top-rails line both sides; tapered cylinder abutments seat on the shore via groundHeight(); two emissive
+// braziers + two PointLights at the abutments kindle after dark (night-gated). Built once; lakespanStep only
+// tweens the two light intensities + two emissive scalars. Registered as a navigable place via the EXISTING
+// makeAreaInteractable mechanism (slug 'lakespan'). ~60 static low-poly meshes; reuses the spire's stone idiom.
+var Lakespan = null; var LakespanBraziers = [], LakespanLights = [];
+function buildLakespan(){
+  if (Lakespan) return Lakespan;
+  const g = new THREE.Group(); g.name = "Lakespan";
+  const stone = new THREE.MeshStandardMaterial({ color:0x8a8378, roughness:0.95, metalness:0.0, flatShading:true });
+  const waterY = LAKE.floor + 2.9;                      // CommonsLake's surface height (-0.5)
+  const apex = 3.5;                                     // hump height above the water surface
+  const z0 = -(LAKE.r + 2), z1 = (LAKE.r + 2);          // local N/S chord ends (group sits at lake centre)
+  const span = z1 - z0;                                 // chord length
+  g.position.set(LAKE.cx, 0, LAKE.cz);                  // group origin at the lake centre (world y handled per-mesh)
+  // DECK — loft ~24 short box segments along the semicircle, each looking at the next sample for a smooth hump.
+  const SEG = 24, deckW = 4.2;
+  const sample = (t) => new THREE.Vector3(0, waterY + apex * Math.sin(Math.PI * t), z0 + span * t);
+  for (let i = 0; i < SEG; i++){
+    const t0 = i / SEG, t1 = (i + 1) / SEG, tm = (t0 + t1) / 2;
+    const a = sample(t0), b = sample(t1), mid = sample(tm);
+    const segLen = a.distanceTo(b) * 1.08;              // slight overlap so the deck reads continuous
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(deckW, 0.5, segLen), stone);
+    deck.position.copy(mid); deck.lookAt(b.x, b.y, b.z);  // orient along the arc tangent (box length is +z)
+    deck.castShadow = true; deck.receiveShadow = true; g.add(deck);
+  }
+  // RAILINGS — two rows of low-poly posts + a thin top-rail box on each side (~30 meshes).
+  const POSTS = 7, railH = 1.2;
+  for (const side of [-1, 1]){
+    for (let i = 0; i <= POSTS; i++){
+      const t = i / POSTS, p = sample(t);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.25, railH, 0.25), stone);
+      post.position.set(side * (deckW/2 - 0.2), p.y + railH/2, p.z);
+      post.castShadow = true; g.add(post);
+    }
+    // a thin top-rail spanning the hump on this side (single slightly-arched box; close enough at this scale)
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, span * 1.02), stone);
+    const cm = sample(0.5);
+    rail.position.set(side * (deckW/2 - 0.2), cm.y + railH, cm.z);
+    rail.castShadow = true; g.add(rail);
+  }
+  // ABUTMENTS — two tapered cylinder footings seated on the shore via groundHeight() at each chord end.
+  const abut = [];
+  for (const t of [0, 1]){
+    const p = sample(t);
+    const wx = LAKE.cx, wz = LAKE.cz + p.z;             // world coords of this chord end
+    const gy = (typeof groundHeight === "function" ? groundHeight(wx, wz) : 0);
+    const top = p.y;                                    // deck height at the end (world y)
+    const h = Math.max(1.2, top - gy + 0.6);
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.4, h, 10), stone);
+    foot.position.set(0, gy + h/2, p.z);                // local (group origin = lake centre, gy is absolute since g.position.y=0)
+    foot.castShadow = true; foot.receiveShadow = true; g.add(foot);
+    abut.push({ z: p.z, topY: top });
+  }
+  // LANTERNS — 2 small emissive icosa braziers + 2 PointLights at the abutments, kindled after dark.
+  LakespanBraziers = []; LakespanLights = [];
+  for (const a of abut){
+    const braz = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 1),
+      new THREE.MeshStandardMaterial({ color:0x2a1c0a, emissive:0xffb24d, emissiveIntensity:0.0, roughness:0.5, flatShading:true }));
+    braz.position.set(deckW/2 - 0.2, a.topY + railH + 0.5, a.z);
+    braz.castShadow = true; g.add(braz); LakespanBraziers.push(braz);
+    const lt = new THREE.PointLight(0xffb070, 0, 40);
+    lt.position.set(deckW/2 - 0.2, a.topY + railH + 0.6, a.z); g.add(lt); LakespanLights.push(lt);
+  }
+  const apexY = +(waterY + apex).toFixed(2);
+  g.userData = { spanLength: +span.toFixed(2), apexY, lanterns: LakespanBraziers.length, glow: 0 };
+  scene.add(g); Lakespan = g;
+  // register a navigable place via the EXISTING list()/travelTo mechanism (additive — never disturbs the
+  // shipped areas). Approach point on the south shore of the lake (off the water).
+  if (typeof makeAreaInteractable === "function"){
+    const apX = LAKE.cx, apZ = LAKE.cz + (LAKE.r + 2);
+    makeAreaInteractable({
+      pos: new THREE.Vector3(apX, (typeof DNA !== "undefined" ? DNA.cameraHeight : 1.6), apZ),
+      radius: 7, type: "area", label: "The Lakespan", slug: "lakespan",
+      blurb: "An arched stone footbridge humping over CommonsLake, lanterns kindling at each end after dark.",
+      action: () => { travelTo(Object.assign(new THREE.Vector3(apX, DNA.cameraHeight, apZ), { label:"The Lakespan" })); if (typeof hideRoomHud === "function") hideRoomHud(); }
+    });
+  }
+  return g;
+}
+// night-gate the Lakespan braziers (kindle after dark) — called beside spireStep so it tracks the clock the
+// instant it moves. Returns the live glow for deterministic tests.
+function lakespanStep(dt){
+  if (!Lakespan || !LakespanBraziers.length) return { glow: 0 };
+  const night = 1.0 - Math.min(1, Math.max(0, (ambient.intensity - 0.3) / 0.7));   // same nightness idiom
+  const glow = +(night * 3.0).toFixed(3);
+  for (const b of LakespanBraziers) b.material.emissiveIntensity = glow;
+  for (const l of LakespanLights) l.intensity = +(night * 2.0).toFixed(3);
+  Lakespan.userData.glow = glow;
+  return { glow };
+}
+// FIDELITY: KOI POND — a small school of rigged koi swimming just beneath the CommonsLake mirror. Each koi is
+// a short kinematic chain (head + 2 body segments + a flattened triangular tail-fin), each segment parented to
+// the previous as a pivot Group so a traveling sine (segment.rotation.y = sin(t*rate + i*lag)*amp) yields a
+// fish S-curve. ~8 koi, orange/white with a slight emissive so they read through the shipped Fresnel water.
+// koiStep(dt) advances each koi along a confined lissajous/circular wander (planar radius < LAKE.r-1.5 about
+// the lake centre), y just below the surface, faces velocity, runs the body wave. Seeded fresh ('KOIP') and
+// zero per-frame allocation (module-level scratch vectors). Built once; NEVER touches the lake/ripple uniforms.
+var KoiSchool = null; var _koi = [];
+const _koiTmpV = new THREE.Vector3(), _koiTmpV2 = new THREE.Vector3(), _koiClock = { t: 0 };
+function buildKoi(){
+  if (KoiSchool) return KoiSchool;
+  const g = new THREE.Group(); g.name = "KoiSchool";
+  g.position.set(LAKE.cx, 0, LAKE.cz);                       // school centred on the lake (world y handled per-koi)
+  let s = 0x4b4f4950 >>> 0;                                  // fresh mulberry32 seed tagged 'KOIP'
+  const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const orange = new THREE.MeshStandardMaterial({ color:0xe8702a, emissive:0x401405, emissiveIntensity:0.35, roughness:0.6, flatShading:true });
+  const white  = new THREE.MeshStandardMaterial({ color:0xf3ede2, emissive:0x3a3026, emissiveIntensity:0.25, roughness:0.6, flatShading:true });
+  const waterY = LAKE.floor + 2.9;                           // CommonsLake surface (-0.5)
+  const N = 8;
+  for (let i = 0; i < N; i++){
+    const mat = (i % 3 === 0) ? white : orange;
+    const koi = new THREE.Group(); koi.name = "koi-" + i;
+    const sc = 0.8 + rnd() * 0.6;
+    // HEAD — a scaled sphere tapering forward; the chain grows backward (-z) via nested pivots.
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8), mat);
+    head.scale.set(0.8, 0.7, 1.3); head.castShadow = true; koi.add(head);
+    // BODY SEGMENTS — 2 nested pivots, each a flattened sphere, offset back along -z.
+    const segs = [];
+    let parent = koi;
+    for (let j = 0; j < 2; j++){
+      const pivot = new THREE.Group(); pivot.position.set(0, 0, -0.55 - j * 0.05);
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.36 - j * 0.1, 9, 7), mat);
+      body.scale.set(0.85, 0.65, 1.1); body.position.z = -0.25; body.castShadow = true;
+      pivot.add(body); parent.add(pivot); parent = pivot; segs.push(pivot);
+    }
+    // TAIL FIN — a flattened triangular plane parented to the last body pivot.
+    const tailPivot = new THREE.Group(); tailPivot.position.set(0, 0, -0.5);
+    const fin = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.6, 3), mat);
+    fin.rotation.x = -Math.PI / 2; fin.scale.set(1.0, 0.12, 1.0); fin.position.z = -0.35;
+    tailPivot.add(fin); parent.add(tailPivot); segs.push(tailPivot);
+    koi.scale.setScalar(sc);
+    g.add(koi);
+    // wander params: an orbit radius inside the lake, an angular rate, a lissajous wobble, body-wave params.
+    const orbitR = 4 + rnd() * (LAKE.r - 1.5 - 4 - 2);       // safely inside LAKE.r-1.5
+    _koi.push({ grp: koi, segs,
+      orbitR, ang: rnd() * Math.PI * 2, rate: (0.18 + rnd() * 0.22) * (rnd() < 0.5 ? -1 : 1),
+      wob: 0.6 + rnd() * 1.4, wobPh: rnd() * Math.PI * 2, wobAmp: 1.5 + rnd() * 2.5,
+      yBase: waterY - (0.7 + rnd() * 0.5),                   // well under the water plane
+      waveRate: 4 + rnd() * 2, waveLag: 0.9 + rnd() * 0.5, waveAmp: 0.22 + rnd() * 0.12,
+      grazePh: rnd() * 100, grazeRate: 0.03 + rnd() * 0.02 });
+  }
+  g.userData = { count: N, waterY };
+  scene.add(g); KoiSchool = g;
+  return g;
+}
+// advance every koi along its confined wander + run the body S-curve. Zero per-frame allocation (scratch
+// vectors). Called beside causticsStep in animate() AND koiStep(0) in applyTimeOfDay() so it's deterministic.
+function koiStep(dt){
+  if (!KoiSchool || !_koi.length) return { count: 0, waveAmp: 0 };
+  _koiClock.t += (+dt || 0);
+  const t = _koiClock.t, maxR = LAKE.r - 1.5, waterY = KoiSchool.userData.waterY;
+  for (const k of _koi){
+    k.ang += k.rate * (+dt || 0);
+    // confined lissajous wander: an orbit modulated by a slow radial wobble, clamped inside LAKE.r-1.5.
+    let r = k.orbitR + Math.sin(t * 0.3 + k.wobPh) * 1.5;
+    r = Math.min(maxR - 0.5, Math.max(2, r));
+    const x = Math.cos(k.ang) * r;
+    const z = Math.sin(k.ang) * r;
+    // graze: one koi may slowly bob toward (but never above) the surface — transform only.
+    const graze = Math.max(0, Math.sin(t * k.grazeRate + k.grazePh)) * 0.25;
+    const y = Math.min(waterY - 0.08, k.yBase + graze);
+    _koiTmpV.set(x, y, z);
+    // face velocity (tangent of the orbit) — derive from current vs previous-frame position.
+    _koiTmpV2.copy(_koiTmpV).sub(k.grp.position);
+    if (_koiTmpV2.lengthSq() > 1e-6){
+      const yaw = Math.atan2(_koiTmpV2.x, _koiTmpV2.z);     // this scene's atan2(dx,dz) yaw convention
+      k.grp.rotation.y = yaw;
+    }
+    k.grp.position.copy(_koiTmpV);
+    // body S-curve: a traveling sine down the chain.
+    for (let i = 0; i < k.segs.length; i++){
+      k.segs[i].rotation.y = Math.sin(t * k.waveRate + i * k.waveLag) * k.waveAmp;
+    }
+  }
+  // report a sampled mid-segment's live undulation amplitude.
+  const sample = _koi[0], mid = sample.segs[0];
+  return { count: _koi.length, waveAmp: +Math.abs(mid.rotation.y).toFixed(4) };
+}
+// FIDELITY: THE WHISPERING GROVE — a torii-gated walkable garden zone east of the commons. A ring of ~9
+// slender birch (pale tapered trunks topped with small flattened icosa leaf blobs), a vermilion torii gate
+// facing the approach, a stacked stone lantern (ishidoro) with an emissive fire-box core + ONE PointLight,
+// and a flat moss disc seated just above the terrain. The birch leaf material is pushed into the SHARED wind
+// system (WINDFX.mats via injectWind) so the canopy sways on the existing wind clock — no new sway layer.
+// groveStep(dt) night-gates the lantern emissive + PointLight by the canonical nightness scalar. Seeded fresh
+// ('GRVE'), ~25 low-poly static meshes built once. Registered as a navigable place (slug 'whispering-grove').
+var WhisperingGrove = null, GroveLanternCore = null, GroveLanternLight = null;
+function buildGrove(){
+  if (WhisperingGrove) return WhisperingGrove;
+  const cx = 95, cz = 20, cy = (typeof groundHeight === "function" ? groundHeight(cx, cz) : 0);
+  const g = new THREE.Group(); g.name = "WhisperingGrove";
+  g.position.set(cx, cy, cz);
+  let s = 0x47525645 >>> 0;                                  // fresh mulberry32 seed tagged 'GRVE'
+  const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const bark = new THREE.MeshStandardMaterial({ color:0xd8d4c8, roughness:0.9, metalness:0.0, flatShading:true });
+  const leafMat = new THREE.MeshStandardMaterial({ color:0x9bb56a, roughness:0.85, flatShading:true });
+  if (typeof injectWind === "function") injectWind(leafMat, 0.18, WINDFX.extra);   // canopy sways on the SHARED wind clock (extra bucket; doesn't inflate the flora count)
+  const verm = new THREE.MeshStandardMaterial({ color:0xc0392b, roughness:0.8, flatShading:true });
+  const stone = new THREE.MeshStandardMaterial({ color:0x8a8378, roughness:0.95, metalness:0.0, flatShading:true });
+  // MOSS DISC — a flat circle seated just above the (snapped) terrain.
+  const moss = new THREE.Mesh(new THREE.CircleGeometry(15, 40),
+    new THREE.MeshStandardMaterial({ color:0x3a5a30, roughness:1.0, flatShading:true }));
+  moss.rotateX(-Math.PI/2); moss.position.y = 0.04; moss.receiveShadow = true; g.add(moss);
+  // BIRCH — 9 slender trees ringed at radius ~12, each a thin tapered trunk topped with 2-3 leaf blobs.
+  const TREES = 9, ringR = 12;
+  for (let i = 0; i < TREES; i++){
+    const ang = (i / TREES) * Math.PI * 2 + rnd() * 0.25;
+    const tx = Math.cos(ang) * ringR, tz = Math.sin(ang) * ringR;
+    const h = 7 + rnd() * 3;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.4, h, 6), bark);
+    trunk.position.set(tx, h/2, tz); trunk.castShadow = true; g.add(trunk);
+    const blobs = 2 + (rnd() < 0.5 ? 1 : 0);
+    for (let b = 0; b < blobs; b++){
+      const r = 1.4 + rnd() * 0.8;
+      const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), leafMat);
+      leaf.position.set(tx + (rnd()-0.5)*1.5, h + 0.4 + b * 1.1, tz + (rnd()-0.5)*1.5);
+      leaf.scale.y = 0.75; leaf.castShadow = true; g.add(leaf);
+    }
+  }
+  // TORII GATE — 2 vertical pillars + 2 horizontal lintels in vermilion, facing the approach (toward spawn).
+  const torii = new THREE.Group();
+  const pillarH = 6, gateW = 7;
+  for (const sx of [-1, 1]){
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, pillarH, 8), verm);
+    p.position.set(sx * gateW/2, pillarH/2, 0); p.castShadow = true; torii.add(p);
+  }
+  const topLintel = new THREE.Mesh(new THREE.BoxGeometry(gateW + 2.4, 0.7, 0.9), verm);
+  topLintel.position.set(0, pillarH + 0.3, 0); topLintel.castShadow = true; torii.add(topLintel);
+  const tieLintel = new THREE.Mesh(new THREE.BoxGeometry(gateW + 0.6, 0.5, 0.6), verm);
+  tieLintel.position.set(0, pillarH - 1.2, 0); tieLintel.castShadow = true; torii.add(tieLintel);
+  // seat the gate on the inner edge of the moss disc on the approach side (facing back toward the commons centre).
+  const toCentre = Math.atan2(-cx, -cz);                     // bearing from grove toward world origin (atan2(dx,dz))
+  torii.position.set(Math.sin(toCentre) * 14, 0, Math.cos(toCentre) * 14);
+  torii.rotation.y = toCentre;
+  torii.name = "GroveTorii"; g.add(torii);
+  // STONE LANTERN (ishidoro) — stacked base/post/fire-box/roof with an emissive fire-box core + ONE PointLight.
+  const lantern = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.5, 8), stone); base.position.y = 0.25; lantern.add(base);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 2.0, 8), stone); post.position.y = 1.5; lantern.add(post);
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.25, 1.3), stone); platform.position.y = 2.6; lantern.add(platform);
+  GroveLanternCore = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9),
+    new THREE.MeshStandardMaterial({ color:0x2a1c0a, emissive:0xffcaa0, emissiveIntensity:0.0, roughness:0.5, flatShading:true }));
+  GroveLanternCore.position.y = 3.2; lantern.add(GroveLanternCore);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.0, 0.7, 6), stone); roof.position.y = 4.05; lantern.add(roof);
+  GroveLanternLight = new THREE.PointLight(0xffcaa0, 0, 22); GroveLanternLight.position.y = 3.2; lantern.add(GroveLanternLight);
+  lantern.position.set(4, 0, -4); lantern.name = "GroveLantern"; g.add(lantern);
+  // a floating label above the grove (the existing makeLabel sprite idiom).
+  if (typeof makeLabel === "function"){ const lbl = makeLabel("The Whispering Grove", 0xbfe39a, pillarH + 6.0); g.add(lbl); }
+  g.userData = { trees: TREES, hasTorii: true, centre: { x: cx, z: cz }, glow: 0 };
+  scene.add(g); WhisperingGrove = g;
+  // register a navigable place via the EXISTING list()/travelTo mechanism (slug 'whispering-grove').
+  if (typeof makeAreaInteractable === "function"){
+    makeAreaInteractable({
+      pos: new THREE.Vector3(cx, (typeof DNA !== "undefined" ? DNA.cameraHeight : 1.6), cz),
+      radius: 12, type: "area", label: "The Whispering Grove", slug: "whispering-grove",
+      blurb: "A torii-gated birch garden east of the commons, a stone lantern glowing among the trees after dark.",
+      action: () => { travelTo(Object.assign(new THREE.Vector3(cx, DNA.cameraHeight, cz), { label:"The Whispering Grove" })); if (typeof hideRoomHud === "function") hideRoomHud(); }
+    });
+  }
+  return g;
+}
+// night-gate the grove's stone lantern (glows after dark) — called beside spireStep so it tracks the clock the
+// instant it moves. Returns the live glow for deterministic tests.
+function groveStep(dt){
+  if (!WhisperingGrove || !GroveLanternCore || !GroveLanternLight) return { glow: 0 };
+  const night = 1.0 - Math.min(1, Math.max(0, (ambient.intensity - 0.3) / 0.7));   // same nightness idiom
+  const glow = +(night * 2.2).toFixed(3);
+  GroveLanternCore.material.emissiveIntensity = glow;
+  GroveLanternLight.intensity = +(night * 1.8).toFixed(3);
+  WhisperingGrove.userData.glow = glow;
+  return { glow };
+}
 // FIDELITY: CELESTIAL BODIES — a real sun disc and a phased moon riding the sky opposite each other.
 const CelestialBodies = new THREE.Group(); CelestialBodies.name="CelestialBodies"; scene.add(CelestialBodies);
 const SunDisc = new THREE.Mesh(new THREE.CircleGeometry(17, 32),
@@ -1405,8 +1679,11 @@ function applyTimeOfDay(t){
   if (typeof gradeUpdate === "function") gradeUpdate();            // cinematic grade tints harder at night
   if (typeof lakeStep === "function") lakeStep(0);                 // FIDELITY: refresh the lake's mirrored sky uniforms the instant the clock moves
   if (typeof causticsStep === "function") causticsStep(0);        // FIDELITY: re-lock the lake-floor caustics to the water shader the instant the clock moves
+  if (typeof koiStep === "function") koiStep(0);                  // FIDELITY: settle the koi school deterministically the instant the clock moves
   if (typeof greatTreeStep === "function") greatTreeStep(0);       // FIDELITY: re-gate the Heartwood glow the instant the clock moves
   if (typeof spireStep === "function") spireStep(0);              // FIDELITY: re-kindle the Lantern Spire beacon the instant the clock moves
+  if (typeof lakespanStep === "function") lakespanStep(0);        // FIDELITY: re-kindle the Lakespan lanterns the instant the clock moves
+  if (typeof groveStep === "function") groveStep(0);              // FIDELITY: re-light the Whispering Grove lantern the instant the clock moves
   if (typeof contactShadowUpdate === "function") contactShadowUpdate();   // FIDELITY: tighten/darken contact AO with the sun, fade at night
   if (typeof auroraUpdate === "function") auroraUpdate();          // FIDELITY: night aurora glows only after dark
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
@@ -4399,9 +4676,12 @@ function animate(){
   GroundMist.position.set(camera.position.x, 3, camera.position.z);                            // keep the mist sheet centred under the player
   if (typeof lakeStep === "function") lakeStep(dt);                                            // FIDELITY: ripple the lake + mirror the LIVE sky uniforms (no render target)
   if (typeof causticsStep === "function") causticsStep(dt);                                    // FIDELITY: dance the lake-floor caustics, locked to the water shader above
+  if (typeof koiStep === "function") koiStep(dt);                                              // FIDELITY: swim the koi school beneath the lake mirror (transform only)
   if (typeof shorelineStep === "function") shorelineStep(dt);                                  // FIDELITY: animate the wet shoreline's foam lap-line
   if (typeof greatTreeStep === "function") greatTreeStep(dt);                                  // FIDELITY: night-gate the Heartwood glow (reflects in the lake)
   if (typeof spireStep === "function") spireStep(dt);                                          // FIDELITY: kindle the Lantern Spire beacon after dark (reflects in the lake)
+  if (typeof lakespanStep === "function") lakespanStep(dt);                                    // FIDELITY: kindle the Lakespan lanterns after dark (reflect in the lake)
+  if (typeof groveStep === "function") groveStep(dt);                                          // FIDELITY: light the Whispering Grove lantern after dark
   if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
   if (typeof stormStep === "function") stormStep(dt);                                            // FIDELITY: advance the (default-off) storm front — rain ramp, strikes, flash decay
@@ -5518,17 +5798,23 @@ let FLORA = null;
 // material is patched via onBeforeCompile to sway its high local-y tops on a shared wind clock (bases
 // stay planted). Deterministic: the phase is a pure function of each instance's world x/z, so it's
 // headless-reproducible. WINDFX.uTime is ticked once per frame in animate().
-const WINDFX = { uTime: { value: 0 }, mats: [] };
-function injectWind(mat, amp){
+const WINDFX = { uTime: { value: 0 }, mats: [], extra: [] };
+function injectWind(mat, amp, registry){
   mat.onBeforeCompile = function(shader){
     shader.uniforms.uWindTime = WINDFX.uTime;
     shader.uniforms.uWindAmp = { value: amp };
     shader.vertexShader = "uniform float uWindTime; uniform float uWindAmp;\n" + shader.vertexShader;
-    // displace transformed.x/z; only high local-y tops sway (max(0,position.y)); phase from the instance's
-    // world position columns of instanceMatrix; a second lower-freq gust term layers a slow billow.
+    // displace transformed.x/z; only high local-y tops sway (max(0,position.y)); phase from the placement's
+    // world position; a second lower-freq gust term layers a slow billow. Phase source is the instanceMatrix
+    // column for instanced flora, falling back to the model matrix for plain (non-instanced) meshes — so the
+    // SAME shared wind clock can sway both without breaking either (USE_INSTANCING gates the instanced path).
     shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>",
       "#include <begin_vertex>\n" +
-      "  float _wPhase = instanceMatrix[3].x*0.15 + instanceMatrix[3].z*0.1;\n" +
+      "  #ifdef USE_INSTANCING\n" +
+      "    float _wPhase = instanceMatrix[3].x*0.15 + instanceMatrix[3].z*0.1;\n" +
+      "  #else\n" +
+      "    float _wPhase = modelMatrix[3].x*0.15 + modelMatrix[3].z*0.1;\n" +
+      "  #endif\n" +
       "  float _wTop = max(0.0, position.y);\n" +
       "  float _wSway = sin(uWindTime*1.4 + _wPhase) * uWindAmp * _wTop;\n" +
       "  float _wGust = sin(uWindTime*0.45 + _wPhase*0.5) * uWindAmp * 0.5 * _wTop;\n" +
@@ -5537,7 +5823,9 @@ function injectWind(mat, amp){
   };
   mat.userData.windInjected = true;
   mat.needsUpdate = true;
-  WINDFX.mats.push(mat);
+  // default registry is the flora roster (WINDFX.mats — what wind() reports); callers may pass a separate
+  // bucket (e.g. WINDFX.extra) so additive flora-like layers share the clock WITHOUT changing the flora count.
+  (registry || WINDFX.mats).push(mat);
 }
 function buildFlora(){
   let s = 1337 >>> 0;
@@ -5745,6 +6033,9 @@ async function boot(){
   if (typeof buildRockOutcrops === "function") buildRockOutcrops();   // FIDELITY: instanced rock outcrops welded into steep terrain
   if (typeof buildGreatTree === "function") buildGreatTree();         // FIDELITY: the Heartwood — hero GreatTree landmark north of the lake
   if (typeof buildLanternSpire === "function") buildLanternSpire();   // FIDELITY: the Lantern Spire — stone watchtower landmark south of spawn
+  if (typeof buildLakespan === "function") buildLakespan();           // FIDELITY: the Lakespan — arched stone footbridge over CommonsLake
+  if (typeof buildKoi === "function") buildKoi();                     // FIDELITY: the Koi — a rigged school swimming beneath the lake mirror
+  if (typeof buildGrove === "function") buildGrove();                 // FIDELITY: the Whispering Grove — torii-gated birch garden east of the commons
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
   if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
   if (typeof buildContactShadows === "function") buildContactShadows();   // FIDELITY: grounding AO blobs under every standing thing
@@ -6358,6 +6649,40 @@ boot();
     spire: () => { const m = scene.getObjectByName("LanternSpire"); if (!m) return { present: false };
       const ud = m.userData || {};
       return { present: true, height: ud.height || 0, glow: ud.glow || 0, mirrorsLake: true }; },
+    // THE LAKESPAN (visual): an arched stone footbridge humping over CommonsLake on the N/S chord, built once
+    // at boot. lakespan() -> {present, name:'Lakespan', spanLength, apexY:(deck crown world-Y), lanterns,
+    // glow:(night-gated lantern intensity)}. Glow rides the same nightness scalar as the spire/stars (lanterns
+    // kindle after dark). Registered as a navigable place via list()/travelTo (slug 'lakespan').
+    lakespan: () => { const m = scene.getObjectByName("Lakespan"); if (!m) return { present: false };
+      const ud = m.userData || {}; const glow = (typeof lakespanStep === "function" ? lakespanStep(0).glow : (ud.glow || 0));
+      return { present: true, name: "Lakespan", spanLength: ud.spanLength || 0, apexY: ud.apexY || 0,
+        lanterns: ud.lanterns || 0, glow }; },
+    lakespanStep: (dt) => (typeof lakespanStep === "function" ? lakespanStep(+dt || 0.016) : null),
+    // KOI POND (visual): a rigged school of koi swimming just beneath the CommonsLake mirror, each an S-curving
+    // kinematic chain. koi() -> {present, name:'KoiSchool', count, inLake:(every koi planar dist from the lake
+    // centre < LAKE.r-1.5), submerged:(count of koi below the water surface), waveAmp:(abs live rotation.y of a
+    // sampled mid-segment)}. koiStep(dt) advances the swim + body wave deterministically (zero allocation).
+    koi: () => { const m = scene.getObjectByName("KoiSchool"); if (!m) return { present: false };
+      const ud = m.userData || {}, maxR = LAKE.r - 1.5, waterY = ud.waterY;
+      let inLake = _koi.length > 0, submerged = 0, waveAmp = 0;
+      for (const k of _koi){
+        const d = Math.hypot(k.grp.position.x, k.grp.position.z);   // group-local x/z are offsets from the lake centre
+        if (d >= maxR) inLake = false;
+        if (k.grp.position.y < waterY) submerged++;
+      }
+      if (_koi[0] && _koi[0].segs[0]) waveAmp = +Math.abs(_koi[0].segs[0].rotation.y).toFixed(4);
+      return { present: true, name: "KoiSchool", count: _koi.length, inLake, submerged, waveAmp }; },
+    koiStep: (dt) => (typeof koiStep === "function" ? koiStep(+dt || 0.016) : null),
+    // THE WHISPERING GROVE (visual): a torii-gated birch garden east of the commons, built once at boot, with
+    // a night-gated stone lantern. grove() -> {present, name:'WhisperingGrove', trees:9, hasTorii:true,
+    // offPlaza:(hypot(centre.x,centre.z)>26), glow:(night-gated lantern intensity)}. Glow rides the same
+    // nightness scalar as the spire/stars. Registered as a navigable place via list()/travelTo.
+    grove: () => { const m = scene.getObjectByName("WhisperingGrove"); if (!m) return { present: false };
+      const ud = m.userData || {}, c = ud.centre || { x: 0, z: 0 };
+      const glow = (typeof groveStep === "function" ? groveStep(0).glow : (ud.glow || 0));
+      return { present: true, name: "WhisperingGrove", trees: ud.trees || 0, hasTorii: !!ud.hasTorii,
+        offPlaza: (Math.hypot(c.x, c.z) > 26), glow, centre: c }; },
+    groveStep: (dt) => (typeof groveStep === "function" ? groveStep(+dt || 0.016) : null),
     // CONTACT SHADOWS (visual): ONE InstancedMesh of soft AO discs grounding every standing thing on the
     // terrain. contactShadows() -> {count, opacity, meanScale, name, grounded:(every instance's world-Y
     // matches groundHeight(x,z) within eps)}. opacity + meanScale ride the sun (crisp at noon, soft at dusk).
