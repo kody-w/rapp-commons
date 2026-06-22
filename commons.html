@@ -366,6 +366,69 @@ function mistUpdate(){
   GroundMist.material.uniforms.uStrength.value = sky.material.uniforms.hazeStrength.value * 0.5 * lowSun;
   GroundMist.material.uniforms.uColor.value.copy(hemi.color).lerp(_mistWhite, 0.6);
 }
+// FIDELITY: CARVED REFLECTIVE LAKE — a still water basin set well outside the plaza (cx,cz=-95) and clear
+// of every dirt-path corridor, so the plaza stays dead flat and the paths are untouched. lakeDepth() is a
+// smoothstep bowl: 0 outside r+6, dipping to LAKE.floor at the centre. groundHeight() ADDS it AFTER the
+// plaza/path smoothstep, so the ground mesh + slope/height painter carve the basin + the rocky shore for
+// free. Defined here (before the lake mesh) so both the mesh and groundHeight() see LAKE.
+const LAKE = { cx: 0, cz: -95, r: 22, floor: -3.4 };
+function lakeDepth(x, z){
+  const d = Math.hypot(x - LAKE.cx, z - LAKE.cz);
+  const t = Math.max(0, Math.min(1, (d - LAKE.r) / 6));   // 0 at/inside the rim, 1 by r+6
+  const bowl = 1 - t * t * (3 - 2 * t);                   // smoothstep, inverted: 1 in the basin, 0 outside
+  return LAKE.floor * bowl;                               // dips to the lake floor at the centre
+}
+// FIDELITY: CARVED REFLECTIVE LAKE — ONE flat disc dropped into the basin that lakeDepth() carved into the
+// terrain. The vertex shader ripples it with a 3-octave gerstner-lite sum-of-sines on uTime; the fragment
+// shader mirrors the LIVE sky off its surface with NO render target — it copies sky.material.uniforms
+// (top/horizon/sunDir/sunColor) each frame and rebuilds the reflected colour analytically, fresnel-blended
+// toward the deep-water tint and brightened by a moving sun glint. A day-night gate dims it to a moonlit
+// sheen after dark. transparent, no depth write, renderOrder 1 (drawn over the ground it sits on).
+const CommonsLake = new THREE.Mesh(new THREE.CircleGeometry(LAKE.r, 48),
+  new THREE.ShaderMaterial({ transparent:true, depthWrite:false,
+    uniforms:{ uTime:{value:0}, uTop:{value:new THREE.Color(DNA.skyTop)}, uHorizon:{value:new THREE.Color(DNA.skyBot)},
+               uDeep:{value:new THREE.Color(0x0e2a33)}, uSunDir:{value:new THREE.Vector3(0,1,0)},
+               uSunColor:{value:new THREE.Color(0xfff4d6)}, uDayGate:{value:1.0} },
+    vertexShader:`uniform float uTime; varying vec3 vW; varying vec3 vN;
+      void main(){ vec3 p=position;                               // CircleGeometry lies in XY before rotateX
+        float w = 0.10*sin(p.x*0.9 + uTime*1.3) + 0.07*sin(p.y*1.1 - uTime*1.7)
+                + 0.04*sin((p.x+p.y)*0.7 + uTime*2.1);            // gerstner-lite ripple sum
+        p.z += w;                                                 // displace along local normal (becomes world +y)
+        // analytic ripple normal (slope of the sum-of-sines), tilted slightly off straight-up
+        vec3 n = normalize(vec3(-0.10*0.9*cos(p.x*0.9+uTime*1.3) - 0.04*0.7*cos((p.x+p.y)*0.7+uTime*2.1),
+                               -0.07*1.1*cos(p.y*1.1-uTime*1.7) - 0.04*0.7*cos((p.x+p.y)*0.7+uTime*2.1),
+                                1.0));
+        vec4 wp = modelMatrix*vec4(p,1.0); vW = wp.xyz; vN = normalize((modelMatrix*vec4(n,0.0)).xyz);
+        gl_Position = projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader:`uniform vec3 uTop,uHorizon,uDeep,uSunColor; uniform vec3 uSunDir; uniform float uDayGate;
+      varying vec3 vW; varying vec3 vN;
+      void main(){ vec3 viewDir = normalize(cameraPosition - vW); vec3 n = normalize(vN);
+        float fres = pow(1.0 - max(dot(viewDir, n), 0.0), 3.0);
+        vec3 refl = reflect(-viewDir, n);                          // mirror the view about the ripple normal
+        float ve = clamp(refl.y, 0.0, 1.0);                       // reflected elevation: horizon->top
+        vec3 skyRefl = mix(uHorizon, uTop, smoothstep(0.0, 0.6, ve));
+        vec3 col = mix(uDeep, skyRefl, fres);                     // deep tint -> reflected sky by fresnel
+        float glint = pow(max(dot(refl, uSunDir), 0.0), 60.0);    // tight specular sun streak
+        col += uSunColor * glint;
+        col *= mix(0.28, 1.0, uDayGate);                          // moonlit sheen at night, full mirror by day
+        gl_FragColor = vec4(col, 0.86); }`
+  }));
+CommonsLake.name = "CommonsLake";
+CommonsLake.rotateX(-Math.PI/2);
+CommonsLake.position.set(LAKE.cx, LAKE.floor + 2.9, LAKE.cz);
+CommonsLake.renderOrder = 1; CommonsLake.frustumCulled = false; scene.add(CommonsLake);
+// copy the LIVE sky uniforms onto the lake (no render target) + advance the ripple clock + set the night gate.
+function lakeStep(dt){
+  const u = CommonsLake.material.uniforms;
+  u.uTime.value += (+dt || 0);
+  u.uTop.value.copy(sky.material.uniforms.top.value);
+  u.uHorizon.value.copy(sky.material.uniforms.horizon.value);
+  u.uSunDir.value.copy(sky.material.uniforms.sunDir.value);
+  u.uSunColor.value.copy(sky.material.uniforms.sunColor.value);
+  u.uDayGate.value = Math.max(0, Math.min(1, (ambient.intensity - 0.3) / 0.7));   // 0 at night -> 1 by day
+  return { waterLevel: +CommonsLake.position.y.toFixed(2), ripplePhase: +u.uTime.value.toFixed(3),
+           reflectsHorizon: "#" + u.uHorizon.value.getHexString() };
+}
 // FIDELITY: GRADE PASS — a single camera-locked fullscreen overlay quad that lays a cinematic
 // colour grade over the framed scene WITHOUT a render target: a radial vignette, a clock-driven tint
 // (warm-amber dawn/dusk, cool-teal night, neutral noon), a faint per-channel chroma offset, and grain
@@ -491,6 +554,66 @@ function coneUpdate(){
     if (u.light) c.material.uniforms.uColor.value.copy(u.light.color);
   }
 }
+// FIDELITY: CONTACT SHADOWS — ONE InstancedMesh of flat soft radial discs that ground every standing thing
+// (portals, homes, room/area anchors, lanterns, the roaming creature) with an AO blob hugging the terrain
+// at groundHeight()+0.02. ShaderMaterial: a soft black disc (alpha falls off radially), polygonOffset on to
+// dodge z-fighting against the painted ground, no depth write, ~1 draw. contactShadowUpdate() tightens +
+// darkens the blobs at HIGH sun (crisp midday AO) and softens/diffuses them toward dusk (long soft shadows),
+// fading them out under night — read off the SAME low-sun factor the god-rays/mist use.
+var ContactShadows = null;
+function buildContactShadows(){
+  if (ContactShadows) return;
+  var anchors = [];   // {x,z,r} world ground anchors with a bounding-radius estimate
+  for (var i=0;i<interactables.length;i++){ var it = interactables[i];
+    if (!it.pos) continue;
+    if (it.type === "portal" || it.type === "home" || it.type === "room" || it.type === "area")
+      anchors.push({ x: it.pos.x, z: it.pos.z, r: Math.max(1.4, (it.radius || 4) * 0.42) });
+  }
+  if (typeof LANTERNS !== "undefined" && LANTERNS.items)
+    for (var j=0;j<LANTERNS.items.length;j++){ var L = LANTERNS.items[j]; anchors.push({ x: L.at.x, z: L.at.z, r: 0.9 }); }
+  if (typeof CREATURE !== "undefined" && CREATURE.group)
+    anchors.push({ x: CREATURE.group.position.x, z: CREATURE.group.position.z, r: Math.max(1.5, (CREATURE.size || 1) * 1.4) });
+  if (!anchors.length) return;
+  var disc = new THREE.CircleGeometry(1, 12); disc.rotateX(-Math.PI/2);   // flat on the ground
+  var mat = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blending:THREE.NormalBlending,
+    polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1,
+    uniforms:{ uOpacity:{value:0.4} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*instanceMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uOpacity; varying vec2 vUv;
+      void main(){ float d = length(vUv-0.5)*2.0;                       // 0 centre -> 1 rim
+        float a = (1.0 - smoothstep(0.0, 1.0, d)) * uOpacity;          // soft radial disc
+        gl_FragColor = vec4(0.0, 0.0, 0.0, a); }` });
+  var mesh = new THREE.InstancedMesh(disc, mat, anchors.length);
+  mesh.name = "ContactShadows"; mesh.renderOrder = 1; mesh.frustumCulled = false; mesh.receiveShadow = false;
+  var m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  var scaleSum = 0;
+  for (var k=0;k<anchors.length;k++){ var a = anchors[k];
+    p.set(a.x, groundHeight(a.x, a.z) + 0.02, a.z);                    // hug the terrain
+    s.set(a.r, 1, a.r);                                                // per-instance bounding-radius scale
+    m.compose(p, q, s); mesh.setMatrixAt(k, m); scaleSum += a.r;
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.userData = { count: anchors.length, anchors: anchors, meanScale: scaleSum / anchors.length };
+  scene.add(mesh); ContactShadows = mesh;
+}
+function contactShadowUpdate(){
+  if (!ContactShadows) return;
+  // the same low-sun factor god-rays + mist read: 0 at high noon, ~1 at the horizon.
+  var lowSun = 1.0 - THREE.MathUtils.smoothstep(sky.material.uniforms.sunDir.value.y, 0.1, 0.6);
+  var day = Math.max(0, Math.min(1, (ambient.intensity - 0.3) / 0.7));   // 0 night -> 1 day (fade out at night)
+  // crisp + dark at high sun (lowSun small), softer + lighter toward dusk; gone at night.
+  ContactShadows.material.uniforms.uOpacity.value = (0.5 - lowSun * 0.22) * day;
+  // tighten the discs at high sun (short AO blob) and spread them toward dusk (long soft shadow).
+  var spread = 1.0 + lowSun * 0.9;
+  var m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  var ud = ContactShadows.userData, an = ud.anchors, sum = 0;
+  for (var i=0;i<an.length;i++){ var a = an[i];
+    p.set(a.x, groundHeight(a.x, a.z) + 0.02, a.z);
+    var rr = a.r * spread; s.set(rr, 1, rr);
+    m.compose(p, q, s); ContactShadows.setMatrixAt(i, m); sum += rr;
+  }
+  ContactShadows.instanceMatrix.needsUpdate = true; ud.meanScale = sum / an.length;
+}
 // FIDELITY: a drifting fBm CLOUDSCAPE — a second dome just inside the sky, scrolling value-noise clouds
 // that thicken at dusk and thin by day, lit by the sun's direction. Transparent, no texture, 4 octaves.
 const CloudDome = new THREE.Mesh(new THREE.SphereGeometry(490, 32, 24),
@@ -511,6 +634,48 @@ const CloudDome = new THREE.Mesh(new THREE.SphereGeometry(490, 32, 24),
         float sunlit = 0.55 + 0.45*max(dot(vDir,uSunDir),0.0);
         gl_FragColor = vec4(uCloudColor*sunlit, a); }` }));
 CloudDome.name="CloudDome"; CloudDome.frustumCulled=false; scene.add(CloudDome);
+// FIDELITY: AURORA CURTAINS — ONE inward-facing curved band high on the northern dome (a partial open
+// cylinder, radius ~470, ~140° azimuth, spanning the horizon up to ~0.7 of the dome). Three vertical
+// curtain bands undulate via layered sin(uTime); the vertical glow is bottom-bright/top-feathered; a thin
+// fBm flicker (the VERBATIM CloudDome/GroundMist hash/vnoise/fbm) breaks up the bands; the colour ramps
+// green→violet by height. AdditiveBlending, no depth test/write, renderOrder 3 (over the clouds, under the
+// grade pass). auroraUpdate() gates uOpacity to NIGHT only (zero at day + golden hour). One transparent draw.
+const AuroraCurtains = (function(){
+  const R = 470, theta0 = Math.PI*0.30, thetaLen = Math.PI*140/180, hY = 300;   // northern arc, ~140° wide
+  const geo = new THREE.CylinderGeometry(R, R, hY, 64, 1, true, theta0, thetaLen);
+  geo.translate(0, 190, 0);   // lift the band: spans ~y 40 (horizon) up to ~y 340 (~0.7 dome)
+  const mat = new THREE.ShaderMaterial({ side:THREE.BackSide, blending:THREE.AdditiveBlending,
+    transparent:true, depthWrite:false, depthTest:false,
+    uniforms:{ uTime:{value:0}, uOpacity:{value:0},
+               uColorLo:{value:new THREE.Color(0x33ff88)}, uColorHi:{value:new THREE.Color(0x9a4cff)} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uTime,uOpacity; uniform vec3 uColorLo,uColorHi; varying vec2 vUv;
+      float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+        float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+        return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }
+      float fbm(vec2 p){ float v=0.0,amp=0.5; for(int i=0;i<3;i++){ v+=amp*vnoise(p); p*=2.02; amp*=0.5; } return v; }
+      void main(){
+        float bands = 0.0;
+        for (int i=0;i<3;i++){ float fi=float(i);
+          float cx = 0.18 + 0.32*fi + 0.06*sin(uTime*(0.5+0.2*fi) + fi*2.1)
+                   + 0.03*sin(uTime*1.3 + fi);                                  // each curtain undulates in x
+          float w = 0.06 + 0.02*sin(uTime*0.7 + fi*1.7);
+          bands += smoothstep(w, 0.0, abs(vUv.x - cx));                          // a soft vertical curtain
+        }
+        float vert = pow(1.0 - vUv.y, 1.6);                                      // bottom-bright, top-feathered
+        float flick = 0.55 + 0.65*fbm(vec2(vUv.x*9.0, vUv.y*3.0 - uTime*0.25));  // thin fBm flicker
+        float a = clamp(bands,0.0,1.0) * vert * flick * uOpacity;
+        vec3 col = mix(uColorLo, uColorHi, vUv.y);                               // green floor -> violet crown
+        gl_FragColor = vec4(col, a); }` });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = "AuroraCurtains"; mesh.renderOrder = 3; mesh.frustumCulled = false; scene.add(mesh);
+  return mesh;
+})();
+function auroraUpdate(){
+  // NIGHT gate: same night-ness formula as the stars/fireflies — full at midnight, zero by day/golden hour.
+  AuroraCurtains.material.uniforms.uOpacity.value = 1.0 - Math.min(1, Math.max(0, (ambient.intensity - 0.3) / 0.7));
+}
 // FIDELITY: CELESTIAL BODIES — a real sun disc and a phased moon riding the sky opposite each other.
 const CelestialBodies = new THREE.Group(); CelestialBodies.name="CelestialBodies"; scene.add(CelestialBodies);
 const SunDisc = new THREE.Mesh(new THREE.CircleGeometry(17, 32),
@@ -548,7 +713,7 @@ function groundHeight(x, z){
   const plazaR = 26, rimR = 190, d = Math.hypot(x, z);
   const u = Math.max(0, Math.min(1, (d - plazaR) / (rimR - plazaR)));
   const relief = u*u*(3 - 2*u);                 // smoothstep: exactly 0 inside the plaza
-  return base * relief;
+  return base * relief + lakeDepth(x, z);        // carve the lake basin AFTER the plaza/path ramp
 }
 const gGeo = new THREE.PlaneGeometry(400,400,60,60);
 gGeo.rotateX(-Math.PI/2);
@@ -876,6 +1041,9 @@ function applyTimeOfDay(t){
   if (typeof celestialUpdate === "function") celestialUpdate(t);   // sun + moon ride the sky
   if (typeof bloomUpdate === "function") bloomUpdate();            // bloom halos swell after dark
   if (typeof gradeUpdate === "function") gradeUpdate();            // cinematic grade tints harder at night
+  if (typeof lakeStep === "function") lakeStep(0);                 // FIDELITY: refresh the lake's mirrored sky uniforms the instant the clock moves
+  if (typeof contactShadowUpdate === "function") contactShadowUpdate();   // FIDELITY: tighten/darken contact AO with the sun, fade at night
+  if (typeof auroraUpdate === "function") auroraUpdate();          // FIDELITY: night aurora glows only after dark
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
 }
 function dayNightTick(dt){
@@ -3651,6 +3819,7 @@ function animate(){
   for (const m of portalMats) m.uniforms.time.value = t;
   particles.rotation.y += dt*0.05;
   StarField.material.uniforms.uTime.value += dt; StarField.rotation.y += dt*0.005;   // twinkle + slow vault spin
+  if (typeof AuroraCurtains !== "undefined") AuroraCurtains.material.uniforms.uTime.value += dt;   // FIDELITY: undulate the night aurora curtains
   godRays.material.uniforms.uTime.value += dt;                                        // billboard the god rays toward the sun
   godRays.quaternion.copy(camera.quaternion);
   godRays.position.copy(camera.position).addScaledVector(sky.material.uniforms.sunDir.value, 45);
@@ -3661,6 +3830,7 @@ function animate(){
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
   GroundMist.material.uniforms.uTime.value += dt;                                              // drift the ground-mist noise field
   GroundMist.position.set(camera.position.x, 3, camera.position.z);                            // keep the mist sheet centred under the player
+  if (typeof lakeStep === "function") lakeStep(dt);                                            // FIDELITY: ripple the lake + mirror the LIVE sky uniforms (no render target)
   if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
   if (typeof stormStep === "function") stormStep(dt);                                            // FIDELITY: advance the (default-off) storm front — rain ramp, strikes, flash decay
@@ -5004,6 +5174,7 @@ async function boot(){
   if (typeof buildRockOutcrops === "function") buildRockOutcrops();   // FIDELITY: instanced rock outcrops welded into steep terrain
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
   if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
+  if (typeof buildContactShadows === "function") buildContactShadows();   // FIDELITY: grounding AO blobs under every standing thing
   if (typeof attachGaze === "function") attachGaze();             // FIDELITY: living gaze — heads/eyes track the player
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
@@ -5560,6 +5731,37 @@ boot();
         if (pathNear(pos.x, pos.z) < 0.12) onPaths++;                // never on a dirt path
       }
       return { count, sunken, offPlaza, onPaths, draws: 1 }; },
+    // CARVED REFLECTIVE LAKE (visual): a still water basin lakeDepth() carves into the terrain, with ONE
+    // shader disc mirroring the LIVE sky off its rippling surface (no render target). lake() ->
+    // {present, name, waterLevel, basinCarved:(terrain dips below the lake at the centre),
+    //  plazaFlat:(plaza unchanged), reflectsHorizon:(the live sky horizon hex it mirrors), ripplePhase}.
+    // lakeStep(dt) advances the ripple clock + recopies the sky uniforms so headless tests are deterministic.
+    lake: () => { const m = scene.getObjectByName("CommonsLake"); if (!m) return { present: false };
+      const u = m.material.uniforms;
+      return { present: true, name: "CommonsLake", waterLevel: +m.position.y.toFixed(2),
+        basinCarved: (groundHeight(LAKE.cx, LAKE.cz) < -1.5),
+        plazaFlat: (Math.abs(groundHeight(0, 0)) < 0.05 && Math.abs(groundHeight(10, 0)) < 0.05),
+        reflectsHorizon: "#" + u.uHorizon.value.getHexString(), ripplePhase: +u.uTime.value.toFixed(3) }; },
+    lakeStep: (dt) => (typeof lakeStep === "function" ? lakeStep(+dt || 0.016) : null),
+    // CONTACT SHADOWS (visual): ONE InstancedMesh of soft AO discs grounding every standing thing on the
+    // terrain. contactShadows() -> {count, opacity, meanScale, name, grounded:(every instance's world-Y
+    // matches groundHeight(x,z) within eps)}. opacity + meanScale ride the sun (crisp at noon, soft at dusk).
+    contactShadows: () => { const m = scene.getObjectByName("ContactShadows"); if (!m) return { count: 0, grounded: false };
+      const ud = m.userData || {}, an = ud.anchors || [];
+      const mat = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+      let grounded = an.length > 0;
+      for (let i = 0; i < m.count; i++){ m.getMatrixAt(i, mat); mat.decompose(p, q, sc);
+        const a = an[i]; if (!a) continue;
+        if (Math.abs(p.y - (groundHeight(a.x, a.z) + 0.02)) > 0.02) grounded = false; }
+      return { count: m.count, opacity: +m.material.uniforms.uOpacity.value.toFixed(3),
+        meanScale: +(ud.meanScale || 0).toFixed(3), name: "ContactShadows", grounded }; },
+    // AURORA CURTAINS (additive, visual): the northern night aurora — three undulating curtain bands high on
+    // the dome, glowing only after dark. aurora() -> {present, name, bands:3, additive, nightGlow:(uOpacity,
+    // full at midnight, ~0 by day)}.
+    aurora: () => { const m = scene.getObjectByName("AuroraCurtains"); if (!m) return { present: false };
+      return { present: true, name: "AuroraCurtains", bands: 3,
+        additive: (m.material.blending === THREE.AdditiveBlending),
+        nightGlow: +m.material.uniforms.uOpacity.value.toFixed(3) }; },
     // STORM FRONT (optional weather, DEFAULT OFF): rain + lightning + sky-flash on the camera-following
     // 'StormSystem' group. storm() -> {active, rain, strikes, flash, rainParticles}. setStorm(level) sets
     // the target rain level (0..1) and toggles active; strike() forces a bolt; stormStep(dt) advances the

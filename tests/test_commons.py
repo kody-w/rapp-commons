@@ -964,6 +964,69 @@ async def run():
                            and rocks.get("sunken") is True and rocks.get("offPlaza") is True
                            and rocks.get("onPaths") == 0),
                       rocks)
+
+                # FIDELITY: CARVED REFLECTIVE LAKE — lakeDepth() carves a smoothstep basin into the SHARED
+                # groundHeight() sampler well outside the plaza + clear of every path, so the terrain mesh
+                # dips into a bowl while the plaza stays dead flat; ONE 'CommonsLake' shader disc then mirrors
+                # the LIVE sky off its rippling surface with NO render target (it copies sky.uniforms each
+                # frame). Probe: basin carved, plaza flat, reflectsHorizon tracks the live sky horizon at noon,
+                # shifts at dusk, and the ripple phase advances via the deterministic lakeStep(dt) hook.
+                lake = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const exists=!!scene.getObjectByName('CommonsLake');
+                    setTimeOfDay(0.5); A.lakeStep(0); const noon=A.lake(); const skyNoon=A.atmosphere().horizon;
+                    setTimeOfDay(0.78); A.lakeStep(0); const dusk=A.lake();
+                    const p1=A.lakeStep(0.5).ripplePhase, p2=A.lakeStep(0.5).ripplePhase;
+                    setTimeOfDay(0.42);
+                    return { exists, name:noon.name, basinCarved:noon.basinCarved, plazaFlat:noon.plazaFlat,
+                             noonRefl:noon.reflectsHorizon, skyNoon, duskRefl:dusk.reflectsHorizon,
+                             advances:(p2>p1) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_lake",
+                      bool(lake.get("exists") and lake.get("name") == "CommonsLake"
+                           and lake.get("basinCarved") is True and lake.get("plazaFlat") is True
+                           and lake.get("noonRefl") == lake.get("skyNoon")
+                           and lake.get("duskRefl") != lake.get("noonRefl")
+                           and lake.get("advances")),
+                      lake)
+
+                # FIDELITY: CONTACT SHADOWS — ONE InstancedMesh 'ContactShadows' of soft radial AO discs that
+                # ground every standing thing (portals, homes, room/area anchors, lanterns, the creature) by
+                # hugging the terrain at groundHeight()+0.02. The blobs tighten + darken at high sun and spread
+                # + soften toward dusk, fading out at night — driven off the SAME low-sun factor as god-rays.
+                # Probe: instanced, count>0, every instance grounded, opacity>0 at noon, meanScale grows by dusk.
+                cs = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('ContactShadows');
+                    const isInst=(m&&m.isInstancedMesh===true);
+                    setTimeOfDay(0.5); const noon=A.contactShadows();
+                    setTimeOfDay(0.78); const dusk=A.contactShadows();
+                    setTimeOfDay(0.42);
+                    return { isInst, name:noon.name, count:noon.count, grounded:noon.grounded,
+                             noonOpacity:noon.opacity, noonScale:noon.meanScale, duskScale:dusk.meanScale };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_contactshadows",
+                      bool(cs.get("isInst") and cs.get("name") == "ContactShadows"
+                           and (cs.get("count") or 0) > 0 and cs.get("grounded") is True
+                           and (cs.get("noonOpacity") or 0) > 0
+                           and (cs.get("duskScale") or 0) > (cs.get("noonScale") or 0)),
+                      cs)
+
+                # FIDELITY: AURORA CURTAINS — ONE inward-facing curved band high on the northern dome with three
+                # undulating curtain bands, additive-blended and gated to NIGHT only (full at midnight, ~0 by
+                # day). Probe: exists + AdditiveBlending; nightGlow>0.6 at midnight (t=0.0), <0.02 at noon (0.5).
+                aur = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const exists=!!scene.getObjectByName('AuroraCurtains');
+                    setTimeOfDay(0.0); const night=A.aurora();
+                    setTimeOfDay(0.5); const day=A.aurora();
+                    setTimeOfDay(0.42);
+                    return { exists, name:night.name, bands:night.bands, additive:night.additive,
+                             nightGlow:night.nightGlow, dayGlow:day.nightGlow };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_aurora",
+                      bool(aur.get("exists") and aur.get("name") == "AuroraCurtains"
+                           and aur.get("bands") == 3 and aur.get("additive") is True
+                           and (aur.get("nightGlow") or 0) > 0.6
+                           and (aur.get("dayGlow") if aur.get("dayGlow") is not None else 1) < 0.02),
+                      aur)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
