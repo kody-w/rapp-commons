@@ -335,6 +335,37 @@ function godRaysUpdate(){
   godRays.material.uniforms.uIntensity.value = sky.material.uniforms.hazeStrength.value * lowSun * dayF;
   godRays.material.uniforms.uColor.value.copy(sun.color);
 }
+// FIDELITY: GROUND MIST — a large flat low-fog sheet that pools at dawn/dusk (slaved to the haze
+// keyframes) and burns off by noon. ONE follow-the-player plane just above the ground (y≈3), its alpha
+// painted by a 3-octave fBm (the CloudDome noise, verbatim) into wispy patches, dissolving radially at
+// the plane edges so there is no hard seam. NormalBlending, no depth write — purely additive geometry.
+const GroundMist = new THREE.Mesh(new THREE.PlaneGeometry(360,360,1,1),
+  new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blending:THREE.NormalBlending, side:THREE.DoubleSide,
+    uniforms:{ uTime:{value:0}, uStrength:{value:0}, uColor:{value:new THREE.Color(0xffffff)} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uTime,uStrength; uniform vec3 uColor; varying vec2 vUv;
+      float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+        float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+        return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }
+      float fbm(vec2 p){ float v=0.0,amp=0.5; for(int i=0;i<3;i++){ v+=amp*vnoise(p); p*=2.02; amp*=0.5; } return v; }
+      void main(){
+        vec2 wuv = vUv*8.0 + uTime*vec2(0.012,0.007);     // wind-drifted noise field over the sheet
+        float patches = smoothstep(0.45,0.85, fbm(wuv));   // shape the fBm into wispy patches
+        float r = length(vUv-0.5)*2.0;                     // 0 at centre -> ~1.41 at the corners
+        float fall = smoothstep(1.0,0.35,r);               // dissolve toward the plane edges (no seam)
+        float a = patches * uStrength * fall;
+        gl_FragColor = vec4(uColor, a); }` }));
+GroundMist.name="GroundMist"; GroundMist.rotateX(-Math.PI/2); GroundMist.position.y=3;
+GroundMist.frustumCulled=false; GroundMist.renderOrder=2; scene.add(GroundMist);
+const _mistWhite = new THREE.Color(0xffffff);
+function mistUpdate(){
+  // pools exactly when the dawn/dusk haze peaks; a low-sun gate (like the god rays) burns it off to ~0
+  // at noon when the sun is high. colour rides the hemi bounce toward white.
+  const lowSun = 1.0 - THREE.MathUtils.smoothstep(sky.material.uniforms.sunDir.value.y, 0.1, 0.6);
+  GroundMist.material.uniforms.uStrength.value = sky.material.uniforms.hazeStrength.value * 0.5 * lowSun;
+  GroundMist.material.uniforms.uColor.value.copy(hemi.color).lerp(_mistWhite, 0.6);
+}
 // FIDELITY: GRADE PASS — a single camera-locked fullscreen overlay quad that lays a cinematic
 // colour grade over the framed scene WITHOUT a render target: a radial vignette, a clock-driven tint
 // (warm-amber dawn/dusk, cool-teal night, neutral noon), a faint per-channel chroma offset, and grain
@@ -688,6 +719,7 @@ function applyTimeOfDay(t){
   if (typeof starsUpdate === "function") starsUpdate();   // stars fade in at night, out by day
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uGlow.value = Math.max(0, Math.min(1, 1 - (ambient.intensity - 0.3) / 0.7));   // fireflies glow only after dark
   if (typeof godRaysUpdate === "function") godRaysUpdate();   // god rays at golden hour
+  if (typeof mistUpdate === "function") mistUpdate();         // ground mist pools at dawn/dusk haze
   if (typeof coneUpdate === "function") coneUpdate();         // volumetric god-shafts glow after dark
   if (typeof cloudsUpdate === "function") cloudsUpdate();     // clouds thicken at dusk
   if (typeof celestialUpdate === "function") celestialUpdate(t);   // sun + moon ride the sky
@@ -3475,6 +3507,8 @@ function animate(){
   grade.quaternion.copy(camera.quaternion);
   grade.position.copy(camera.position).add(camera.getWorldDirection(_gradeTmp).multiplyScalar(0.2));
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
+  GroundMist.material.uniforms.uTime.value += dt;                                              // drift the ground-mist noise field
+  GroundMist.position.set(camera.position.x, 3, camera.position.z);                            // keep the mist sheet centred under the player
   if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
   if (BloomHalos){ var _bt = StarField.material.uniforms.uTime.value; for (var _bi=0;_bi<BloomHalos.children.length;_bi++){ var _bs=BloomHalos.children[_bi]; _bs.scale.setScalar(_bs.userData.baseScale*(1+Math.sin(_bt*2+_bi)*0.06)); } }   // gentle bloom breathing
@@ -5208,6 +5242,11 @@ boot();
       const u = f.material.uniforms;
       return { count: f.geometry.attributes.position.count, glow: +u.uGlow.value.toFixed(3),
         additive: (f.material.blending === THREE.AdditiveBlending), color: "#" + u.uColor.value.getHexString() }; },
+    // GROUND MIST (visual): the dawn/dusk-pooling low fog sheet, slaved to the haze keyframes. mist() ->
+    // {present, strength:(haze*0.5, ~0 at noon), driftT:(the noise uTime, advances each frame)}.
+    mist: () => { const m = scene.getObjectByName("GroundMist"); if (!m) return { present: false };
+      const u = m.material.uniforms;
+      return { present: !!m, strength: +u.uStrength.value.toFixed(3), driftT: +u.uTime.value.toFixed(3) }; },
     // GRADE PASS (additive, visual): the camera-locked cinematic grade overlay. grade() ->
     // {present, vignette, tint:[r,g,b], tintStrength, grain} read live off the material uniforms.
     grade: () => { const g = scene.getObjectByName("GradePass"); if (!g) return { present: false };

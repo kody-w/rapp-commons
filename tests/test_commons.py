@@ -821,6 +821,29 @@ async def run():
                            and (wind.get("ampGrass") or 0) > (wind.get("ampTrees") or 0)
                            and wind.get("advances") and wind.get("injected")), wind)
 
+                # FIDELITY: ground mist — ONE flat low-fog sheet (PlaneGeometry, y≈3) that follows the
+                # player and pools at dawn/dusk (haze*0.5) and burns off by noon. Transparent, no depth
+                # write. The noise field drifts each frame (uTime advances in animate()).
+                mist = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('GroundMist');
+                    const isMesh=!!(m&&m.isMesh&&m.material.depthWrite===false&&m.material.transparent===true);
+                    setTimeOfDay(0.22); const dawn=A.mist().strength;
+                    setTimeOfDay(0.5);  const noon=A.mist().strength;
+                    setTimeOfDay(0.42);
+                    const t1=A.mist().driftT;
+                    return { isMesh, dawn, noon, t1 };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                await page.wait_for_timeout(180)   # the animate() loop advances uTime
+                mist_t2 = await ev("()=>{try{return window.commonsAgent.mist().driftT}catch(e){return -1}}", -1)
+                await ev("()=>{try{setTimeOfDay(0.42)}catch(e){}return 1}")
+                check("fidelity_mist",
+                      bool(mist.get("isMesh")
+                           and (mist.get("dawn") or 0) > (mist.get("noon") if mist.get("noon") is not None else 1)
+                           and (mist.get("dawn") or 0) > 0.05
+                           and (mist.get("noon") if mist.get("noon") is not None else 1) < 0.05
+                           and mist_t2 is not None and mist_t2 > (mist.get("t1") or 0)),
+                      {**mist, "t2": mist_t2})
+
                 # FIDELITY: bioluminescent fireflies — ONE additive THREE.Points swarm of warm motes that
                 # wander a disc and pulse, glowing only after dark (same night-ness formula as the stars),
                 # invisible by day. Deterministic (seeded mulberry32).
