@@ -1212,6 +1212,45 @@ async def run():
                            and (spire.get("night") or 0) > 1.5
                            and spire.get("listed")),
                       spire)
+
+                # FIDELITY: LIVE COMMONS STREAM — the 3D world now joins the SAME real-time signed
+                # chat the front door (index.html, rapp-commons-protocol/2.0) runs, sharing ONE
+                # conversation + ONE identity across pages. The RC module adopts the front-door event
+                # protocol VERBATIM (rapp-commons-event/1.0: from=rappid:v3:b64u(sha256(raw pub)),
+                # pub=raw-key b64u, alg ecdsa-p256, body {text}, stable canonicalisation, b64u sig) and
+                # mints/loads under the SAME localStorage key ('rapp-commons-id'). Network is gated on
+                # world-entry (.live), so this asserts protocol correctness WITHOUT touching the public
+                # stream: sign a front-door-valid event, verify it round-trips, confirm a TAMPERED copy
+                # is rejected, and that the signed identity is the persisted unified one.
+                lc = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const ev0 = await A.liveChatSign('acceptance livechat hello');   // mints/loads the unified id
+                    const lc = A.liveChat();
+                    const ridOk = typeof lc.rappid==='string' && lc.rappid.indexOf('rappid:v3:')===0;
+                    const stored = JSON.parse(localStorage.getItem('rapp-commons-id')||'null');
+                    const sameId = !!(stored && stored.rappid===lc.rappid);          // SAME key+format as front door
+                    const shapeOk = !!(ev0 && ev0.schema==='rapp-commons-event/1.0' && ev0.alg==='ecdsa-p256'
+                        && typeof ev0.pub==='string' && typeof ev0.sig==='string'
+                        && ev0.body && typeof ev0.body.text==='string'
+                        && typeof ev0.from==='string' && ev0.from.indexOf('rappid:v3:')===0);
+                    const verifyGood = await A.liveChatVerify(ev0);
+                    const tampered = JSON.parse(JSON.stringify(ev0)); tampered.body.text='forged';
+                    const verifyTamper = await A.liveChatVerify(tampered);
+                    return { present:lc.present, protocol:lc.protocol, unified:lc.unifiedWithFrontDoor,
+                             identityPersisted:lc.identityPersisted, room:lc.room, live:lc.live,
+                             ridOk, sameId, shapeOk, verifyGood, verifyTamper,
+                             fromMatchesProbe: ev0.from===lc.rappid };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_livechat",
+                      bool(lc.get("present")
+                           and lc.get("protocol") == "rapp-commons-event/1.0"
+                           and lc.get("unified") is True
+                           and lc.get("identityPersisted") is True
+                           and lc.get("room") == "commons"
+                           and lc.get("ridOk") and lc.get("sameId") and lc.get("shapeOk")
+                           and lc.get("verifyGood") is True
+                           and lc.get("verifyTamper") is False
+                           and lc.get("fromMatchesProbe") is True),
+                      lc)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")

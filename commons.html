@@ -1465,7 +1465,9 @@ scene.add(controls.getObject());
 
 const lockEl = document.getElementById("lock");
 lockEl.addEventListener("click", ()=> controls.lock());
-controls.addEventListener("lock",   ()=> lockEl.style.display="none");
+controls.addEventListener("lock",   ()=>{ lockEl.style.display="none";
+  // entering the world joins the SHARED real-time Commons stream (idempotent).
+  try { if (typeof RC !== "undefined" && RC) RC.connect(); } catch(e){} });
 controls.addEventListener("unlock", ()=> lockEl.style.display="flex");
 
 const keys = {};
@@ -4044,10 +4046,14 @@ async function submitPost(){
   // Broadcast to nearby avatars (proximity chat) over the presence mesh.
   broadcast({ t:"event", ev:{ from:ev.from, body:ev.body, ts:ev.ts } });
 
-  // Would POST the signed event to the kited vTwin host's events relay:
-  //   POST {EVENT_POST}  Content-Type: application/json   body = canonical(ev)
-  // The static host persists the rollup back into events/ (append-only, signed).
-  toast(`Signed hello posted → would POST rapp-commons-event/1.0 to ${EVENT_POST}`);
+  // POST to the SHARED live Commons stream (the same one the front door reads/writes)
+  // via the RC module — a front-door-valid rapp-commons-event/1.0 under your unified
+  // rappid. RC only hits the network once you've ENTERED the world (.live); otherwise
+  // it signs + caches locally. This is what makes the 3D world the real-time chat.
+  try { RC.post(text); } catch(e){}
+  toast(RC.live
+    ? "posted to the live Commons — shared with the front door"
+    : "signed locally · enter the world (click) to go live on the shared stream");
 }
 
 const feedEl = document.getElementById("feed");
@@ -4072,6 +4078,168 @@ function spawnSpeech(text, atPos){
   speechBubbles.push({ spr, born });
 }
 const speechBubbles = [];
+
+/* ─────────────────────────────────────────────────────────────────────────
+   6b. LIVE COMMONS STREAM — the SAME real-time signed chat the front door
+   (index.html, rapp-commons-protocol/2.0) runs, now wired INTO the 3D world so
+   both surfaces share ONE conversation: a message posted in here shows up on
+   the front door and vice-versa.
+
+   It adopts the front-door event protocol VERBATIM (rapp-commons-event/1.0:
+   from = rappid:v3:base64url(SHA-256(RAW public key)), pub = raw key base64url,
+   alg ecdsa-p256, body {text}, stable-stringify canonicalisation, base64url
+   signature) so events cross-verify on both pages. Identity is UNIFIED — it
+   loads/mints under the SAME localStorage key the front door uses
+   ("rapp-commons-id"), so "you" are the same rappid on both surfaces — and it
+   seeds from the SAME cached log ("rapp-commons-log").
+
+   ADDITIVE + SAFE: a fully self-contained module with its OWN identity +
+   sign/verify that NEVER touches the existing ME / signEvent / mintIdentity /
+   poker / voxel signing. It READS the shared cloud stream (poll) and renders
+   verified events into the existing #feed + an in-world speech bubble, and
+   POSTS the player's messages. Going live is gated on a single flag (.live)
+   that only flips true when a real user ENTERS the world (pointer-lock) — so
+   headless tests, which never lock, perform ZERO network and never post to the
+   public stream: deterministic + spam-free. No auto-"arrived" hello either
+   (that would spam the public stream). Cloud host is discovered exactly like
+   the front door: neighborhood.json → commons.cloud_hosts[0].url, room "commons".
+   ───────────────────────────────────────────────────────────────────────── */
+const RC = (function(){
+  const ROOM = "commons";
+  const NEIGHBORHOOD_URL = "https://raw.githubusercontent.com/kody-w/rapp-commons/main/neighborhood.json";
+  const ID_KEY = "rapp-commons-id", LOG_KEY = "rapp-commons-log";
+  const enc = s => new TextEncoder().encode(s);
+  function b64u(buf){ const b=new Uint8Array(buf); let s=""; for(const x of b) s+=String.fromCharCode(x);
+    return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+  function ub64u(str){ str=String(str).replace(/-/g,"+").replace(/_/g,"/"); while(str.length%4)str+="=";
+    const s=atob(str); const b=new Uint8Array(s.length); for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i); return b; }
+  const sha256 = buf => crypto.subtle.digest("SHA-256", buf);
+  // stable canonical JSON (sorted keys) — byte-identical to the front door's stableStringify.
+  function stable(v){ if(v===null||typeof v!=="object") return JSON.stringify(v);
+    if(Array.isArray(v)) return "["+v.map(stable).join(",")+"]";
+    return "{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+stable(v[k])).join(",")+"}"; }
+
+  const st = { me:null, cloud:null, live:false, polling:false, since:0,
+               posted:0, received:0, seen:new Set(), log:[], error:null, whenReady:null };
+
+  // identity = the front-door identity (SAME localStorage key) so chat is one person across pages.
+  async function loadOrMint(){
+    try{ const saved = localStorage.getItem(ID_KEY);
+      if(saved){ const j=JSON.parse(saved);
+        const priv = await crypto.subtle.importKey("jwk", j.priv, {name:"ECDSA",namedCurve:"P-256"}, false, ["sign"]);
+        return { priv, pubB64:j.pub, rappid:j.rappid }; }
+    }catch(e){ /* fall through and mint a fresh one */ }
+    const kp = await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"}, true, ["sign","verify"]);
+    const pubRaw = await crypto.subtle.exportKey("raw", kp.publicKey);
+    const pubB64 = b64u(pubRaw);
+    const rappid = "rappid:v3:"+b64u(await sha256(pubRaw));      // fingerprint binds key -> rappid (front-door rule)
+    const privJwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    try{ localStorage.setItem(ID_KEY, JSON.stringify({ priv:privJwk, pub:pubB64, rappid })); }catch(e){}
+    return { priv:kp.privateKey, pubB64, rappid };
+  }
+  async function makeEvent(kind, body){
+    if(!st.me) st.me = await loadOrMint();
+    const ev = { schema:"rapp-commons-event/1.0", from:st.me.rappid, pub:st.me.pubB64, alg:"ecdsa-p256",
+                 ts:new Date().toISOString().replace(/\.\d{3}Z$/,"Z"), kind, body };
+    const sigBuf = await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"}, st.me.priv, enc(stable(ev)));
+    ev.sig = b64u(sigBuf); return ev;
+  }
+  // verify EXACTLY as the front door does: fingerprint(pub)===from, then ECDSA over the sig-less body.
+  async function verify(ev){
+    try{
+      if(!ev || ev.schema!=="rapp-commons-event/1.0" || !ev.sig || !ev.pub || !ev.from) return false;
+      const raw = ub64u(ev.pub);
+      if(("rappid:v3:"+b64u(await sha256(raw)))!==ev.from) return false;
+      const key = await crypto.subtle.importKey("raw", raw, {name:"ECDSA",namedCurve:"P-256"}, false, ["verify"]);
+      const { sig, ...noSig } = ev;
+      return await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"}, key, ub64u(sig), enc(stable(noSig)));
+    }catch(e){ return false; }
+  }
+  async function eventId(ev){ return b64u(await sha256(enc(stable(ev)))).slice(0,22); }
+  function shortFrom(rappid){ return String(rappid||"").replace("rappid:v3:","").slice(0,12); }
+
+  function loadCache(){ try{ return JSON.parse(localStorage.getItem(LOG_KEY)||"[]"); }catch(e){ return []; } }
+  function saveCache(){ try{ localStorage.setItem(LOG_KEY, JSON.stringify(st.log.slice(-250))); }catch(e){} }
+
+  // surface a verified REMOTE stream event in the 3D world: a HUD #feed row + (for
+  // chat posts) a floating in-world speech bubble in front of the player, so the
+  // shared conversation reads spatially too. Own posts are skipped here — submitPost
+  // already drew the local echo, so this avoids a double feed entry.
+  function surface(ev, mine){
+    if(mine) return;
+    const text = (ev.body && ev.body.text) || "";
+    try{ renderEvent({ from:ev.from, body:text, ts:ev.ts, mine:false }); }catch(e){}
+    if(ev.kind==="post" && text){
+      try{ const p = controls.getObject().position;
+        spawnSpeech(shortFrom(ev.from)+": "+text, new THREE.Vector3(p.x, p.y, p.z - 6)); }catch(e){}
+    }
+  }
+  // dedupe (by signed-event id) -> verify -> count + cache + surface. Drops anything unverified.
+  async function ingest(ev, mineHint){
+    if(!ev) return false;
+    const id = await eventId(ev);
+    if(st.seen.has(id)) return false;
+    if(!(await verify(ev))) return false;          // every host & reader drops mis-signed events
+    st.seen.add(id); st.log.push(ev); saveCache();
+    const mine = !!mineHint || !!(st.me && ev.from===st.me.rappid);
+    if(!mine) st.received++;
+    surface(ev, mine);
+    return true;
+  }
+
+  async function discoverCloud(){ try{
+    const n = await (await fetch(NEIGHBORHOOD_URL,{cache:"no-store"})).json();
+    const h = (n.commons && n.commons.cloud_hosts) || [];
+    if(h.length) return String(h[0].url||h[0]).replace(/\/$/,"");
+  }catch(e){ st.error=String(e&&e.message||e); } return null; }
+  async function poll(){ if(!st.cloud) return; try{
+    const r = await (await fetch(st.cloud+"/rooms/"+ROOM+"/events?since="+st.since,{cache:"no-store"})).json();
+    const evs = r.events||[]; st.since += evs.length;
+    for(const ev of evs) await ingest(ev, false);
+  }catch(e){ st.error=String(e&&e.message||e); } }
+
+  // go live — ONLY when a real user has entered the world (pointer-lock). Idempotent.
+  let timer = null;
+  async function connect(){
+    if(st.live) return st;
+    st.live = true;
+    if(!st.me) st.me = await loadOrMint();
+    for(const ev of loadCache()){ try{ await ingest(ev, false); }catch(e){} }   // seed shared front-door history
+    st.cloud = await discoverCloud();
+    if(st.cloud){ st.polling = true; st.since = 0;
+      await poll(); try{ timer = setInterval(poll, 4000); }catch(e){} }
+    return st;
+  }
+
+  // post the player's message to the SHARED live stream (front-door-valid signature)
+  // and cache it locally. Network POST only happens when .live (a user entered) — so
+  // headless tests sign+cache but never hit the public stream.
+  async function post(text){
+    const t = String(text==null?"":text).trim(); if(!t) return null;
+    const ev = await makeEvent("post", { text:t });
+    await ingest(ev, true);                         // dedupe + cache locally (no double feed: surface skips own)
+    if(st.live && st.cloud){ try{
+      await fetch(st.cloud+"/rooms/"+ROOM+"/events", { method:"POST",
+        headers:{ "content-type":"application/json" }, body:JSON.stringify(ev) });
+      st.posted++;
+    }catch(e){ st.error=String(e&&e.message||e); } }
+    return ev;
+  }
+
+  // headless-deterministic snapshot (no network needed to report it).
+  function state(){ return { present:true, protocol:"rapp-commons-event/1.0",
+    rappid: st.me ? st.me.rappid : null,
+    identityPersisted: !!(st.me && st.me.rappid && localStorage.getItem(ID_KEY)),
+    unifiedWithFrontDoor:true, room:ROOM, cloud:st.cloud, live:st.live, polling:st.polling,
+    posted:st.posted, received:st.received, streamLen:st.log.length, error:st.error }; }
+
+  // mint/load the unified identity eagerly so the probe + first post are ready by the
+  // time anything calls them (resolves in milliseconds; no network).
+  st.whenReady = loadOrMint().then(me=>{ st.me = me; return me; }).catch(e=>{ st.error=String(e&&e.message||e); });
+
+  return { loadOrMint, makeEvent, verify, eventId, ingest, connect, post, state, _st:st,
+           get me(){ return st.me; }, get live(){ return st.live; } };
+})();
 
 /* ─────────────────────────────────────────────────────────────────────────
    7. PeerJS multiplayer presence stub — other avatars appear (like Nexus).
@@ -6296,6 +6464,19 @@ boot();
     // testable surfaces; neither signs, mutates identity, or writes to the repo.
     persist:   () => (typeof persistCount     === "function" ? persistCount()     : 0),
     rehydrate: () => (typeof persistRehydrate  === "function" ? persistRehydrate() : Promise.resolve(0)),
+    // LIVE COMMONS STREAM (real-time chat): the 3D world joins the SAME signed stream the
+    // front door (index.html) runs, sharing ONE conversation + ONE identity across pages.
+    //   liveChat() -> {present, protocol:'rapp-commons-event/1.0', rappid, identityPersisted,
+    //                  unifiedWithFrontDoor, room, cloud, live, polling, posted, received, streamLen}
+    //   liveChatSign(text) -> a freshly SIGNED front-door-valid rapp-commons-event/1.0 (NO network)
+    //   liveChatVerify(ev) -> bool: verifies an event exactly as every Commons host/reader does
+    //   liveChatConnect()  -> go live now (normally auto on world-entry / pointer-lock)
+    // The sign/verify pair lets a headless test prove the 3D world speaks the exact front-door
+    // protocol without touching the public network (network is gated on .live = real user entry).
+    liveChat:        ()     => RC.state(),
+    liveChatSign:    (text) => RC.makeEvent("post", { text:String(text==null?"":text) }),
+    liveChatVerify:  (ev)   => RC.verify(ev),
+    liveChatConnect: ()     => RC.connect(),
     // convenience: identity + a one-shot full snapshot for headless callers.
     me: () => ({ rappid: ME.rappid, fp: ME.fp }),
     snapshot: () => ({ where: where(), nearby: nearby(), places: list(), me: { rappid: ME.rappid } })
