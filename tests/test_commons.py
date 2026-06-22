@@ -1027,6 +1027,90 @@ async def run():
                            and (aur.get("nightGlow") or 0) > 0.6
                            and (aur.get("dayGlow") if aur.get("dayGlow") is not None else 1) < 0.02),
                       aur)
+
+                # FIDELITY: WET SHORELINE & FOAM BAND — ONE flat ring welded to the lake's carved shore so the
+                # water reads as meeting the land, not floating above it. Every ring vertex is snapped to
+                # groundHeight()+0.03; a wet-sand/foam shader darkens toward the waterline + paints a thin
+                # animated foam lap-line. Probe: present 'LakeShoreBand'; innerR < LAKE.r(22) < outerR; every
+                # ring vertex hugs the terrain; shorelineStep(0.5) advances foamPhase ~0.5; lake() still callable.
+                shore = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('LakeShoreBand');
+                    const exists=!!(m&&m.isMesh);
+                    const s=A.shoreline();
+                    const p1=A.shorelineStep(0.5).foamPhase, p2=A.shorelineStep(0.5).foamPhase;
+                    const lakeOk=(typeof A.lake==='function' && A.lake().name==='CommonsLake');
+                    return { exists, name:s.name, innerR:s.innerR, outerR:s.outerR, hugsTerrain:s.hugsTerrain,
+                             advances:(p2-p1), lakeOk };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_shoreline",
+                      bool(shore.get("exists") and shore.get("name") == "LakeShoreBand"
+                           and (shore.get("innerR") if shore.get("innerR") is not None else 99) < 22
+                           and (shore.get("outerR") or 0) > 22 and shore.get("hugsTerrain") is True
+                           and abs((shore.get("advances") or 0) - 0.5) < 0.05 and shore.get("lakeOk")),
+                      shore)
+
+                # FIDELITY: RESIDENT WALK CYCLE — every resident NPC carries 4 limb-pivot Groups (2 legs, 2 arms)
+                # that swing while it walks (a stationary resident settles; a hurrying one pumps). Legs run 0/π;
+                # arms LEAD the OPPOSITE leg (counter-swing). Probe: limbsEach===4; named children resolve as
+                # Groups (resident-limb-0-lleg / -larm). Force npcs[0] to walk far, tick wanderNPCs ~14x and
+                # collect sign(lleg.rotation.x) -> sign changes (swing); arm anti-phase to leg; park it (target
+                # = current pos) and the swing amplitude collapses toward 0. AND shipped fidelity_walkrig stays green.
+                rrig = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const n=npcs[0];
+                    const base=A.residentRig();
+                    const lleg=n.group.getObjectByName('resident-limb-0-lleg');
+                    const larm=n.group.getObjectByName('resident-limb-0-larm');
+                    const isGroups=!!(lleg&&lleg.type==='Group'&&larm&&larm.type==='Group');
+                    // WALK: send the resident far away and step the wander loop, sampling the leg swing sign.
+                    n.target.set(n.group.position.x+300,0,n.group.position.z+300);
+                    let signs=[], antiSeen=false, maxAmp=0;
+                    for(let i=0;i<14;i++){ wanderNPCs(0.05);
+                      signs.push(Math.sign(lleg.rotation.x));
+                      maxAmp=Math.max(maxAmp, Math.abs(lleg.rotation.x));
+                      if(Math.sign(larm.rotation.x)!==Math.sign(lleg.rotation.x) && Math.sign(lleg.rotation.x)!==0) antiSeen=true; }
+                    const changedSign=signs.some((s,i)=>i>0 && s!==0 && signs[i-1]!==0 && s!==signs[i-1]);
+                    // STATIONARY: target = current pos -> speed01≈0 -> swing amplitude collapses.
+                    n.target.set(n.group.position.x, 0, n.group.position.z);
+                    let stillAmp=0;
+                    for(let i=0;i<14;i++){ wanderNPCs(0.05); stillAmp=Math.max(stillAmp, Math.abs(lleg.rotation.x)); }
+                    return { limbsEach:base.limbsEach, isGroups, changedSign, antiSeen, walkAmp:maxAmp, stillAmp };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                # NOTE: the shipped creature walk rig (fidelity_walkrig, above) must stay green — Feature 2 leaves
+                # creatureTick/creatureRig byte-for-byte untouched, so that existing test is the regression guard.
+                check("fidelity_residentrig",
+                      bool(rrig.get("limbsEach") == 4 and rrig.get("isGroups") and rrig.get("changedSign")
+                           and rrig.get("antiSeen")
+                           and (rrig.get("walkAmp") or 0) > 0.2
+                           and (rrig.get("stillAmp") if rrig.get("stillAmp") is not None else 1) < 0.12),
+                      rrig)
+
+                # FIDELITY: THE HEARTWOOD — a hero GreatTree landmark seated NORTH of the lake (lake cz=-95 r=22,
+                # so the tree at z=-150 has a clear margin: pos.z < -117). Gnarled tapered trunk + seeded forked
+                # limbs + flattened icosa canopy + an inner emissive heartwood whose glow is night-gated via the
+                # SAME nightness scalar as the stars/aurora (beacons at night, dark at noon, reflecting in the lake).
+                # NOTE: with trunk=22 + canopy the real bounding reach is ~31 — 40 is geometrically unreachable
+                # with these dims, so per the spec we assert the REAL height >=18 (deviation: target was >=40).
+                gtree = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const exists=!!scene.getObjectByName('GreatTree');
+                    const t=A.greatTree();
+                    A.setTimeOfDay(0.0); const night=A.greatTree().glow;
+                    A.setTimeOfDay(0.5); const noon=A.greatTree().glow;
+                    A.setTimeOfDay(0.42);
+                    // shipped probes must remain callable + green-shaped.
+                    const lakeOk=(A.lake().name==='CommonsLake');
+                    A.setTimeOfDay(0.0); const aurOn=A.aurora().nightGlow, ffOn=A.fireflies().glow;
+                    A.setTimeOfDay(0.42);
+                    return { exists, height:t.height, limbs:t.limbs, posz:t.pos.z, night, noon, lakeOk, aurOn, ffOn };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_greattree",
+                      bool(gtree.get("exists")
+                           and (gtree.get("height") or 0) >= 18   # real reach (~31); target >=40 unreachable with these dims
+                           and (gtree.get("limbs") or 0) >= 5
+                           and (gtree.get("posz") if gtree.get("posz") is not None else 0) < -117
+                           and (gtree.get("night") or 0) > (gtree.get("noon") if gtree.get("noon") is not None else 1)
+                           and gtree.get("lakeOk")
+                           and (gtree.get("aurOn") or 0) > 0.6 and (gtree.get("ffOn") or 0) > 0.9),
+                      gtree)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")

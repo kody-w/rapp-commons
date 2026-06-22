@@ -429,6 +429,49 @@ function lakeStep(dt){
   return { waterLevel: +CommonsLake.position.y.toFixed(2), ripplePhase: +u.uTime.value.toFixed(3),
            reflectsHorizon: "#" + u.uHorizon.value.getHexString() };
 }
+// FIDELITY: WET SHORELINE & FOAM BAND — ONE flat ring welded to the carved shore so the lake doesn't float on
+// the land. Every ring vertex is snapped to groundHeight()+0.03 so it hugs the basin lip; a NormalBlending
+// wet-sand shader darkens/saturates the tone toward the waterline (vUv.y: 0 dry outer -> 1 inner waterline),
+// adds a low fresnel sheen, and paints a thin animated white foam lap-line near the water. uTime via
+// shorelineStep(dt), called alongside lakeStep in animate(). Never touches CommonsLake/its water shader.
+const SHORE = { innerR: LAKE.r - 2.5, outerR: LAKE.r + 3.5 };
+const LakeShoreBand = (function(){
+  const geo = new THREE.RingGeometry(SHORE.innerR, SHORE.outerR, 64, 1);
+  geo.rotateX(-Math.PI/2);                       // RingGeometry lies in XY -> lay it flat (XZ)
+  const sp = geo.attributes.position;
+  for (let i = 0; i < sp.count; i++){            // snap each ring vertex to the carved shore so it hugs the land
+    const wx = sp.getX(i) + LAKE.cx, wz = sp.getZ(i) + LAKE.cz;
+    sp.setY(i, groundHeight(wx, wz) + 0.03);
+  }
+  geo.computeVertexNormals();
+  const mat = new THREE.ShaderMaterial({ transparent:true, blending:THREE.NormalBlending,
+    polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1, depthWrite:false,
+    uniforms:{ uTime:{value:0}, uDry:{value:new THREE.Color(0x6a5a3e)}, uWet:{value:new THREE.Color(0x2c2517)} },
+    vertexShader:`varying vec2 vUv; varying vec3 vW; varying vec3 vN;
+      void main(){ vUv=uv; vec4 wp=modelMatrix*vec4(position,1.0); vW=wp.xyz; vN=normalize((modelMatrix*vec4(normal,0.0)).xyz);
+        gl_Position=projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader:`uniform float uTime; uniform vec3 uDry,uWet; varying vec2 vUv; varying vec3 vW; varying vec3 vN;
+      void main(){
+        float wet = smoothstep(0.0, 1.0, vUv.y);                          // 0 dry outer -> 1 inner waterline
+        vec3 col = mix(uDry, uWet, wet);                                  // darken + saturate toward the water
+        vec3 viewDir = normalize(cameraPosition - vW);
+        float fres = pow(1.0 - max(dot(viewDir, normalize(vN)), 0.0), 4.0);
+        col += vec3(0.10,0.12,0.14) * fres * wet;                         // low fresnel sheen on the wet sand
+        float foam = smoothstep(0.78, 0.82 + 0.04*sin(vUv.x*40.0 + uTime*2.0), vUv.y);   // thin animated lap line
+        col = mix(col, vec3(0.95), foam);
+        float a = mix(0.55, 0.95, wet);
+        gl_FragColor = vec4(col, a); }` });
+  const m = new THREE.Mesh(geo, mat);
+  m.name = "LakeShoreBand"; m.renderOrder = 1; m.frustumCulled = false;
+  m.position.set(LAKE.cx, 0, LAKE.cz);
+  scene.add(m);
+  return m;
+})();
+// advance the foam lap-line clock so headless tests are deterministic (called next to lakeStep in animate()).
+function shorelineStep(dt){
+  LakeShoreBand.material.uniforms.uTime.value += (+dt || 0);
+  return { foamPhase: +LakeShoreBand.material.uniforms.uTime.value.toFixed(3) };
+}
 // FIDELITY: GRADE PASS — a single camera-locked fullscreen overlay quad that lays a cinematic
 // colour grade over the framed scene WITHOUT a render target: a radial vignette, a clock-driven tint
 // (warm-amber dawn/dusk, cool-teal night, neutral noon), a faint per-channel chroma offset, and grain
@@ -675,6 +718,74 @@ const AuroraCurtains = (function(){
 function auroraUpdate(){
   // NIGHT gate: same night-ness formula as the stars/fireflies — full at midnight, zero by day/golden hour.
   AuroraCurtains.material.uniforms.uOpacity.value = 1.0 - Math.min(1, Math.max(0, (ambient.intensity - 0.3) / 0.7));
+}
+// FIDELITY: THE HEARTWOOD — a hero GreatTree landmark seated NORTH of the lake, built once at boot. A gnarled
+// tapered trunk, a fixed-seed fork of tapered limbs, overlapping flattened icosahedron canopy blobs, and an
+// inner emissive "heartwood" icosa whose glow is night-gated (beacons at night, dark at noon) via the SAME
+// nightness scalar as the stars/aurora — and it reflects in CommonsLake. ~12 low-poly meshes, all castShadow.
+var GreatTree = null, GreatTreeHeart = null;
+function _gtRand(seed){ let s = seed >>> 0; return function(){ s = (s*1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+function buildGreatTree(){
+  if (GreatTree) return GreatTree;
+  const g = new THREE.Group(); g.name = "GreatTree";
+  const gx = 0, gz = -150, gy = (typeof groundHeight === "function" ? groundHeight(gx, gz) : 0);
+  g.position.set(gx, gy, gz);
+  const bark = new THREE.MeshStandardMaterial({ color:0x5a4632, roughness:0.95, metalness:0.0, flatShading:true });
+  const leaf = new THREE.MeshStandardMaterial({ color:0x3f6b34, roughness:0.9, flatShading:true });
+  // TRUNK — tapered cylinder with a low-freq sine gnarl perturbing the side vertices.
+  const trunkH = 22;
+  const tgeo = new THREE.CylinderGeometry(0.9, 3.2, trunkH, 8, 6);
+  const tp = tgeo.attributes.position;
+  for (let i = 0; i < tp.count; i++){ const y = tp.getY(i);
+    const k = 1 + 0.12 * Math.sin(y * 0.6) + 0.07 * Math.sin(y * 1.7 + 1.3);   // gnarl swell along the bole
+    tp.setX(i, tp.getX(i) * k); tp.setZ(i, tp.getZ(i) * k); }
+  tgeo.computeVertexNormals();
+  const trunk = new THREE.Mesh(tgeo, bark); trunk.position.y = trunkH/2; trunk.castShadow = true; g.add(trunk);
+  // LIMBS — 5-6 smaller tapered cylinders forked off the upper trunk via quaternions (fixed seeded loop).
+  const rnd = _gtRand(20260622); const nLimbs = 6;
+  let topY = trunkH;
+  for (let i = 0; i < nLimbs; i++){
+    const az = (i / nLimbs) * Math.PI * 2 + rnd() * 0.6;
+    const tilt = 0.7 + rnd() * 0.5;                         // off-vertical fork angle
+    const len = 6 + rnd() * 4;
+    const lgeo = new THREE.CylinderGeometry(0.25, 0.9, len, 6);
+    const limb = new THREE.Mesh(lgeo, bark); limb.castShadow = true;
+    const pivot = new THREE.Object3D();
+    pivot.position.set(0, trunkH * (0.62 + rnd() * 0.28), 0);   // seat the fork high on the bole
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt, az, 0, "YXZ"));
+    pivot.quaternion.copy(q);
+    limb.position.y = len/2;                                 // grow the limb outward from the pivot
+    pivot.add(limb); g.add(pivot);
+    topY = Math.max(topY, pivot.position.y + Math.cos(tilt) * len + 2);
+  }
+  // CANOPY — 4-6 overlapping flattened icosa blobs riding the upper limbs/crown.
+  const blobs = 6;
+  for (let i = 0; i < blobs; i++){
+    const r = 6 + rnd() * 3;
+    const blob = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), leaf);
+    const az = (i / blobs) * Math.PI * 2 + rnd();
+    const rad = 3 + rnd() * 5, hh = trunkH * (0.85 + rnd() * 0.35);
+    blob.position.set(Math.cos(az) * rad, hh, Math.sin(az) * rad);
+    blob.scale.y = 0.7; blob.castShadow = true; g.add(blob);
+    topY = Math.max(topY, hh + r * 0.7);
+  }
+  // HEARTWOOD GLOW — inner emissive icosa nested in the crown; intensity night-gated by greatTreeStep().
+  GreatTreeHeart = new THREE.Mesh(new THREE.IcosahedronGeometry(2.6, 1),
+    new THREE.MeshStandardMaterial({ color:0x3a2c12, emissive:0xffb24d, emissiveIntensity:0.0, roughness:0.5, flatShading:true }));
+  GreatTreeHeart.position.y = trunkH * 0.95; g.add(GreatTreeHeart);
+  g.userData = { height: +topY.toFixed(2), limbs: nLimbs, glow: 0 };
+  scene.add(g); GreatTree = g;
+  return g;
+}
+// night-gate the heartwood glow (beacons at night, dark at noon) — called alongside lakeStep so it reflects
+// in CommonsLake and updates the instant the clock moves. Returns the live glow for deterministic tests.
+function greatTreeStep(dt){
+  if (!GreatTree || !GreatTreeHeart) return { glow: 0 };
+  const night = 1.0 - Math.min(1, Math.max(0, (ambient.intensity - 0.3) / 0.7));   // same nightness idiom
+  const glow = +(night * 2.4).toFixed(3);
+  GreatTreeHeart.material.emissiveIntensity = glow;
+  GreatTree.userData.glow = glow;
+  return { glow };
 }
 // FIDELITY: CELESTIAL BODIES — a real sun disc and a phased moon riding the sky opposite each other.
 const CelestialBodies = new THREE.Group(); CelestialBodies.name="CelestialBodies"; scene.add(CelestialBodies);
@@ -1042,6 +1153,7 @@ function applyTimeOfDay(t){
   if (typeof bloomUpdate === "function") bloomUpdate();            // bloom halos swell after dark
   if (typeof gradeUpdate === "function") gradeUpdate();            // cinematic grade tints harder at night
   if (typeof lakeStep === "function") lakeStep(0);                 // FIDELITY: refresh the lake's mirrored sky uniforms the instant the clock moves
+  if (typeof greatTreeStep === "function") greatTreeStep(0);       // FIDELITY: re-gate the Heartwood glow the instant the clock moves
   if (typeof contactShadowUpdate === "function") contactShadowUpdate();   // FIDELITY: tighten/darken contact AO with the sun, fade at night
   if (typeof auroraUpdate === "function") auroraUpdate();          // FIDELITY: night aurora glows only after dark
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
@@ -2454,6 +2566,25 @@ function makeNPC(def, i){
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,0.6),
     new THREE.MeshStandardMaterial({ color:0xffe0bd, roughness:0.7 }));
   head.position.y = 1.85; head.castShadow = true; g.add(head);
+  // FIDELITY: RESIDENT WALK CYCLE — 4 limb-PIVOT groups parented under g (mirrors the creature-leg hip-pivot
+  // pattern), each a tiny cylinder that swings about its pivot in wanderNPCs(). Legs hip-pivot at y≈0.7
+  // (offset y=-0.35 so the limb hangs below); arms shoulder-pivot at y≈1.55, x=±0.5. Legs run 0/π;
+  // arms LEAD the OPPOSITE leg (natural counter-swing). Named resident-limb-<npcIndex>-{larm,rarm,lleg,rleg}.
+  const limbMat = new THREE.MeshStandardMaterial({ color:col.clone().multiplyScalar(0.7), roughness:0.7 });
+  const _limbSpec = [
+    { id:"lleg", geo:[0.09,0.11,0.7,6], px:-0.22, py:0.7,  off:-0.35, phase:0 },
+    { id:"rleg", geo:[0.09,0.11,0.7,6], px: 0.22, py:0.7,  off:-0.35, phase:Math.PI },
+    { id:"larm", geo:[0.06,0.07,0.6,6], px:-0.5,  py:1.55, off:-0.3,  phase:Math.PI },   // arm leads the OPPOSITE (right) leg
+    { id:"rarm", geo:[0.06,0.07,0.6,6], px: 0.5,  py:1.55, off:-0.3,  phase:0 }           // arm leads the OPPOSITE (left) leg
+  ];
+  const limbs = [];
+  for (const ls of _limbSpec){
+    const pivot = new THREE.Group(); pivot.name = "resident-limb-" + i + "-" + ls.id;
+    pivot.position.set(ls.px, ls.py, 0); pivot.userData = { phase: ls.phase };
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(ls.geo[0], ls.geo[1], ls.geo[2], ls.geo[3]), limbMat);
+    seg.position.y = ls.off; seg.castShadow = true;       // hang below the pivot so it rotates about the hip/shoulder
+    pivot.add(seg); g.add(pivot); limbs.push(pivot);
+  }
   // floating glyph
   const eye = new THREE.PointLight(col, 0.8, 6); eye.position.y = 1.9; g.add(eye);
   g.add(makeLabel(def.name + " · npc", 0xc8ffe0, 2.7));
@@ -2463,23 +2594,37 @@ function makeNPC(def, i){
   scene.add(g);
   // FIDELITY: LIVING GAZE — stash the head (+ its glow "eye") so updateGaze() can turn it toward the player.
   npcs.push({ group:g, def, t:Math.random()*10,
-    target:new THREE.Vector3(g.position.x, 0, g.position.z), head, eye });
+    target:new THREE.Vector3(g.position.x, 0, g.position.z), head, eye, limbs, walkPhase:0 });
 }
+const NPC_SPEED = 1.6;
 function wanderNPCs(dt){
   for (const n of npcs){
     n.t += dt;
     const p = n.group.position;
-    if (p.distanceTo(n.target) < 0.6 || Math.random() < 0.002){
+    // arrived -> dwell a beat (idle, limbs settle) before drifting on; or spontaneously pick a new spot.
+    if (p.distanceTo(n.target) < 0.6){ n.dwell = (n.dwell || 0) + dt;
+      if (n.dwell > 2.0 + Math.random()*3.0){ n.dwell = 0;
+        const a = Math.random()*Math.PI*2, r = 6 + Math.random()*14; n.target.set(Math.cos(a)*r, 0, Math.sin(a)*r); }
+    } else if (Math.random() < 0.002){
       const a = Math.random()*Math.PI*2, r = 6 + Math.random()*14;
       n.target.set(Math.cos(a)*r, 0, Math.sin(a)*r);
     }
     const dir = n.target.clone().sub(p); dir.y = 0;
+    let moved = 0;                                            // FIDELITY: capture this frame's displacement for the walk cycle
     if (dir.lengthSq() > 0.01){
       dir.normalize();
-      p.addScaledVector(dir, dt*1.6);
+      moved = dt*NPC_SPEED;
+      p.addScaledVector(dir, dt*NPC_SPEED);
       n.group.rotation.y = Math.atan2(dir.x, dir.z);
     }
     n.group.position.y = Math.sin(n.t*3)*0.06; // little bob
+    // FIDELITY: RESIDENT WALK CYCLE — swing the 4 limb pivots; a stationary resident settles, a hurrying one pumps.
+    if (n.limbs){
+      const speed01 = Math.max(0, Math.min(1, (moved / Math.max(dt, 1e-4)) / NPC_SPEED));
+      n.walkPhase = (n.walkPhase || 0) + dt * (3 + speed01 * 7);
+      const amp = 0.05 + speed01 * 0.6;
+      for (const pv of n.limbs) pv.rotation.x = Math.sin(n.walkPhase + pv.userData.phase) * amp;
+    }
   }
 }
 
@@ -3831,6 +3976,8 @@ function animate(){
   GroundMist.material.uniforms.uTime.value += dt;                                              // drift the ground-mist noise field
   GroundMist.position.set(camera.position.x, 3, camera.position.z);                            // keep the mist sheet centred under the player
   if (typeof lakeStep === "function") lakeStep(dt);                                            // FIDELITY: ripple the lake + mirror the LIVE sky uniforms (no render target)
+  if (typeof shorelineStep === "function") shorelineStep(dt);                                  // FIDELITY: animate the wet shoreline's foam lap-line
+  if (typeof greatTreeStep === "function") greatTreeStep(dt);                                  // FIDELITY: night-gate the Heartwood glow (reflects in the lake)
   if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
   if (typeof stormStep === "function") stormStep(dt);                                            // FIDELITY: advance the (default-off) storm front — rain ramp, strikes, flash decay
@@ -5172,6 +5319,7 @@ async function boot(){
   if (typeof buildFlora === "function") buildFlora();   // FIDELITY: instanced flora blankets the terrain
   if (typeof buildGrassField === "function") buildGrassField();   // FIDELITY: instanced grass-tuft meadow carpets the ground
   if (typeof buildRockOutcrops === "function") buildRockOutcrops();   // FIDELITY: instanced rock outcrops welded into steep terrain
+  if (typeof buildGreatTree === "function") buildGreatTree();         // FIDELITY: the Heartwood — hero GreatTree landmark north of the lake
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
   if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
   if (typeof buildContactShadows === "function") buildContactShadows();   // FIDELITY: grounding AO blobs under every standing thing
@@ -5743,6 +5891,24 @@ boot();
         plazaFlat: (Math.abs(groundHeight(0, 0)) < 0.05 && Math.abs(groundHeight(10, 0)) < 0.05),
         reflectsHorizon: "#" + u.uHorizon.value.getHexString(), ripplePhase: +u.uTime.value.toFixed(3) }; },
     lakeStep: (dt) => (typeof lakeStep === "function" ? lakeStep(+dt || 0.016) : null),
+    // WET SHORELINE (visual): ONE flat ring welded to the carved shore (groundHeight()+0.03 at every vertex)
+    // with a wet-sand/foam shader. shoreline() -> {present, name, innerR, outerR, hugsTerrain:(every ring
+    // vertex's world-Y is within 0.06 of groundHeight at its x,z), foamPhase}. shorelineStep(dt) advances foam.
+    shoreline: () => { const m = scene.getObjectByName("LakeShoreBand"); if (!m) return { present: false };
+      const sp = m.geometry.attributes.position; let hugs = sp.count > 0;
+      for (let i = 0; i < sp.count; i++){
+        const wx = sp.getX(i) + LAKE.cx, wz = sp.getZ(i) + LAKE.cz;
+        if (Math.abs(sp.getY(i) - groundHeight(wx, wz)) > 0.06) hugs = false; }
+      return { present: true, name: "LakeShoreBand", innerR: SHORE.innerR, outerR: SHORE.outerR,
+        hugsTerrain: hugs, foamPhase: +m.material.uniforms.uTime.value.toFixed(3) }; },
+    shorelineStep: (dt) => (typeof shorelineStep === "function" ? shorelineStep(+dt || 0.016) : null),
+    // THE HEARTWOOD (visual): a hero GreatTree landmark north of the lake, with a night-gated emissive heart.
+    // greatTree() -> {present, pos:{x,y,z}, height:(total bounding reach), limbs, glow:(current night-gated
+    // emissiveIntensity)}. Glow rides the same nightness scalar as the stars/aurora (beacons at night, dark at noon).
+    greatTree: () => { const m = scene.getObjectByName("GreatTree"); if (!m) return { present: false };
+      const ud = m.userData || {};
+      return { present: true, pos: { x: +m.position.x.toFixed(1), y: +m.position.y.toFixed(1), z: +m.position.z.toFixed(1) },
+        height: ud.height || 0, limbs: ud.limbs || 0, glow: ud.glow || 0 }; },
     // CONTACT SHADOWS (visual): ONE InstancedMesh of soft AO discs grounding every standing thing on the
     // terrain. contactShadows() -> {count, opacity, meanScale, name, grounded:(every instance's world-Y
     // matches groundHeight(x,z) within eps)}. opacity + meanScale ride the sun (crisp at noon, soft at dusk).
@@ -5775,6 +5941,16 @@ boot();
     // headless test can drive the tracking deterministically without waiting on animate().
     gaze:     ()   => (typeof commonsGaze === "function" ? commonsGaze() : { tracked:0, creature:{ yaw:0, pitch:0, locked:false }, sample:null }),
     gazeStep: (dt) => { if (typeof updateGaze === "function") updateGaze(+dt||0.016); return (typeof commonsGaze === "function" ? commonsGaze() : null); },
+    // RESIDENT WALK CYCLE (visual): each resident NPC carries 4 limb-pivot Groups that swing while it walks.
+    // residentRig() reads off npcs[0]: {residents, limbsEach, walking:(any limb currently swung off rest),
+    // antiPhase:(left arm swings OPPOSITE the left leg)}. Drive it via wanderNPCs(dt).
+    residentRig: () => { const n = npcs[0]; if (!n || !n.limbs) return { residents: npcs.length, limbsEach: 0 };
+      const by = {}; for (const pv of n.limbs){ const k = pv.name.split("-").pop(); by[k] = pv; }
+      const lleg = by.lleg, larm = by.larm;
+      return { residents: npcs.length, limbsEach: n.limbs.length,
+        walking: !!(lleg && Math.abs(lleg.rotation.x) > 0.001),
+        antiPhase: !!(lleg && larm && Math.sign(larm.rotation.x) !== Math.sign(lleg.rotation.x)
+                       && Math.sign(lleg.rotation.x) !== 0) }; },
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)
