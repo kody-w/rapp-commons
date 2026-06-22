@@ -762,6 +762,55 @@ async def run():
                 check("fidelity_walkrig",
                       bool(rig.get("isGroup") and rig.get("gaitIncreased") and rig.get("changedSign")
                            and rig.get("pairClose") and rig.get("antiPhase") and rig.get("legs") == 4), rig)
+
+                # FIDELITY: GradePass — a camera-locked cinematic grade overlay (vignette + clock-driven
+                # tint + grain), no render target. Neutral at noon (tint≈white, strength≈0), warm + harder
+                # at dusk, deeper vignette at night. Read live off the GradePass material uniforms.
+                gradep = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('GradePass');
+                    const isMesh=!!(m&&m.isMesh&&m.material&&m.material.uniforms&&m.material.uniforms.uVignette&&m.material.uniforms.uTint&&m.material.uniforms.uTintStrength&&m.material.uniforms.uGrain&&m.material.uniforms.uTime&&m.material.uniforms.uChroma);
+                    const renderOrder=m?m.renderOrder:0; const depthTest=m?m.material.depthTest:true;
+                    setTimeOfDay(0.42); const noon=A.grade();
+                    setTimeOfDay(0.80); const dusk=A.grade();
+                    setTimeOfDay(0.0);  const night=A.grade();
+                    setTimeOfDay(0.42);
+                    return { isMesh, renderOrder, depthTest, present:noon.present,
+                             noonStrength:noon.tintStrength, noonTint:noon.tint, noonVig:noon.vignette,
+                             duskStrength:dusk.tintStrength, duskWarm:(dusk.tint[0]>dusk.tint[2]),
+                             nightVig:night.vignette };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_gradepass",
+                      bool(gradep.get("isMesh") and gradep.get("present") and gradep.get("renderOrder") == 9999
+                           and gradep.get("depthTest") is False
+                           and (gradep.get("noonStrength") if gradep.get("noonStrength") is not None else 1) < 0.15
+                           and abs((gradep.get("noonTint") or [0, 0, 0])[0] - (gradep.get("noonTint") or [0, 0, 0])[2]) < 0.02
+                           and (gradep.get("duskStrength") or 0) > (gradep.get("noonStrength") or 0)
+                           and gradep.get("duskWarm")
+                           and (gradep.get("nightVig") or 0) > (gradep.get("noonVig") or 0)), gradep)
+
+                # FIDELITY: instanced grass-tuft meadow — ONE InstancedMesh of crossed-plane blades carpeting
+                # the ground (>=2000 instances), plaza + paths kept clear, conformed to groundHeight(), and
+                # deterministically seeded (placed count identical across a reload).
+                meadow = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('grass-field');
+                    const isInst=(m&&m.isInstancedMesh===true);
+                    const cap=(m?m.count:0);
+                    const gf=A.grassField();
+                    return { isInst, cap, count:gf.count, plazaClear:gf.plazaClear, onSurface:gf.onSurface };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                # reload once and re-read the placed count — the seed must reproduce it exactly.
+                count2 = None
+                try:
+                    await page.reload(wait_until="domcontentloaded", timeout=30000)
+                    await page.wait_for_timeout(4000)
+                    count2 = await ev("()=>{try{return window.commonsAgent.grassField().count}catch(e){return -1}}", -1)
+                except Exception:
+                    count2 = -1
+                check("fidelity_grassmeadow",
+                      bool(meadow.get("isInst") and (meadow.get("cap") or 0) >= 2000
+                           and meadow.get("plazaClear") is True and meadow.get("onSurface") is True
+                           and count2 is not None and count2 == meadow.get("count")),
+                      {**meadow, "count2": count2})
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")

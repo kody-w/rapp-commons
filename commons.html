@@ -335,6 +335,56 @@ function godRaysUpdate(){
   godRays.material.uniforms.uIntensity.value = sky.material.uniforms.hazeStrength.value * lowSun * dayF;
   godRays.material.uniforms.uColor.value.copy(sun.color);
 }
+// FIDELITY: GRADE PASS — a single camera-locked fullscreen overlay quad that lays a cinematic
+// colour grade over the framed scene WITHOUT a render target: a radial vignette, a clock-driven tint
+// (warm-amber dawn/dusk, cool-teal night, neutral noon), a faint per-channel chroma offset, and grain
+// gated to the darker (shadow) corners. CRITICAL: the centre alpha ≈ 0, so emissives/bloom punch
+// through unblown — only the edges/darks are graded. Pinned to the camera each frame in animate().
+const _gradeTmp = new THREE.Vector3();
+const grade = new THREE.Mesh(new THREE.PlaneGeometry(2,2),
+  new THREE.ShaderMaterial({ transparent:true, depthTest:false, depthWrite:false, blending:THREE.NormalBlending,
+    uniforms:{ uVignette:{value:0.0}, uTint:{value:new THREE.Color(0xffffff)}, uTintStrength:{value:0.0},
+               uGrain:{value:0.03}, uTime:{value:0.0}, uChroma:{value:0.0025} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uVignette,uTintStrength,uGrain,uTime,uChroma; uniform vec3 uTint; varying vec2 vUv;
+      float grain(vec2 uv){ return fract(sin(dot(uv,vec2(12.9898,78.233))+uTime)*43758.5453); }
+      void main(){
+        vec2 d = vUv - 0.5;
+        float r = length(d) * 1.41421356;
+        // radial vignette: 0 at centre, rises toward the corners.
+        float vig = smoothstep(0.35, 1.0, r) * uVignette;
+        // tint the graded (edge/dark) regions toward the clock colour. neutral tint => no shift.
+        vec3 tintShift = (uTint - vec3(1.0)) * uTintStrength * vig;
+        // tiny per-channel chroma offset — pushes R/B apart slightly toward the rim.
+        float chroma = uChroma * r;
+        // grain gated to the darker corners (where the grade bites hardest).
+        float gr = (grain(vUv) - 0.5) * uGrain * vig;
+        vec3 col = tintShift + vec3(chroma, 0.0, -chroma) + gr;
+        float a = clamp(vig * 0.85 + abs(gr), 0.0, 1.0);
+        gl_FragColor = vec4(col, a);   // centre alpha ≈ 0 -> emissives/bloom punch through
+      }` }));
+grade.name="GradePass"; grade.renderOrder=9999; grade.frustumCulled=false; scene.add(grade);
+// size the quad once (and on resize) so it exactly fills the camera's near plane just ahead of it.
+function gradeResize(){
+  const dist = 0.2;
+  const h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist;
+  const w = h * camera.aspect;
+  grade.scale.set(w / 2, h / 2, 1);   // PlaneGeometry(2,2) is 2 units wide -> halve.
+}
+// GRADE table: a tint colour per DAYNIGHT keyframe (warm dawn/dusk, cool night, neutral noon).
+const GRADE_TINTS = [0xffcaa0, 0xffd8a8, 0xffffff, 0xffffff, 0xffc890, 0xffcaa0];
+function gradeUpdate(){
+  // reuse applyTimeOfDay's a/b/f index math against DAYNIGHT.keys to lerp the tint.
+  const t = ((DAYNIGHT.t % 1) + 1) % 1, ks = DAYNIGHT.keys;
+  let i = 0; while (i < ks.length-1 && ks[i+1].t <= t) i++;
+  const a = ks[i], b = ks[Math.min(i+1, ks.length-1)];
+  const span = (b.t - a.t) || 1, f = Math.max(0, Math.min(1, (t - a.t)/span));
+  grade.material.uniforms.uTint.value.setHex(_dnLerp(GRADE_TINTS[i], GRADE_TINTS[Math.min(i+1, GRADE_TINTS.length-1)], f));
+  // night grades harder: strength + vignette scale with darkness (1 - ambient.intensity).
+  const dark = THREE.MathUtils.clamp(1.0 - ambient.intensity, 0, 1);
+  grade.material.uniforms.uTintStrength.value = +(dark * 0.9).toFixed(4);
+  grade.material.uniforms.uVignette.value = +(0.25 + dark * 0.85).toFixed(4);
+}
 // FIDELITY: procedural BLOOM HALOS — additive sprite glow on every light source, ONE shared radial texture,
 // swelling after dark and near-zero at noon. No EffectComposer. Built once the scene's lights all exist.
 var BloomHalos = null;
@@ -563,6 +613,7 @@ function applyTimeOfDay(t){
   if (typeof cloudsUpdate === "function") cloudsUpdate();     // clouds thicken at dusk
   if (typeof celestialUpdate === "function") celestialUpdate(t);   // sun + moon ride the sky
   if (typeof bloomUpdate === "function") bloomUpdate();            // bloom halos swell after dark
+  if (typeof gradeUpdate === "function") gradeUpdate();            // cinematic grade tints harder at night
   renderer.toneMappingExposure = THREE.MathUtils.clamp(TONE.base + (1.0 - ambient.intensity) * TONE.nightBoost, 0.6, 1.8);  // exposure breathes with the clock
 }
 function dayNightTick(dt){
@@ -640,7 +691,9 @@ renderer.domElement.addEventListener("click", ()=>{ if (controls.isLocked) tryEn
 addEventListener("resize", ()=>{
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (typeof gradeResize === "function") gradeResize();   // re-fit the grade overlay to the new near plane
 });
+if (typeof gradeResize === "function") gradeResize();   // initial fit of the grade overlay quad
 
 /* ─────────────────────────────────────────────────────────────────────────
    3. Interactables — PORTALS (worlds) + HOMES (cubbies). Both are walk-up
@@ -3338,6 +3391,10 @@ function animate(){
   godRays.material.uniforms.uTime.value += dt;                                        // billboard the god rays toward the sun
   godRays.quaternion.copy(camera.quaternion);
   godRays.position.copy(camera.position).addScaledVector(sky.material.uniforms.sunDir.value, 45);
+  // GRADE PASS: pin the overlay quad to the camera (face it, park it 0.2u ahead) + advance grain time.
+  grade.material.uniforms.uTime.value += dt;
+  grade.quaternion.copy(camera.quaternion);
+  grade.position.copy(camera.position).add(camera.getWorldDirection(_gradeTmp).multiplyScalar(0.2));
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
   if (BloomHalos){ var _bt = StarField.material.uniforms.uTime.value; for (var _bi=0;_bi<BloomHalos.children.length;_bi++){ var _bs=BloomHalos.children[_bi]; _bs.scale.setScalar(_bs.userData.baseScale*(1+Math.sin(_bt*2+_bi)*0.06)); } }   // gentle bloom breathing
   sun.target.position.set(camera.position.x, 0, camera.position.z); sun.target.updateMatrixWorld();   // keep the shadow frustum over the player
@@ -4422,6 +4479,75 @@ function buildFlora(){
     count: counts.trees + counts.shrubs + counts.grass, draws: 3, minClear: +minClear.toFixed(2), seed: 1337 };
 }
 
+/* FIDELITY: INSTANCED GRASS-TUFT MEADOW — one THREE.InstancedMesh (ONE draw call) of crossed-plane
+   blades carpeting the terrain between the venues, modelled on buildFlora()'s pattern: seeded
+   mulberry32, snapped to the shared groundHeight() surface, with the plaza + the radiating dirt
+   paths kept clear and steep slopes skipped. Per-instance colour from terrainColor() nudged greener.
+   Solid blades (no texture), DoubleSide, flat-shaded. buildGrassField() runs once at boot. */
+let GRASSFIELD = null;
+function buildGrassField(){
+  // mulberry32 (the shipping seed-PRNG) — a fresh seed so this layer is its own deterministic field.
+  let s = 0x6c617773 >>> 0;
+  const r = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  // per-tuft geometry: two crossed PlaneGeometry(0.5,0.7), translated up so y=0 is the root.
+  const H = 0.7;
+  const pA = new THREE.PlaneGeometry(0.5, H); pA.translate(0, H / 2, 0);
+  const pB = new THREE.PlaneGeometry(0.5, H); pB.rotateY(Math.PI / 2); pB.translate(0, H / 2, 0);
+  // merge the two planes MANUALLY (no BufferGeometryUtils): concatenate position/normal/uv + index.
+  const tuft = new THREE.BufferGeometry();
+  const posA = pA.attributes.position.array, posB = pB.attributes.position.array;
+  const norA = pA.attributes.normal.array, norB = pB.attributes.normal.array;
+  const uvA = pA.attributes.uv.array, uvB = pB.attributes.uv.array;
+  const mergedPos = new Float32Array(posA.length + posB.length); mergedPos.set(posA, 0); mergedPos.set(posB, posA.length);
+  const mergedNor = new Float32Array(norA.length + norB.length); mergedNor.set(norA, 0); mergedNor.set(norB, norA.length);
+  const mergedUv = new Float32Array(uvA.length + uvB.length); mergedUv.set(uvA, 0); mergedUv.set(uvB, uvA.length);
+  tuft.setAttribute("position", new THREE.BufferAttribute(mergedPos, 3));
+  tuft.setAttribute("normal", new THREE.BufferAttribute(mergedNor, 3));
+  tuft.setAttribute("uv", new THREE.BufferAttribute(mergedUv, 2));
+  const idxA = pA.index.array, idxB = pB.index.array, vcountA = posA.length / 3;
+  const mergedIdx = new Uint16Array(idxA.length + idxB.length);
+  mergedIdx.set(idxA, 0);
+  for (let k = 0; k < idxB.length; k++) mergedIdx[idxA.length + k] = idxB[k] + vcountA;
+  tuft.setIndex(new THREE.BufferAttribute(mergedIdx, 1));
+
+  const N = 3000;
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1, flatShading: true });
+  const mesh = new THREE.InstancedMesh(tuft, mat, N);
+  mesh.name = "grass-field"; mesh.castShadow = false; mesh.receiveShadow = false;
+  const dummy = new THREE.Object3D(), col = new THREE.Color();
+  // angular path-nearness, exactly as terrainColor() computes it (atan2 bearing vs each TPATHS bearing).
+  const pathNear = (x, z) => { const br = Math.atan2(z, x); let near = Math.PI;
+    for (const pb of TPATHS){ const df = Math.abs((((br - pb + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) - Math.PI); near = Math.min(near, df); }
+    return near; };
+  let placed = 0, nearest = null, nearestD = Infinity;
+  // draw N candidates; reject plaza, path corridors, and steep slope; place the survivors.
+  for (let i = 0; i < N; i++){
+    let x = 0, z = 0, y = 0, ok = false;
+    for (let tries = 0; tries < 8 && !ok; tries++){
+      x = (r() - 0.5) * 360; z = (r() - 0.5) * 360;
+      if (Math.hypot(x, z) < 28) continue;                                   // plaza clearance
+      if (pathNear(x, z) < 0.14) continue;                                   // dirt-path corridors
+      const slope = Math.hypot(groundHeight(x + 1, z) - groundHeight(x - 1, z), groundHeight(x, z + 1) - groundHeight(x, z - 1)) * 0.5;
+      if (slope > 1.0) continue;                                             // steep faces
+      ok = true;
+    }
+    if (!ok){ x = 200; z = 200; }                                           // park rejects far away (off-world)
+    y = groundHeight(x, z);
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, r() * Math.PI * 2, 0);
+    dummy.scale.setScalar(0.7 + r() * 0.9);
+    dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix);
+    const tc = terrainColor(x, z);                                          // [r,g,b] 0-255, nudge greener
+    col.setRGB(Math.min(1, tc[0] / 255 * 0.85), Math.min(1, tc[1] / 255 * 1.15 + 0.06), Math.min(1, tc[2] / 255 * 0.8));
+    mesh.setColorAt(i, col);
+    if (ok){ placed++; const d = Math.hypot(x, z); if (d < nearestD){ nearestD = d; nearest = { x: +x.toFixed(3), z: +z.toFixed(3), y: +y.toFixed(3) }; } }
+  }
+  mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.userData = { count: placed, nearest: nearest || { x: 200, z: 200, y: groundHeight(200, 200) } };
+  scene.add(mesh);
+  GRASSFIELD = mesh;
+}
+
 let WORLDS = null;
 async function boot(){
   await mintIdentity();
@@ -4453,6 +4579,7 @@ async function boot(){
   registerApexArena();
   if (typeof registerCreatureHabitat === "function") registerCreatureHabitat();
   if (typeof buildFlora === "function") buildFlora();   // FIDELITY: instanced flora blankets the terrain
+  if (typeof buildGrassField === "function") buildGrassField();   // FIDELITY: instanced grass-tuft meadow carpets the ground
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
@@ -4956,6 +5083,19 @@ boot();
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
     flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),
+    // GRADE PASS (additive, visual): the camera-locked cinematic grade overlay. grade() ->
+    // {present, vignette, tint:[r,g,b], tintStrength, grain} read live off the material uniforms.
+    grade: () => { const g = scene.getObjectByName("GradePass"); if (!g) return { present: false };
+      const u = g.material.uniforms;
+      return { present: true, vignette: +u.uVignette.value.toFixed(4), tint: [+u.uTint.value.r.toFixed(3), +u.uTint.value.g.toFixed(3), +u.uTint.value.b.toFixed(3)],
+        tintStrength: +u.uTintStrength.value.toFixed(4), grain: +u.uGrain.value.toFixed(4) }; },
+    // GRASS MEADOW (additive, visual): one InstancedMesh of crossed-plane blades carpeting the ground,
+    // plaza + paths kept clear, conformed to groundHeight(). grassField() ->
+    // {count, plazaClear:(nearest tuft is >=28 from origin), onSurface:(its y matches groundHeight)}.
+    grassField: () => { const m = scene.getObjectByName("grass-field"); if (!m) return { count: 0, plazaClear: false, onSurface: false };
+      const ud = m.userData || {}, n = ud.nearest || { x: 0, z: 0, y: 0 };
+      return { count: ud.count || 0, plazaClear: (Math.hypot(n.x, n.z) >= 28),
+        onSurface: (Math.abs((n.y || 0) - groundHeight(n.x, n.z)) < 0.05) }; },
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)
