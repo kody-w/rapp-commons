@@ -637,6 +637,157 @@ const Fireflies = (function(){
   const pts = new THREE.Points(g, m); pts.name="Fireflies"; pts.frustumCulled=false; scene.add(pts); return pts;
 })();
 
+/* ─────────────────────────────────────────────────────────────────────────
+   FIDELITY: STORM FRONT — an optional weather system (DEFAULT OFF so the resting
+   scene + every existing test is unchanged). ONE THREE.Group 'StormSystem' holds:
+     (1) RAIN  — a camera-following THREE.Points 'RainColumn' (4000 verts seeded by
+         the StarField mulberry32 idiom). An all-GPU ShaderMaterial scrolls each
+         drop downward modulo the box height, rebased to the player, sheared by the
+         wind; the alpha rides a vertical gradient * the live rain level. No
+         per-frame buffer writes — only uniforms move.
+     (2) LIGHTNING — one thin additive PlaneGeometry billboard hung high in the sky;
+         its frag draws a forked bolt as the distance to a jagged polyline derived
+         from a per-strike seed. uFlash decays 1→0 over ~0.25s.
+     (3) SKY-FLASH — on each strike an additive tint/haze uniform briefly bumps and
+         restores, so the whole sky flickers.
+   Driven entirely by JS stormState; advanced in animate() (and, for deterministic
+   headless testing, by commonsAgent.stormStep(dt)). Probes on commonsAgent.
+   ───────────────────────────────────────────────────────────────────────── */
+const stormState = { active:false, rainLevel:0, target:0, wind:{ x:0.35, z:0.12 }, flash:0, strikeCount:0, seed:0x52414e57, _strikeT:0, _nextStrike:2.2, _flashTint:0 };
+const StormSystem = (function(){
+  const grp = new THREE.Group(); grp.name = "StormSystem"; grp.renderOrder = 3; grp.frustumCulled = false;
+  // RAIN — 4000 drops seeded (mulberry32 idiom) inside a 60×40×60 box around the player.
+  const BOX_X = 60, BOX_Y = 40, BOX_Z = 60, N = 4000;
+  let s = stormState.seed >>> 0;
+  const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const pos = new Float32Array(N * 3), spd = new Float32Array(N);
+  for (let i = 0; i < N; i++){
+    pos[i*3]   = (rnd() - 0.5) * BOX_X;
+    pos[i*3+1] = rnd() * BOX_Y;                 // 0..BOX_Y, scrolled in the shader
+    pos[i*3+2] = (rnd() - 0.5) * BOX_Z;
+    spd[i] = 0.7 + rnd() * 0.6;                 // per-drop fall-speed jitter
+  }
+  const rg = new THREE.BufferGeometry();
+  rg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  rg.setAttribute("dspeed",  new THREE.BufferAttribute(spd, 1));
+  const rm = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blending:THREE.NormalBlending,
+    uniforms:{ uTime:{value:0}, uRain:{value:0}, uWind:{value:new THREE.Vector2(stormState.wind.x, stormState.wind.z)},
+               uCam:{value:new THREE.Vector3()}, uBoxY:{value:BOX_Y}, uColor:{value:new THREE.Color(0xbfd4e8)} },
+    vertexShader:`attribute float dspeed; uniform float uTime, uRain, uBoxY; uniform vec2 uWind; uniform vec3 uCam; varying float vY;
+      void main(){
+        vec3 p = position;
+        // scroll DOWN modulo the box height, rebased to the player so the column follows.
+        float y = mod(p.y - uTime*40.0*dspeed, uBoxY);
+        vY = y / uBoxY;
+        float fall = (uBoxY - y);               // 0 at top, uBoxY at bottom — shear with wind toward the ground
+        p.x += uWind.x * fall;
+        p.z += uWind.y * fall;
+        p = vec3(p.x + uCam.x, y - uBoxY*0.5 + uCam.y, p.z + uCam.z);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = (1.0 + 3.0*uRain) * (300.0/max(1.0,-mv.z));   // tall-thin streaks: size grows with rain
+        gl_Position = projectionMatrix * mv; }`,
+    fragmentShader:`uniform float uRain; uniform vec3 uColor; varying float vY;
+      void main(){
+        vec2 d = gl_PointCoord - 0.5;
+        if (abs(d.x) > 0.18) discard;           // thin vertical sliver = a rain streak
+        float grad = smoothstep(0.0, 0.25, vY) * smoothstep(1.0, 0.55, vY);   // verticalGradient
+        gl_FragColor = vec4(uColor, grad * uRain * 0.85); }` });
+  const rain = new THREE.Points(rg, rm); rain.name = "RainColumn"; rain.frustumCulled = false; grp.add(rain);
+
+  // LIGHTNING — one additive plane high in the sky; the frag paints a forked bolt.
+  const lm = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, depthTest:false, blending:THREE.AdditiveBlending,
+    uniforms:{ uFlash:{value:0}, uStrikeSeed:{value:0.0}, uColor:{value:new THREE.Color(0xdfe8ff)} },
+    vertexShader:`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uFlash, uStrikeSeed; uniform vec3 uColor; varying vec2 vUv;
+      float h(float n){ return fract(sin(n*12.9898 + uStrikeSeed*43.0)*43758.5453); }
+      void main(){
+        if (uFlash <= 0.001) discard;
+        // a jagged top→bottom polyline; each segment kinks by a seeded amount.
+        float y = vUv.y;                                   // 1 at the top, 0 at the floor
+        float seg = floor((1.0 - y) * 7.0);
+        float x0 = 0.5 + (h(seg)      - 0.5) * 0.55;
+        float x1 = 0.5 + (h(seg+1.0)  - 0.5) * 0.55;
+        float fseg = fract((1.0 - y) * 7.0);
+        float boltX = mix(x0, x1, fseg);
+        float dist = abs(vUv.x - boltX);
+        float core = smoothstep(0.012, 0.0, dist);         // distance-to-jagged-polyline
+        // a faint forked branch off the mid-bolt.
+        float bx2 = boltX + (h(seg+3.0)-0.5)*0.25*step(0.4,y);
+        core += 0.5*smoothstep(0.010, 0.0, abs(vUv.x - bx2))*step(0.35,y)*step(y,0.7);
+        gl_FragColor = vec4(uColor, core * uFlash); }` });
+  const bolt = new THREE.Mesh(new THREE.PlaneGeometry(60, 90), lm);
+  bolt.name = "LightningBolt"; bolt.frustumCulled = false; bolt.position.set(0, 60, -40); grp.add(bolt);
+
+  // SKY-FLASH — a big additive haze quad that briefly tints the whole view on a strike.
+  const fm = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, depthTest:false, blending:THREE.AdditiveBlending,
+    uniforms:{ uTint:{value:0}, uColor:{value:new THREE.Color(0x9fb4d8)} },
+    vertexShader:`void main(){ gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uTint; uniform vec3 uColor; void main(){ if (uTint<=0.001) discard; gl_FragColor = vec4(uColor, uTint*0.18); }` });
+  const flashQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), fm);
+  flashQuad.name = "SkyFlash"; flashQuad.frustumCulled = false; flashQuad.renderOrder = 3; grp.add(flashQuad);
+
+  scene.add(grp);
+  grp.userData = { rain, bolt, flashQuad, rm, lm, fm, BOX_X, BOX_Y, BOX_Z };
+  return grp;
+})();
+
+// fire a single lightning bolt: reseed the bolt + set flash/tint to 1.
+function stormStrike(){
+  const ud = StormSystem.userData;
+  stormState.strikeCount++;
+  stormState.flash = 1; stormState._flashTint = 1;
+  ud.lm.uniforms.uStrikeSeed.value = (stormState.strikeCount * 0.6180339887) % 1.0;   // golden-ratio seed walk
+  ud.lm.uniforms.uFlash.value = 1; ud.fm.uniforms.uTint.value = 1;
+  return { flash: 1 };
+}
+// advance the storm by dt: ramp rainLevel→target, decay the flash/tint, schedule strikes (only when active).
+function stormStep(dt){
+  const ud = StormSystem.userData;
+  ud.rm.uniforms.uTime.value += dt;
+  ud.lm.uniforms.uStrikeSeed; // (no-op anchor)
+  // ramp the rain level toward the target.
+  const k = 1 - Math.exp(-dt * 6.0);
+  stormState.rainLevel += (stormState.target - stormState.rainLevel) * k;
+  if (stormState.rainLevel < 1e-4) stormState.rainLevel = stormState.target < 1e-4 ? 0 : stormState.rainLevel;
+  ud.rm.uniforms.uRain.value = stormState.rainLevel;
+  // follow the player + keep the wind/shear in sync.
+  ud.rm.uniforms.uCam.value.copy(camera.position);
+  ud.rm.uniforms.uWind.value.set(stormState.wind.x, stormState.wind.z);
+  // decay the flash + the sky tint (≈0.25s 1→0).
+  stormState.flash = Math.max(0, stormState.flash - dt / 0.25);
+  stormState._flashTint = Math.max(0, stormState._flashTint - dt / 0.25);
+  ud.lm.uniforms.uFlash.value = stormState.flash;
+  ud.fm.uniforms.uTint.value = stormState._flashTint;
+  // pin the flash quad in front of the camera so it tints the whole view.
+  ud.flashQuad.position.copy(camera.position).add(camera.getWorldDirection(_stormTmp).multiplyScalar(0.3));
+  ud.flashQuad.quaternion.copy(camera.quaternion);
+  ud.bolt.quaternion.copy(camera.quaternion);
+  ud.bolt.position.set(camera.position.x, camera.position.y + 55, camera.position.z - 40);
+  // seeded strike schedule — only when active + actually raining.
+  if (stormState.active && stormState.rainLevel > 0.25){
+    stormState._strikeT += dt;
+    if (stormState._strikeT >= stormState._nextStrike){
+      stormState._strikeT = 0;
+      // seeded interval in 1.8..4.0s
+      let q = stormState.seed = (stormState.seed + 0x6D2B79F5) | 0; q = Math.imul(q ^ (q >>> 15), 1 | q); q ^= q + Math.imul(q ^ (q >>> 7), 61 | q);
+      stormState._nextStrike = 1.8 + (((q >>> 14) >>> 0) / 4294967296) * 2.2;
+      stormStrike();
+    }
+  }
+  return commonsStorm();
+}
+const _stormTmp = new THREE.Vector3();
+function setStorm(level){
+  stormState.target = Math.max(0, Math.min(1, +level || 0));
+  stormState.active = stormState.target > 0.001;
+  return commonsStorm();
+}
+function commonsStorm(){
+  const rain = StormSystem.userData.rain;
+  return { active: stormState.active, rain: +stormState.rainLevel.toFixed(3), strikes: stormState.strikeCount,
+    flash: +stormState.flash.toFixed(3), rainParticles: rain.geometry.attributes.position.count };
+}
+
 // lighting
 const ambient = new THREE.AmbientLight(DNA.ambientColor, 0.9);
 scene.add(ambient);
@@ -2142,8 +2293,9 @@ function makeNPC(def, i){
   const a0 = Math.random()*Math.PI*2;
   g.position.set(Math.cos(a0)*8, 0, Math.sin(a0)*8);
   scene.add(g);
+  // FIDELITY: LIVING GAZE — stash the head (+ its glow "eye") so updateGaze() can turn it toward the player.
   npcs.push({ group:g, def, t:Math.random()*10,
-    target:new THREE.Vector3(g.position.x, 0, g.position.z) });
+    target:new THREE.Vector3(g.position.x, 0, g.position.z), head, eye });
 }
 function wanderNPCs(dt){
   for (const n of npcs){
@@ -3511,11 +3663,13 @@ function animate(){
   GroundMist.position.set(camera.position.x, 3, camera.position.z);                            // keep the mist sheet centred under the player
   if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
   if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
+  if (typeof stormStep === "function") stormStep(dt);                                            // FIDELITY: advance the (default-off) storm front — rain ramp, strikes, flash decay
   if (BloomHalos){ var _bt = StarField.material.uniforms.uTime.value; for (var _bi=0;_bi<BloomHalos.children.length;_bi++){ var _bs=BloomHalos.children[_bi]; _bs.scale.setScalar(_bs.userData.baseScale*(1+Math.sin(_bt*2+_bi)*0.06)); } }   // gentle bloom breathing
   sun.target.position.set(camera.position.x, 0, camera.position.z); sun.target.updateMatrixWorld();   // keep the shadow frustum over the player
   particles.position.y = Math.sin(t*0.3)*0.5;
   dayNightTick(dt);   // slow day→night sky/fog/sun tint
   if (typeof creatureTick === "function") creatureTick(dt);   // the Lineage creature roams its habitat
+  if (typeof updateGaze === "function") updateGaze(dt);        // FIDELITY: heads/eyes track the player when they walk close
 
   // animate the NATIVE nexus holographic zone (frame swirl + drifting halo).
   for (const m of NEXUS.mats) m.uniforms.time.value = t;
@@ -4487,7 +4641,8 @@ function spawnCreature(traits){
   const body = new THREE.Mesh(new THREE.BoxGeometry(size * 1.7, size, size * 1.1), mat); body.position.y = bodyY; g.add(body);
   const cl = new THREE.PointLight(col, 1.7, 22); cl.position.set(0, bodyY + 1.3, 0); g.add(cl);   // the creature lights its own habitat (a living hologram)
   const head = new THREE.Mesh(new THREE.BoxGeometry(size * 0.75, size * 0.75, size * 0.75), mat); head.position.set(size * 1.05, bodyY + size * 0.25, 0); g.add(head);
-  for (const dz of [-0.22, 0.22]){ const eye = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe08a, emissiveIntensity: 1.2 })); eye.position.set(size * 1.42, bodyY + size * 0.35, dz * size); g.add(eye); }
+  const _eyes = [];
+  for (const dz of [-0.22, 0.22]){ const eye = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffe08a, emissiveIntensity: 1.2 })); eye.position.set(size * 1.42, bodyY + size * 0.35, dz * size); g.add(eye); _eyes.push(eye); eye.userData = { baseX: eye.position.x }; }
   // FIDELITY: articulated walk rig — each leg is wrapped in a hip-pivot Group so it SWINGS about the hip.
   CREATURE.legs = [];
   const _legPos = [[-0.55, -0.42], [-0.55, 0.42], [0.55, -0.42], [0.55, 0.42]];
@@ -4502,6 +4657,7 @@ function spawnCreature(traits){
   scene.add(g);
   CREATURE.group = g; CREATURE.traits = traits; CREATURE.color = col; CREATURE.size = size; CREATURE.dom = dom;
   CREATURE.speed = 0.4 + (traits.explore || 0) * 1.8; CREATURE.bodyY = bodyY; CREATURE.body = body; CREATURE.gaitPhase = 0;
+  CREATURE.head = head; CREATURE.eyes = _eyes;   // FIDELITY: LIVING GAZE — refs for updateGaze() (additive; geometry/names unchanged)
   CREATURE.target = CREATURE.habitat.clone();
   return creatureState();
 }
@@ -4536,6 +4692,7 @@ function creatureTick(dt){
   if (CREATURE.legs) for (let li = 0; li < CREATURE.legs.length; li++){ const pv = CREATURE.legs[li]; pv.rotation.x = Math.sin(CREATURE.gaitPhase + pv.userData.phase) * (0.15 + speed01 * 0.5); }
   if (CREATURE.body) CREATURE.body.rotation.z = Math.sin(CREATURE.gaitPhase) * 0.04 * speed01;   // tiny body roll
   g.position.y = Math.abs(Math.sin(CREATURE.t * 6)) * 0.12;   // legacy gait bob
+  if (typeof updateGaze === "function") updateGaze(dt);   // FIDELITY: the creature head/eyes also track on the creature's own clock
 }
 function registerCreatureHabitat(){
   buildCreatureHabitat();
@@ -4544,6 +4701,69 @@ function registerCreatureHabitat(){
     blurb: "A living habitat in the commons where a Lineage champion roams as a real 3D creature — its body shaped by its instincts (size from exploit, legs from explore, spikes from aggress, colour from its dominant trait). Observe it in the wild.",
     action: () => { if (typeof travelTo === "function") travelTo(Object.assign(CREATURE.habitat.clone(), { label: "Wildlife Habitat" })); }
   });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   FIDELITY: LIVING GAZE — every resident's head (and the creature's head + eyes)
+   tracks the player when they walk close. Zero new geometry: makeNPC stashes
+   npc.head/npc.eye and spawnCreature stashes CREATURE.head/CREATURE.eyes; here we
+   transform the camera into each head's PARENT local space, aim the head's yaw/pitch
+   at it (pitch clamped), and ease back to rest when the player walks away. Called
+   from BOTH animate() AND creatureTick() so the creature tracks on its own clock.
+   O(residents) trig, no per-frame allocations (scratch vectors are module-level).
+   ───────────────────────────────────────────────────────────────────────── */
+const GAZE = { range: 9, lerp: 6, maxPitch: 0.5, creature: { yaw: 0, pitch: 0, locked: false }, tracked: 0, sample: null };
+const _gzLocal = new THREE.Vector3(), _gzCam = new THREE.Vector3();
+function attachGaze(){ /* refs are captured lazily in makeNPC / spawnCreature; nothing to pre-wire. */ return true; }
+// aim ONE head (mesh) toward the camera in its parent's local frame; return {yaw, locked}.
+function _gazeHead(head, dt, eyes){
+  if (!head || !head.parent) return { yaw: head ? head.rotation.y : 0, locked: false };
+  head.parent.updateMatrixWorld();
+  _gzCam.copy(camera.position);
+  head.parent.worldToLocal(_gzLocal.copy(_gzCam));   // camera in the head-parent local space
+  // offset by the head's own seat so the angle is measured from the head, not the parent origin.
+  const dx = _gzLocal.x - head.position.x, dy = _gzLocal.y - head.position.y, dz = _gzLocal.z - head.position.z;
+  const horiz = Math.hypot(dx, dz);
+  const worldDist = head.getWorldPosition(_gzLocal).distanceTo(_gzCam);
+  let locked = false, desiredYaw = 0, desiredPitch = 0;
+  if (worldDist < GAZE.range && horiz > 1e-4){
+    desiredYaw = Math.atan2(dx, dz);
+    desiredPitch = Math.max(-GAZE.maxPitch, Math.min(GAZE.maxPitch, Math.atan2(dy, horiz)));
+    locked = true;
+  }
+  const k = Math.min(1, GAZE.lerp * dt);
+  head.rotation.y += (desiredYaw - head.rotation.y) * k;
+  head.rotation.x += (desiredPitch - head.rotation.x) * k;
+  // nudge the creature's eye spheres slightly along local +x toward the gaze.
+  if (eyes && eyes.length){
+    const push = locked ? 0.06 : 0;
+    for (const e of eyes){ const bx = (e.userData && e.userData.baseX != null) ? e.userData.baseX : e.position.x;
+      e.position.x += ((bx + push) - e.position.x) * k; }
+  }
+  return { yaw: head.rotation.y, pitch: head.rotation.x, locked };
+}
+function updateGaze(dt){
+  if (!dt || dt <= 0) dt = 0.016;
+  let count = 0, sample = null;
+  // resident heads (one per resident — keeps tracked === residents + creature).
+  if (typeof RESIDENTS !== "undefined"){
+    for (const r of RESIDENTS){
+      const h = r && r.npc && r.npc.head; if (!h) continue;
+      const res = _gazeHead(h, dt, null); count++;
+      if (!sample) sample = { name: r.name, yaw: +res.yaw.toFixed(4) };
+    }
+  }
+  // the creature head + its two eyes.
+  if (CREATURE.group && CREATURE.head){
+    const res = _gazeHead(CREATURE.head, dt, CREATURE.eyes); count++;
+    GAZE.creature.yaw = res.yaw; GAZE.creature.pitch = res.pitch; GAZE.creature.locked = res.locked;
+  }
+  GAZE.tracked = count; GAZE.sample = sample;
+}
+function commonsGaze(){
+  return { tracked: GAZE.tracked,
+    creature: { yaw: +GAZE.creature.yaw.toFixed(4), pitch: +GAZE.creature.pitch.toFixed(4), locked: GAZE.creature.locked },
+    sample: GAZE.sample };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -4690,6 +4910,65 @@ function buildGrassField(){
   GRASSFIELD = mesh;
 }
 
+/* FIDELITY: ROCK OUTCROPS — ONE THREE.InstancedMesh 'RockOutcrops' of faceted boulders welded into the
+   terrain, built ONCE at boot beside the meadow (zero per-frame cost). The base IcosahedronGeometry(1,1) is
+   roughened ONCE (each vertex pushed along its normal by mulberry32 value-noise → a faceted boulder). Reuses
+   the seeded meadow-scatter loop + the SAME keep-outs (plaza reject, dirt-path reject) but INVERTS the slope
+   gate to PREFER steep ground. Each instance is SUNK below groundHeight() so it reads as exposed bedrock. */
+let ROCKOUTCROPS = null;
+function buildRockOutcrops(){
+  // its own deterministic PRNG stream (mulberry32 idiom, fresh seed).
+  let s = 0x726f636b >>> 0;   // "rock"
+  const r = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  // base boulder geom: roughen an icosahedron ONCE by pushing each vertex along its normal by value-noise.
+  const geom = new THREE.IcosahedronGeometry(1, 1);
+  const bp = geom.attributes.position; const bn = geom.attributes.normal;
+  for (let i = 0; i < bp.count; i++){
+    const nx = bn.getX(i), ny = bn.getY(i), nz = bn.getZ(i);
+    const push = 0.55 + r() * 0.55;   // per-vertex value-noise → faceted, lumpy boulder
+    bp.setXYZ(i, bp.getX(i) + nx * (push - 0.55) * 0.9,
+                 bp.getY(i) + ny * (push - 0.55) * 0.9,
+                 bp.getZ(i) + nz * (push - 0.55) * 0.9);
+  }
+  geom.computeVertexNormals();
+  const rk = TPAL.rock;   // grey toward TPAL.rock
+  const mat = new THREE.MeshStandardMaterial({ color: (rk[0] << 16) | (rk[1] << 8) | rk[2], roughness: 0.95, flatShading: true });
+  const N = 80;   // ~60-90 instances
+  const mesh = new THREE.InstancedMesh(geom, mat, N);
+  mesh.name = "RockOutcrops"; mesh.castShadow = true; mesh.receiveShadow = true;
+  const dummy = new THREE.Object3D();
+  // angular path-nearness, exactly as terrainColor()/buildGrassField() compute it.
+  const pathNear = (x, z) => { const br = Math.atan2(z, x); let near = Math.PI;
+    for (const pb of TPATHS){ const df = Math.abs((((br - pb + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) - Math.PI); near = Math.min(near, df); }
+    return near; };
+  let placed = 0;
+  const samples = [];
+  for (let i = 0; i < N; i++){
+    let x = 0, z = 0, ok = false;
+    for (let tries = 0; tries < 40 && !ok; tries++){
+      x = (r() - 0.5) * 720; z = (r() - 0.5) * 720;             // candidates over ±360
+      if (Math.hypot(x, z) < 28) continue;                      // plaza keep-out (same gate)
+      if (pathNear(x, z) < 0.12) continue;                      // dirt-path keep-out (same gate)
+      const slope = Math.hypot(groundHeight(x + 1, z) - groundHeight(x - 1, z), groundHeight(x, z + 1) - groundHeight(x, z - 1)) * 0.5;
+      if (slope <= 0.1) continue;                               // INVERTED gate — PREFER the steepest ground (this terrain tops out ~0.15)
+      ok = true;
+    }
+    if (!ok){ x = 600; z = 600; }                               // park rejects far off-world
+    const scale = 0.8 + r() * 3.2;                              // 0.8 .. 4.0 non-uniform-ish
+    const sx = scale * (0.8 + r() * 0.5), sy = scale * (0.8 + r() * 0.5), sz = scale * (0.8 + r() * 0.5);
+    const y = groundHeight(x, z) - scale * 0.35;                // SINK so it reads as bedrock
+    dummy.position.set(x, y, z);
+    dummy.rotation.set((r() - 0.5) * 0.6, r() * Math.PI * 2, (r() - 0.5) * 0.6);   // random tilt + yaw
+    dummy.scale.set(sx, sy, sz);
+    dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix);
+    if (ok){ placed++; if (samples.length < 24) samples.push({ x: +x.toFixed(3), z: +z.toFixed(3) }); }
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.userData = { count: placed, samples };
+  scene.add(mesh);
+  ROCKOUTCROPS = mesh;
+}
+
 let WORLDS = null;
 async function boot(){
   await mintIdentity();
@@ -4722,8 +5001,10 @@ async function boot(){
   if (typeof registerCreatureHabitat === "function") registerCreatureHabitat();
   if (typeof buildFlora === "function") buildFlora();   // FIDELITY: instanced flora blankets the terrain
   if (typeof buildGrassField === "function") buildGrassField();   // FIDELITY: instanced grass-tuft meadow carpets the ground
+  if (typeof buildRockOutcrops === "function") buildRockOutcrops();   // FIDELITY: instanced rock outcrops welded into steep terrain
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
   if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
+  if (typeof attachGaze === "function") attachGaze();             // FIDELITY: living gaze — heads/eyes track the player
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
   // directory post at spawn that points the way to each (compass-accurate).
@@ -5260,6 +5541,38 @@ boot();
       const ud = m.userData || {}, n = ud.nearest || { x: 0, z: 0, y: 0 };
       return { count: ud.count || 0, plazaClear: (Math.hypot(n.x, n.z) >= 28),
         onSurface: (Math.abs((n.y || 0) - groundHeight(n.x, n.z)) < 0.05) }; },
+    // ROCK OUTCROPS (visual): one InstancedMesh of faceted boulders sunk into steep terrain, plaza + paths
+    // kept clear. rocks() -> {count, sunken:(every sampled instance world-Y < groundHeight(x,z)),
+    // offPlaza:(no instance within hypot 28), onPaths:(count within pathNear<0.12, expect 0), draws:1}.
+    rocks: () => { const m = scene.getObjectByName("RockOutcrops"); if (!m) return { count: 0, sunken: false, offPlaza: false, onPaths: 0, draws: 0 };
+      const ud = m.userData || {}, count = ud.count || 0;
+      const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), mat = new THREE.Matrix4();
+      const pathNear = (x, z) => { const br = Math.atan2(z, x); let near = Math.PI;
+        for (const pb of TPATHS){ const df = Math.abs((((br - pb + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) - Math.PI); near = Math.min(near, df); }
+        return near; };
+      let sunken = true, offPlaza = true, onPaths = 0;
+      for (let i = 0; i < m.count; i++){
+        m.getMatrixAt(i, mat); mat.decompose(pos, q, sc);
+        if (sc.x < 1e-4) continue;                                   // unplaced/zero — skip
+        if (pos.x > 500 || pos.z > 500) continue;                    // off-world reject parking spot
+        if (pos.y >= groundHeight(pos.x, pos.z)) sunken = false;     // welded BELOW the surface
+        if (Math.hypot(pos.x, pos.z) < 28) offPlaza = false;         // never inside the plaza
+        if (pathNear(pos.x, pos.z) < 0.12) onPaths++;                // never on a dirt path
+      }
+      return { count, sunken, offPlaza, onPaths, draws: 1 }; },
+    // STORM FRONT (optional weather, DEFAULT OFF): rain + lightning + sky-flash on the camera-following
+    // 'StormSystem' group. storm() -> {active, rain, strikes, flash, rainParticles}. setStorm(level) sets
+    // the target rain level (0..1) and toggles active; strike() forces a bolt; stormStep(dt) advances the
+    // sim deterministically (uTime / rain ramp / flash decay / seeded strikes) so headless tests don't poll.
+    storm:     ()    => (typeof commonsStorm === "function" ? commonsStorm() : { active:false, rain:0, strikes:0, flash:0, rainParticles:0 }),
+    setStorm:  (lvl) => (typeof setStorm     === "function" ? setStorm(lvl)  : null),
+    strike:    ()    => (typeof stormStrike   === "function" ? stormStrike()  : { flash:0 }),
+    stormStep: (dt)  => (typeof stormStep     === "function" ? stormStep(+dt||0) : null),
+    // LIVING GAZE (visual): resident heads + the creature head/eyes track the player when close. gaze() ->
+    // {tracked, creature:{yaw,pitch,locked}, sample:{name,yaw}}. gazeStep(dt) runs one updateGaze() so a
+    // headless test can drive the tracking deterministically without waiting on animate().
+    gaze:     ()   => (typeof commonsGaze === "function" ? commonsGaze() : { tracked:0, creature:{ yaw:0, pitch:0, locked:false }, sample:null }),
+    gazeStep: (dt) => { if (typeof updateGaze === "function") updateGaze(+dt||0.016); return (typeof commonsGaze === "function" ? commonsGaze() : null); },
     // NAVIGABILITY / COHESION HUD (additive, read-only) — see installCommonsAgent.
     //   minimap() -> {areas:[{name,at:{x,z}}], player:{x,z,facing}, residents:[{name,x,z}]}
     //   feed()    -> [{kind,from,text,ts}] (recent SIGNED persist-stream events)

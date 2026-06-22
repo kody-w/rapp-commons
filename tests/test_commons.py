@@ -885,6 +885,85 @@ async def run():
                            and meadow.get("plazaClear") is True and meadow.get("onSurface") is True
                            and count2 is not None and count2 == meadow.get("count")),
                       {**meadow, "count2": count2})
+
+                # FIDELITY: STORM FRONT — an OPTIONAL weather system (rain + lightning + sky-flash) on a
+                # camera-following 'StormSystem' group, DEFAULT OFF so the resting scene is unchanged. Driven
+                # deterministically via stormStep(dt) so the test never polls: default off → setStorm(1) ramps
+                # the rain to ~1 (4000 GPU drops) → strike() forces a bolt (flash≈1) that DECAYS → setStorm(0)
+                # ramps the rain back toward 0.
+                storm = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const sys=scene.getObjectByName('StormSystem');
+                    const col=scene.getObjectByName('RainColumn');
+                    const d0=A.storm();
+                    A.setStorm(1); const wet=A.stormStep(0.5);
+                    const f1=A.strike();
+                    const after=A.stormStep(0.3);    // flash should decay below 1
+                    A.setStorm(0); const dry=A.stormStep(0.5);
+                    return { hasSys:!!(sys&&sys.type==='Group'), hasRain:!!(col&&col.isPoints===true),
+                             defaultOff:(d0.active===false && d0.rain===0),
+                             rainHi:(wet.rain>0.9), parts:(wet.rainParticles===4000),
+                             wetFlashRange:(wet.flash>=0 && wet.flash<=1),
+                             strikeFlash:(f1.flash>0.9), decayed:(after.flash<1),
+                             dryRamp:(dry.rain<wet.rain) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                # leave the scene as it began (storm off) so later tests see a calm world.
+                await ev("()=>{try{window.commonsAgent.setStorm(0);window.commonsAgent.stormStep(2);}catch(e){}return 1}")
+                check("fidelity_storm",
+                      bool(storm.get("hasSys") and storm.get("hasRain") and storm.get("defaultOff")
+                           and storm.get("rainHi") and storm.get("parts") and storm.get("wetFlashRange")
+                           and storm.get("strikeFlash") and storm.get("decayed") and storm.get("dryRamp")),
+                      storm)
+
+                # FIDELITY: LIVING GAZE — resident heads + the creature's head/eyes turn to watch the player
+                # when they walk close, easing back to rest when they leave (zero new geometry). Driven via
+                # gazeStep(dt) so the test is deterministic: far → not locked, yaw≈0; teleport the camera right
+                # next to the creature + step → locked, yaw grows toward the bearing; walk away + step → unlocks,
+                # yaw eases back toward 0; tracked === residents + 1 (the creature).
+                gaze = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    A.spawnCreature({explore:0.7,exploit:0.5,cooperate:0.6,aggress:0.2});
+                    const cp = CREATURE.group.position;
+                    // FAR: park the camera well away, settle the head to rest.
+                    A.teleport(cp.x+200, 1.6, cp.z+200);
+                    for (let i=0;i<40;i++) A.gazeStep(0.1);
+                    const far = A.gaze();
+                    // NEAR: stand a couple units to the +z side of the creature.
+                    A.teleport(cp.x, 1.6, cp.z+3);
+                    for (let i=0;i<40;i++) A.gazeStep(0.1);
+                    const near = A.gaze();
+                    // AWAY again: yaw should ease back toward 0 and unlock.
+                    A.teleport(cp.x+200, 1.6, cp.z+200);
+                    for (let i=0;i<40;i++) A.gazeStep(0.1);
+                    const away = A.gaze();
+                    const residents = (A.residents()||[]).length;
+                    return { farLocked: far.creature.locked, farYaw: Math.abs(far.creature.yaw),
+                             nearLocked: near.creature.locked, nearYaw: Math.abs(near.creature.yaw),
+                             awayLocked: away.creature.locked, awayYaw: Math.abs(away.creature.yaw),
+                             tracked: near.tracked, residents };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_gaze",
+                      bool(gaze.get("farLocked") is False and (gaze.get("farYaw") if gaze.get("farYaw") is not None else 1) < 0.05
+                           and gaze.get("nearLocked") is True and (gaze.get("nearYaw") or 0) > 0.2
+                           and gaze.get("awayLocked") is False and (gaze.get("awayYaw") if gaze.get("awayYaw") is not None else 1) < 0.1
+                           and gaze.get("tracked") == (gaze.get("residents") or 0) + 1),
+                      gaze)
+
+                # FIDELITY: ROCK OUTCROPS — ONE InstancedMesh 'RockOutcrops' of faceted boulders built once at
+                # boot, welded into STEEP terrain (inverted slope gate) and SUNK below groundHeight() so they
+                # read as exposed bedrock, keeping the plaza + dirt paths clear. The probe decomposes the live
+                # instanceMatrices: every sampled instance sits below the ground sampler, none inside the plaza
+                # (hypot<28), none on a path (pathNear<0.12).
+                rocks = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const m=scene.getObjectByName('RockOutcrops');
+                    const isInst=(m&&m.isInstancedMesh===true);
+                    const rk=A.rocks();
+                    return { isInst, count:rk.count, sunken:rk.sunken, offPlaza:rk.offPlaza,
+                             onPaths:rk.onPaths, draws:rk.draws };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_rocks",
+                      bool(rocks.get("isInst") and (rocks.get("count") or 0) > 40
+                           and rocks.get("sunken") is True and rocks.get("offPlaza") is True
+                           and rocks.get("onPaths") == 0),
+                      rocks)
             else:
                 check("matrix_4d", False, "window.commonsAgent.doubleJump missing")
                 check("matrix_frame", False, "")
