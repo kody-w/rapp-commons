@@ -418,6 +418,48 @@ function bloomUpdate(){
     s.material.opacity = u.baseOp * Math.min(1, cur / u.src.base) * night; u.src.obj.getWorldPosition(s.position);
   }
 }
+// FIDELITY: volumetric GOD-SHAFTS — an additive open cone descending from every lamp source (a PointLight
+// hung at 2..8m), bright at the apex and fading to nothing at the floor, glowing only after dark. No new
+// lights, no render target — pure additive geometry that reads as a shaft of light hanging in the haze.
+var LightCones = null;
+function buildLightCones(){
+  if (LightCones) return;
+  var grp = new THREE.Group(); grp.name = "LightCones"; grp.renderOrder = 4;
+  var wp = new THREE.Vector3();
+  scene.traverse(function(o){
+    if (!o.isPointLight || o.intensity < 1.0) return;
+    o.getWorldPosition(wp);
+    if (wp.y < 2 || wp.y > 8) return;
+    // SKIP any lamp that belongs to the roaming CREATURE (its eye/aura lights are not lamps).
+    var anc = o.parent, inCreature = false;
+    while (anc){ if (CREATURE && anc === CREATURE.group){ inCreature = true; break; } anc = anc.parent; }
+    if (inCreature) return;
+    var lampY = wp.y;
+    var mat = new THREE.ShaderMaterial({ blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, side: THREE.DoubleSide,
+      uniforms: { uNight:{value:0}, uStrength:{value:0.6}, uColor:{value:o.color.clone()} },
+      vertexShader:`varying float vH; void main(){ vH = uv.y; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader:`uniform float uNight,uStrength; uniform vec3 uColor; varying float vH;
+        void main(){ float heightFade = pow(clamp(vH,0.0,1.0), 1.6);   // bright at apex (vH=1) -> 0 at floor (vH=0)
+          float radial = 0.85;                                         // soft body falloff
+          float a = heightFade * radial * uNight * uStrength;
+          gl_FragColor = vec4(uColor, a); }` });
+    var cone = new THREE.Mesh(new THREE.ConeGeometry(Math.max(0.5, o.distance * 0.35), lampY, 16, 1, true), mat);
+    // ConeGeometry apex is at +height/2; flip so the apex sits at the lamp and the base rests on the floor.
+    cone.position.set(wp.x, lampY / 2, wp.z);
+    cone.rotation.x = Math.PI;   // apex up (at the lamp), base down (on the ground)
+    cone.userData = { light: o };
+    grp.add(cone);
+  });
+  scene.add(grp); LightCones = grp;
+}
+function coneUpdate(){
+  if (!LightCones) return;
+  var night = Math.max(0, Math.min(1, 1 - (ambient.intensity - 0.3) / 0.7));
+  for (var i=0;i<LightCones.children.length;i++){ var c = LightCones.children[i], u = c.userData;
+    c.material.uniforms.uNight.value = night;
+    if (u.light) c.material.uniforms.uColor.value.copy(u.light.color);
+  }
+}
 // FIDELITY: a drifting fBm CLOUDSCAPE — a second dome just inside the sky, scrolling value-noise clouds
 // that thicken at dusk and thin by day, lit by the sun's direction. Transparent, no texture, 4 octaves.
 const CloudDome = new THREE.Mesh(new THREE.SphereGeometry(490, 32, 24),
@@ -529,6 +571,41 @@ const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({
   color:0x66ffee, size:0.18, transparent:true, opacity:0.55 }));
 scene.add(particles);
 
+// FIDELITY: bioluminescent FIREFLIES — ONE additive THREE.Points swarm of warm motes that wander a
+// disc over the commons, each pulsing on its own blink phase. Glows only after dark (same night-ness
+// formula as the stars), invisible by day. Seeded mulberry32 so the swarm is deterministic + headless.
+const Fireflies = (function(){
+  let s = 0x46495246 >>> 0;   // "FRIF" — its own PRNG stream
+  const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const N = 280, R = 90, pos = new Float32Array(N*3), seed = new Float32Array(N), blink = new Float32Array(N);
+  for (let i=0;i<N;i++){
+    const a = rnd()*Math.PI*2, r = Math.sqrt(rnd())*R;   // uniform over the disc
+    pos[i*3] = Math.cos(a)*r; pos[i*3+1] = 0.6 + rnd()*3.4; pos[i*3+2] = Math.sin(a)*r;
+    seed[i] = rnd()*Math.PI*2; blink[i] = rnd()*Math.PI*2;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  g.setAttribute("seed", new THREE.BufferAttribute(seed,1));
+  g.setAttribute("blink", new THREE.BufferAttribute(blink,1));
+  const m = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+    uniforms:{ uTime:{value:0}, uGlow:{value:0}, uColor:{value:new THREE.Color(0xffd27a)} },
+    vertexShader:`attribute float seed; attribute float blink; uniform float uTime, uGlow; varying float vBlink;
+      void main(){ vBlink = blink;
+        vec3 p = position;
+        p.x += sin(uTime*0.5 + seed)*1.4;
+        p.y += cos(uTime*0.4 + seed*1.7)*0.7;
+        p.z += sin(uTime*0.6 + seed*2.3)*1.4;
+        vec4 mv = modelViewMatrix*vec4(p,1.0);
+        gl_PointSize = uGlow * 5.0 * (300.0/max(1.0,-mv.z));
+        gl_Position = projectionMatrix*mv; }`,
+    fragmentShader:`uniform float uTime, uGlow; uniform vec3 uColor; varying float vBlink;
+      void main(){ if(length(gl_PointCoord-0.5) > 0.5) discard;
+        float pulse = pow(sin(uTime*2.0 + vBlink)*0.5 + 0.5, 3.0);
+        float a = (0.35 + 0.65*pulse) * uGlow;
+        gl_FragColor = vec4(uColor, a); }` });
+  const pts = new THREE.Points(g, m); pts.name="Fireflies"; pts.frustumCulled=false; scene.add(pts); return pts;
+})();
+
 // lighting
 const ambient = new THREE.AmbientLight(DNA.ambientColor, 0.9);
 scene.add(ambient);
@@ -609,7 +686,9 @@ function applyTimeOfDay(t){
   sky.material.uniforms.sunColor.value.copy(sun.color);
   if (typeof updateLanterns === "function") updateLanterns(dayNightPhase(t));  // glow when dark
   if (typeof starsUpdate === "function") starsUpdate();   // stars fade in at night, out by day
+  if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uGlow.value = Math.max(0, Math.min(1, 1 - (ambient.intensity - 0.3) / 0.7));   // fireflies glow only after dark
   if (typeof godRaysUpdate === "function") godRaysUpdate();   // god rays at golden hour
+  if (typeof coneUpdate === "function") coneUpdate();         // volumetric god-shafts glow after dark
   if (typeof cloudsUpdate === "function") cloudsUpdate();     // clouds thicken at dusk
   if (typeof celestialUpdate === "function") celestialUpdate(t);   // sun + moon ride the sky
   if (typeof bloomUpdate === "function") bloomUpdate();            // bloom halos swell after dark
@@ -3396,6 +3475,8 @@ function animate(){
   grade.quaternion.copy(camera.quaternion);
   grade.position.copy(camera.position).add(camera.getWorldDirection(_gradeTmp).multiplyScalar(0.2));
   CloudDome.material.uniforms.uTime.value += dt; SunDisc.quaternion.copy(camera.quaternion);   // drift the clouds + face the sun disc
+  if (typeof WINDFX !== "undefined") WINDFX.uTime.value += dt;                                  // sway the flora on the shared wind clock
+  if (typeof Fireflies !== "undefined") Fireflies.material.uniforms.uTime.value += dt;          // drift + pulse the firefly swarm
   if (BloomHalos){ var _bt = StarField.material.uniforms.uTime.value; for (var _bi=0;_bi<BloomHalos.children.length;_bi++){ var _bs=BloomHalos.children[_bi]; _bs.scale.setScalar(_bs.userData.baseScale*(1+Math.sin(_bt*2+_bi)*0.06)); } }   // gentle bloom breathing
   sun.target.position.set(camera.position.x, 0, camera.position.z); sun.target.updateMatrixWorld();   // keep the shadow frustum over the player
   particles.position.y = Math.sin(t*0.3)*0.5;
@@ -4438,6 +4519,31 @@ function registerCreatureHabitat(){
    (THREE.InstancedMesh), deterministically placed (seeded mulberry32) and kept clear of every venue
    + spawn. Turns "boxes on a grid" into a world you walk through. buildFlora() runs once at boot. */
 let FLORA = null;
+// FIDELITY: WIND-SWAYED FLORA — no new geometry/instances/draws. Each flora InstancedMesh's standard
+// material is patched via onBeforeCompile to sway its high local-y tops on a shared wind clock (bases
+// stay planted). Deterministic: the phase is a pure function of each instance's world x/z, so it's
+// headless-reproducible. WINDFX.uTime is ticked once per frame in animate().
+const WINDFX = { uTime: { value: 0 }, mats: [] };
+function injectWind(mat, amp){
+  mat.onBeforeCompile = function(shader){
+    shader.uniforms.uWindTime = WINDFX.uTime;
+    shader.uniforms.uWindAmp = { value: amp };
+    shader.vertexShader = "uniform float uWindTime; uniform float uWindAmp;\n" + shader.vertexShader;
+    // displace transformed.x/z; only high local-y tops sway (max(0,position.y)); phase from the instance's
+    // world position columns of instanceMatrix; a second lower-freq gust term layers a slow billow.
+    shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>",
+      "#include <begin_vertex>\n" +
+      "  float _wPhase = instanceMatrix[3].x*0.15 + instanceMatrix[3].z*0.1;\n" +
+      "  float _wTop = max(0.0, position.y);\n" +
+      "  float _wSway = sin(uWindTime*1.4 + _wPhase) * uWindAmp * _wTop;\n" +
+      "  float _wGust = sin(uWindTime*0.45 + _wPhase*0.5) * uWindAmp * 0.5 * _wTop;\n" +
+      "  transformed.x += _wSway + _wGust;\n" +
+      "  transformed.z += (_wSway*0.6 - _wGust*0.4);\n");
+  };
+  mat.userData.windInjected = true;
+  mat.needsUpdate = true;
+  WINDFX.mats.push(mat);
+}
 function buildFlora(){
   let s = 1337 >>> 0;
   const rnd = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -4458,7 +4564,9 @@ function buildFlora(){
   let pi = 0, minClear = Infinity;
   for (const kind of ["trees", "shrubs", "grass"]){
     const n = counts[kind];
-    const im = new THREE.InstancedMesh(geos[kind], new THREE.MeshStandardMaterial({ color: 0x4a7a3a, roughness: 0.9, flatShading: true }), n);
+    const floraMat = new THREE.MeshStandardMaterial({ color: 0x4a7a3a, roughness: 0.9, flatShading: true });
+    injectWind(floraMat, kind === "grass" ? 0.5 : kind === "shrubs" ? 0.2 : 0.12);   // grass sways most, trees least
+    const im = new THREE.InstancedMesh(geos[kind], floraMat, n);
     im.name = "flora-" + kind; im.castShadow = false; im.receiveShadow = false;
     for (let i = 0; i < n; i++){
       const p = pts.length ? pts[pi % pts.length] : [200, 200]; pi++;
@@ -4581,6 +4689,7 @@ async function boot(){
   if (typeof buildFlora === "function") buildFlora();   // FIDELITY: instanced flora blankets the terrain
   if (typeof buildGrassField === "function") buildGrassField();   // FIDELITY: instanced grass-tuft meadow carpets the ground
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
+  if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
 
   // SPAWN SIGNPOST — now that every venue is a registered interactable, raise a
   // directory post at spawn that points the way to each (compass-accurate).
@@ -5080,9 +5189,25 @@ boot();
     bloom: () => { if (!BloomHalos) return { present: false }; var ch = BloomHalos.children, tex = ch[0] && ch[0].material.map, add = true, share = true, dw = true, maxOp = 0;
       for (var i = 0; i < ch.length; i++){ if (ch[i].material.blending !== THREE.AdditiveBlending) add = false; if (ch[i].material.map !== tex) share = false; if (ch[i].material.depthWrite !== false) dw = false; if (ch[i].material.opacity > maxOp) maxOp = ch[i].material.opacity; }
       return { present: true, halos: ch.length, additive: add, sharedTexture: share, noDepthWrite: dw, nightGlow: +maxOp.toFixed(3) }; },
+    // LIGHT CONES (additive, visual): volumetric god-shafts hanging from every lamp. lightCones() ->
+    // {present, cones, additive, noDepthWrite, nightGlow:(max uNight over cones, scales with darkness)}.
+    lightCones: () => { if (!LightCones) return { present: false, cones: 0 }; var ch = LightCones.children, add = true, ndw = true, maxN = 0;
+      for (var i = 0; i < ch.length; i++){ if (ch[i].material.blending !== THREE.AdditiveBlending) add = false; if (ch[i].material.depthWrite !== false) ndw = false; var n = ch[i].material.uniforms.uNight.value; if (n > maxN) maxN = n; }
+      return { present: true, cones: ch.length, additive: add, noDepthWrite: ndw, nightGlow: +maxN.toFixed(3) }; },
     atmosphere: () => ({ horizon: "#" + sky.material.uniforms.horizon.value.getHexString(),
       sunDirY: +sky.material.uniforms.sunDir.value.y.toFixed(3), haze: +sky.material.uniforms.hazeStrength.value.toFixed(3) }),
     flora: () => (FLORA ? { count: FLORA.count, draws: FLORA.draws, trees: FLORA.trees.count, shrubs: FLORA.shrubs.count, grass: FLORA.grass.count, minClear: FLORA.minClear, seed: FLORA.seed } : null),
+    // WIND-SWAYED FLORA (visual): the shared wind clock + per-kind sway amplitudes injected into the flora
+    // materials. wind() -> {present, kinds, ampGrass, ampTrees, t1:(uTime after a +=0.016 tick)}.
+    wind: () => { if (typeof WINDFX === "undefined" || !WINDFX) return { present: false, kinds: 0 };
+      WINDFX.uTime.value += 0.016;
+      return { present: true, kinds: WINDFX.mats.length, ampGrass: 0.5, ampTrees: 0.12, t1: +WINDFX.uTime.value.toFixed(4) }; },
+    // FIREFLIES (additive, visual): a bioluminescent swarm that glows only after dark (same night-ness
+    // formula as the stars). fireflies() -> {count, glow, additive, color}.
+    fireflies: () => { const f = scene.getObjectByName("Fireflies"); if (!f) return { count: 0 };
+      const u = f.material.uniforms;
+      return { count: f.geometry.attributes.position.count, glow: +u.uGlow.value.toFixed(3),
+        additive: (f.material.blending === THREE.AdditiveBlending), color: "#" + u.uColor.value.getHexString() }; },
     // GRADE PASS (additive, visual): the camera-locked cinematic grade overlay. grade() ->
     // {present, vignette, tint:[r,g,b], tintStrength, grain} read live off the material uniforms.
     grade: () => { const g = scene.getObjectByName("GradePass"); if (!g) return { present: false };

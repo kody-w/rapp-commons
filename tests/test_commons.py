@@ -788,6 +788,57 @@ async def run():
                            and gradep.get("duskWarm")
                            and (gradep.get("nightVig") or 0) > (gradep.get("noonVig") or 0)), gradep)
 
+                # FIDELITY: volumetric god-shafts — an additive open cone hanging from every lamp (PointLight
+                # at 2..8m, intensity>=1), bright at the apex and fading to the floor, glowing only after dark.
+                # No new lights, no render target — pure additive geometry parented under a 'LightCones' group.
+                cones = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const g=scene.getObjectByName('LightCones');
+                    const lc=A.lightCones();
+                    setTimeOfDay(0.0); const night=A.lightCones().nightGlow;
+                    setTimeOfDay(0.5); const noon=A.lightCones().nightGlow;
+                    setTimeOfDay(0.42);
+                    return { present:lc.present, cones:lc.cones, additive:lc.additive, noDW:lc.noDepthWrite,
+                             group:!!(g&&g.type==='Group'), matches:(g&&g.children.length===lc.cones),
+                             glowsAtNight:(night>noon) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_lightcones",
+                      bool(cones.get("present") and (cones.get("cones") or 0) >= 8 and cones.get("additive")
+                           and cones.get("noDW") and cones.get("group") and cones.get("matches")
+                           and cones.get("glowsAtNight")), cones)
+
+                # FIDELITY: wind-swayed flora — no new geometry/instances/draws; each flora material is patched
+                # via onBeforeCompile to sway its tops on a shared wind clock (grass most, trees least). The
+                # clock advances every frame; sway phase is deterministic from each instance's world position.
+                wind = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const g=scene.getObjectByName('flora-grass');
+                    const w1=A.wind(); const w2=A.wind();
+                    return { present:w1.present, kinds:w1.kinds, ampGrass:w1.ampGrass, ampTrees:w1.ampTrees,
+                             advances:(w2.t1>w1.t1),
+                             injected:!!(g && g.material && g.material.userData && g.material.userData.windInjected===true) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_wind",
+                      bool(wind.get("present") and wind.get("kinds") == 3
+                           and (wind.get("ampGrass") or 0) > (wind.get("ampTrees") or 0)
+                           and wind.get("advances") and wind.get("injected")), wind)
+
+                # FIDELITY: bioluminescent fireflies — ONE additive THREE.Points swarm of warm motes that
+                # wander a disc and pulse, glowing only after dark (same night-ness formula as the stars),
+                # invisible by day. Deterministic (seeded mulberry32).
+                ff = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const f=scene.getObjectByName('Fireflies');
+                    const isPoints=(f&&f.isPoints===true);
+                    const base=A.fireflies();
+                    setTimeOfDay(0.5); const noon=A.fireflies().glow;
+                    setTimeOfDay(0.0); const night=A.fireflies().glow;
+                    setTimeOfDay(0.42);
+                    return { isPoints, count:base.count, additive:base.additive, color:base.color,
+                             noonOff:(noon<0.05), nightOn:(night>0.9) };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("fidelity_fireflies",
+                      bool(ff.get("isPoints") and (ff.get("count") or 0) >= 200 and ff.get("additive")
+                           and str(ff.get("color", "")).lstrip("#") == "ffd27a"
+                           and ff.get("noonOff") and ff.get("nightOn")), ff)
+
                 # FIDELITY: instanced grass-tuft meadow — ONE InstancedMesh of crossed-plane blades carpeting
                 # the ground (>=2000 instances), plaza + paths kept clear, conformed to groundHeight(), and
                 # deterministically seeded (placed count identical across a reload).
