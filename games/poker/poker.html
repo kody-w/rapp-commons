@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAPP Commons — Poker</title>
+<style>
+  :root{
+    --felt:#0b6138; --felt2:#0a5230; --rail:#3a2416; --rail2:#5a3a22;
+    --gold:#d8b25a; --cream:#f2ecd8; --ink:#13110d; --good:#7fe08a; --bad:#e07f7f;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:#1a120b;color:var(--cream);
+    font-family:"Georgia","Times New Roman",serif;-webkit-font-smoothing:antialiased;}
+  #wrap{min-height:100%;display:flex;flex-direction:column;}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;
+    background:linear-gradient(#241608,#160d05);border-bottom:2px solid var(--rail2);}
+  header h1{font-size:18px;margin:0;color:var(--gold);letter-spacing:.5px;
+    text-shadow:0 1px 0 #000;}
+  header .sp{flex:1;}
+  button{font-family:inherit;cursor:pointer;border:1px solid var(--rail2);
+    background:linear-gradient(#3a2416,#2a1810);color:var(--cream);
+    padding:7px 12px;border-radius:6px;font-size:13px;}
+  button:hover:not(:disabled){background:linear-gradient(#4a3020,#352014);}
+  button:disabled{opacity:.35;cursor:not-allowed;}
+  button.gold{border-color:var(--gold);background:linear-gradient(#b8923a,#8a6c22);
+    color:#1a120b;font-weight:bold;}
+  button.gold:hover:not(:disabled){background:linear-gradient(#d8b25a,#a8842a);}
+  .small{font-size:11px;padding:5px 9px;}
+  #table-area{flex:1;display:flex;justify-content:center;align-items:center;padding:18px;}
+  #felt{position:relative;width:min(880px,95vw);aspect-ratio:16/10;
+    background:radial-gradient(ellipse at center, var(--felt) 0%, var(--felt2) 78%);
+    border:18px solid var(--rail);border-radius:48% / 38%;
+    box-shadow:0 0 0 6px var(--rail2),0 18px 50px rgba(0,0,0,.6),inset 0 0 80px rgba(0,0,0,.45);}
+  #felt::after{content:"";position:absolute;inset:14px;border:2px dashed rgba(216,178,90,.35);
+    border-radius:48% / 38%;pointer-events:none;}
+  .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    display:flex;flex-direction:column;align-items:center;gap:10px;width:70%;}
+  #board{display:flex;gap:6px;min-height:74px;align-items:center;justify-content:center;}
+  #potline{color:var(--gold);font-size:15px;text-shadow:0 1px 0 #000;letter-spacing:.5px;}
+  #phaseline{font-size:12px;color:#cfe6cf;opacity:.85;}
+  .card{width:48px;height:68px;border-radius:6px;background:#fcfbf4;color:#111;
+    display:flex;flex-direction:column;justify-content:space-between;padding:4px 5px;
+    font-size:14px;font-weight:bold;box-shadow:0 3px 8px rgba(0,0,0,.45);
+    border:1px solid #d8d2bc;font-family:"Arial",sans-serif;}
+  .card.r{color:#c0392b;} .card.b{color:#1a1a1a;}
+  .card.back{background:repeating-linear-gradient(45deg,#7a1f1f,#7a1f1f 6px,#5a1414 6px,#5a1414 12px);
+    border:1px solid #3a0c0c;}
+  .card .tr{align-self:flex-end;transform:rotate(180deg);}
+  .seat{position:absolute;width:128px;transform:translate(-50%,-50%);text-align:center;}
+  .plaque{background:linear-gradient(#241608,#160d05);border:1px solid var(--rail2);
+    border-radius:8px;padding:6px 8px;box-shadow:0 4px 12px rgba(0,0,0,.5);}
+  .plaque .nm{font-size:12px;color:var(--gold);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;}
+  .plaque .ch{font-size:13px;color:var(--cream);}
+  .plaque .bet{font-size:11px;color:#bfe0bf;min-height:14px;}
+  .seat.folded .plaque{opacity:.42;}
+  .seat.active .plaque{border-color:var(--gold);box-shadow:0 0 14px rgba(216,178,90,.8);}
+  .seat.winner .plaque{border-color:var(--good);box-shadow:0 0 16px rgba(127,224,138,.9);}
+  .markers{display:flex;gap:4px;justify-content:center;min-height:18px;margin-top:3px;}
+  .chip{font-size:10px;border-radius:10px;padding:1px 6px;border:1px solid #000;}
+  .chip.d{background:#eee;color:#111;} .chip.sb{background:#3b7bd8;color:#fff;}
+  .chip.bb{background:#d83b3b;color:#fff;}
+  .holes{display:flex;gap:4px;justify-content:center;margin-top:4px;min-height:46px;}
+  .holes .card{width:32px;height:44px;font-size:11px;padding:2px 3px;}
+  #controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;
+    padding:12px 16px;background:linear-gradient(#160d05,#241608);border-top:2px solid var(--rail2);}
+  #controls input{width:80px;font-family:inherit;background:#0e0a05;color:var(--cream);
+    border:1px solid var(--rail2);border-radius:5px;padding:6px;}
+  #msg{min-height:18px;text-align:center;font-size:13px;color:#cfe6cf;padding:4px;}
+  #status{font-size:11px;color:#9aa;padding:2px 16px;text-align:center;}
+  .you-badge{font-size:10px;color:#8fd0ff;}
+  footer{font-size:10px;color:#6a5a48;text-align:center;padding:6px;}
+  a.link{color:var(--gold);}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>♠ RAPP Commons Poker ♥</h1>
+    <span class="sp"></span>
+    <button id="btn-back" class="small">← Back to Commons</button>
+    <button id="btn-export" class="small">Export backup</button>
+    <button id="btn-import" class="small">Import backup</button>
+    <input type="file" id="file-import" accept="application/json,.json" style="display:none">
+  </header>
+
+  <div id="table-area">
+    <div id="felt">
+      <div class="center">
+        <div id="board"></div>
+        <div id="potline">Pot: 0</div>
+        <div id="phaseline">Press “Deal” to begin.</div>
+      </div>
+      <!-- seats injected by JS -->
+    </div>
+  </div>
+
+  <div id="msg"></div>
+
+  <div id="controls">
+    <button id="btn-deal" class="gold">Deal next hand</button>
+    <button id="btn-fold" data-act="fold">Fold</button>
+    <button id="btn-check" data-act="check">Check</button>
+    <button id="btn-call" data-act="call">Call</button>
+    <button id="btn-bet" data-act="bet">Bet</button>
+    <input type="number" id="amt-bet" min="1" value="2">
+    <button id="btn-raise" data-act="raise">Raise to</button>
+    <input type="number" id="amt-raise" min="1" value="4">
+  </div>
+  <div id="status"></div>
+  <footer>Play-chips only · provably-fair commit-reveal deck · every action signed by a per-seat rappid</footer>
+</div>
+
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════════════
+   RAPP Commons — standalone Texas Hold'em.
+   Self-contained: vanilla JS + DOM/CSS. Zero external deps. Mirrors
+   games/poker/engine.py byte-for-byte (ranking, canonical JSON, action shape,
+   commit-reveal deck). Exposes window.pokerGame for headless tests, and a
+   postMessage bridge to a parent commons frame.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Card constants (mirror engine.py) ───────────────────────────────────── */
+const RANKS = "23456789TJQKA";
+const SUITS = "shdc";
+const RANK_VAL = {}; for (let i=0;i<RANKS.length;i++) RANK_VAL[RANKS[i]] = i+2; // '2'->2 .. 'A'->14
+const HIGH_CARD=0,PAIR=1,TWO_PAIR=2,THREE_KIND=3,STRAIGHT=4,FLUSH=5,FULL_HOUSE=6,FOUR_KIND=7,STRAIGHT_FLUSH=8;
+const CATEGORY_NAME={0:"high card",1:"pair",2:"two pair",3:"three of a kind",4:"straight",
+  5:"flush",6:"full house",7:"four of a kind",8:"straight flush"};
+
+function fullDeck(){ const d=[]; for(const r of RANKS) for(const s of SUITS) d.push(r+s); return d; }
+
+/* ── Canonical JSON (byte-identical to engine.canonical / commons canonicalJSON) ── */
+function canonicalJSON(o){
+  if (Array.isArray(o)) return "["+o.map(canonicalJSON).join(",")+"]";
+  if (o && typeof o==="object")
+    return "{"+Object.keys(o).sort().map(k=>JSON.stringify(k)+":"+canonicalJSON(o[k])).join(",")+"}";
+  return JSON.stringify(o);
+}
+
+/* ── Tuple comparison: mirror Python tuple ordering element-by-element.
+      Returns >0 if a stronger, <0 if b stronger, 0 if equal. ─────────────── */
+function cmpRank(a,b){
+  const n=Math.min(a.length,b.length);
+  for(let i=0;i<n;i++){ if(a[i]!==b[i]) return a[i]<b[i]?-1:1; }
+  if(a.length!==b.length) return a.length<b.length?-1:1;
+  return 0;
+}
+
+/* ── Hand evaluator (port of _straight_high / _rank_five / rank_hand) ─────── */
+function _ranksSuits(cards){
+  const vals = cards.map(c=>RANK_VAL[c[0]]).sort((x,y)=>y-x);
+  const suits = cards.map(c=>c[1]);
+  return [vals,suits];
+}
+function _straightHigh(valsArr){
+  const vs = new Set(valsArr);
+  if (vs.has(14)) vs.add(1);            // ace can be low
+  let run=0, high=null;
+  for(let v=14; v>=1; v--){
+    if (vs.has(v)){ run+=1; if(run===1) high=v; if(run>=5) return high; }
+    else { run=0; high=null; }
+  }
+  return null;
+}
+function _rankFive(cards){
+  const [vals,suits]=_ranksSuits(cards);
+  const counts={};
+  for(const v of vals) counts[v]=(counts[v]||0)+1;
+  // order ranks by (count desc, value desc)
+  const byCount = Object.keys(counts).map(k=>[parseInt(k,10),counts[k]])
+    .sort((p,q)=> (p[1]!==q[1]) ? q[1]-p[1] : q[0]-p[0]);
+  const countShape = byCount.map(kv=>kv[1]);
+  const orderedVals = byCount.map(kv=>kv[0]);
+  const isFlush = new Set(suits).size===1;
+  const straightHigh = _straightHigh(vals);
+  const shapeEq=(a)=> a.length===countShape.length && a.every((x,i)=>x===countShape[i]);
+
+  if (isFlush && straightHigh!==null) return [STRAIGHT_FLUSH, straightHigh];
+  if (shapeEq([4,1])) return [FOUR_KIND, ...orderedVals];
+  if (shapeEq([3,2])) return [FULL_HOUSE, ...orderedVals];
+  if (isFlush) return [FLUSH, ...vals.slice().sort((x,y)=>y-x)];
+  if (straightHigh!==null) return [STRAIGHT, straightHigh];
+  if (shapeEq([3,1,1])) return [THREE_KIND, ...orderedVals];
+  if (shapeEq([2,2,1])) return [TWO_PAIR, ...orderedVals];
+  if (shapeEq([2,1,1,1])) return [PAIR, ...orderedVals];
+  return [HIGH_CARD, ...vals.slice().sort((x,y)=>y-x)];
+}
+function combinations(arr,k){
+  const res=[]; const n=arr.length; const idx=[];
+  for(let i=0;i<k;i++) idx.push(i);
+  while(true){
+    res.push(idx.map(i=>arr[i]));
+    let i=k-1;
+    while(i>=0 && idx[i]===i+n-k) i--;
+    if(i<0) break;
+    idx[i]++;
+    for(let j=i+1;j<k;j++) idx[j]=idx[j-1]+1;
+  }
+  return res;
+}
+function rankHand(cards){
+  cards=cards.slice();
+  if (cards.length<5) throw new Error("need at least 5 cards to rank a poker hand");
+  if (cards.length===5) return _rankFive(cards);
+  let best=null;
+  for(const combo of combinations(cards,5)){
+    const r=_rankFive(combo);
+    if(best===null || cmpRank(r,best)>0) best=r;
+  }
+  return best;
+}
+
+/* ── SHA-256 hex helper ───────────────────────────────────────────────────── */
+async function sha256hex(str){
+  const dg=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(dg)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+/* ── Commit-reveal deck (matches engine.deck_commitment) ──────────────────── */
+async function deckCommitment(deck,nonce){
+  return sha256hex(canonicalJSON({deck:deck, nonce:nonce}));
+}
+async function verifyCommitment(deck,nonce,commitment){
+  return (await deckCommitment(deck,nonce))===commitment;
+}
+
+/* ── Identity per seat: ECDSA P-256; rappid = rappid:v3:<16 hex of sha256(canon(pubJwk))> ── */
+async function mintBeing(name){
+  const being={ name, rappid:null, fp:null, key:null, pubJwk:null };
+  try{
+    being.key=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
+    being.pubJwk=await crypto.subtle.exportKey("jwk",being.key.publicKey);
+    being.fp=(await sha256hex(canonicalJSON(being.pubJwk))).slice(0,16);
+    being.rappid="rappid:v3:"+being.fp;
+  }catch(e){
+    being.fp=Math.random().toString(16).slice(2,18).padEnd(16,"0");
+    being.rappid="rappid:v3:"+being.fp;
+  }
+  return being;
+}
+async function signBody(being,body){
+  // sign canonicalJSON(body) with the seat's own key; returns hex sig (or null)
+  if(!being||!being.key) return null;
+  try{
+    const sig=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},being.key.privateKey,
+      new TextEncoder().encode(canonicalJSON(body)));
+    return [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,"0")).join("");
+  }catch(e){ return null; }
+}
+function hexToBytes(hex){
+  const out=new Uint8Array(hex.length/2);
+  for(let i=0;i<out.length;i++) out[i]=parseInt(hex.substr(i*2,2),16);
+  return out;
+}
+async function rappidFromPub(pubJwk){
+  return "rappid:v3:"+(await sha256hex(canonicalJSON(pubJwk))).slice(0,16);
+}
+/* Verify a single signed action: rebuild rappid from pub, verify sig over body-without-sig/pub. */
+async function verifyAction(act){
+  try{
+    if(!act||!act.pub||!act.sig) return false;
+    const expect=await rappidFromPub(act.pub);
+    if(expect!==act.from) return false;
+    const body={}; for(const k of Object.keys(act)){ if(k==="sig"||k==="pub") continue; body[k]=act[k]; }
+    const key=await crypto.subtle.importKey("jwk",act.pub,{name:"ECDSA",namedCurve:"P-256"},true,["verify"]);
+    return await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},key,
+      hexToBytes(act.sig), new TextEncoder().encode(canonicalJSON(body)));
+  }catch(e){ return false; }
+}
+
+/* ── Deterministic PRNG (mulberry32) ──────────────────────────────────────── */
+function strHash32(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function mulberry32(a){
+  return function(){
+    a|=0; a=(a+0x6D2B79F5)|0;
+    let t=Math.imul(a^(a>>>15),1|a);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t;
+    return ((t^(t>>>14))>>>0)/4294967296;
+  };
+}
+function shuffleDeck(rng){
+  const d=fullDeck();
+  for(let i=d.length-1;i>0;i--){
+    const j=Math.floor(rng()*(i+1));
+    const t=d[i]; d[i]=d[j]; d[j]=t;
+  }
+  return d;
+}
+function cryptoRng(){
+  // crypto-backed float generator
+  return function(){
+    const buf=new Uint32Array(1); crypto.getRandomValues(buf); return buf[0]/4294967296;
+  };
+}
+function randomNonce(){
+  const buf=new Uint8Array(16); crypto.getRandomValues(buf);
+  return [...buf].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   GAME STATE
+   ════════════════════════════════════════════════════════════════════════ */
+const SMALL_BLIND=1, BIG_BLIND=2, START_CHIPS=1000, NSEATS=6;
+const SAVE_KEY="rapp-commons-poker/save/1";
+
+const G = {
+  ready:false,
+  seats:[],            // [{seat,being,chips,folded,bet,allIn,holes,inHand}]
+  dealer:0,
+  handId:null,
+  phase:"idle",        // idle|preflop|flop|turn|river|showdown
+  deck:[], nonce:null, commitment:null, deckIdx:0,
+  board:[],
+  pot:0,
+  toAct:null,
+  seq:0,
+  currentBet:0,        // highest bet this round
+  minRaise:BIG_BLIND,  // minimum raise increment
+  roundStartSeat:null,
+  lastAggressor:null,
+  actedThisRound:new Set(),
+  log:[],              // signed actions (full history)
+  commitments:[],      // {hand_id, commitment, deck?, nonce?}
+  lastWinners:[],
+  msg:"",
+};
+
+const framed = (window.parent && window.parent!==window);
+
+/* ── postMessage bridge ───────────────────────────────────────────────────── */
+function postState(){
+  if(!framed) return;
+  try{ window.parent.postMessage({type:"rapp-poker",kind:"state",state:stateObj()},"*"); }catch(e){}
+}
+function postAction(action){
+  if(!framed) return;
+  try{ window.parent.postMessage({type:"rapp-poker",kind:"action",action:action},"*"); }catch(e){}
+}
+function postClose(){
+  if(!framed){ location.href="../../commons.html"; return; }
+  try{ window.parent.postMessage({type:"rapp-poker",kind:"close"},"*"); }catch(e){}
+}
+
+/* ── action recording (build body, sign with seat's key, append, broadcast) ── */
+async function recordAction(seatIdx, action, amount, extra){
+  G.seq+=1;
+  const being=G.seats[seatIdx].being;
+  const body={
+    schema:"rapp-poker-action/1.0",
+    hand_id:G.handId,
+    seq:G.seq,
+    seat:seatIdx,
+    from:being.rappid,
+    action:action,
+    amount:amount|0,
+    ts:new Date().toISOString(),
+  };
+  if(extra) Object.assign(body,extra);
+  const sig=await signBody(being,body);
+  const full=Object.assign({},body);
+  if(sig){ full.sig=sig; full.pub=being.pubJwk; }
+  G.log.push(full);
+  postAction(full);
+  return full;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   DEALING + BETTING ENGINE
+   ════════════════════════════════════════════════════════════════════════ */
+function activeSeats(){ return G.seats.filter(s=>s.inHand && !s.folded); }
+function draw(){ const c=G.deck[G.deckIdx]; G.deckIdx+=1; return c; }
+function nextSeat(from){ // next seat still in hand & not folded
+  for(let i=1;i<=NSEATS;i++){ const idx=(from+i)%NSEATS; const s=G.seats[idx];
+    if(s.inHand && !s.folded && !s.allIn) return idx; }
+  return null;
+}
+function seatWithChips(idx){ return G.seats[idx].chips>0; }
+
+async function startHand(opts){
+  // re-entrancy guard: a second concurrent deal (double-click, or a deal() that
+  // wasn't awaited before autoPlay) must NOT run a second hand on top of this one
+  // (that double-posted blinds so the betting round could never complete).
+  if(G._starting) return { handId:G.handId, commitment:G.commitment, dealer:G.dealer };
+  G._starting=true;
+  opts=opts||{};
+  // seed RNG
+  let rng;
+  if(opts.seed!==undefined && opts.seed!==null){ rng=mulberry32(strHash32(String(opts.seed))); }
+  else { rng=cryptoRng(); }
+
+  // reset per-hand seat state; only seats with chips play
+  for(const s of G.seats){
+    s.folded=false; s.bet=0; s.allIn=false; s.holes=[];
+    s.inHand = s.chips>0;
+  }
+  const inPlay=G.seats.filter(s=>s.inHand);
+  if(inPlay.length<2){
+    // reset everyone to START_CHIPS if the table is busted, so play can continue
+    for(const s of G.seats){ s.chips=START_CHIPS; s.inHand=true; s.folded=false; s.bet=0; s.allIn=false; s.holes=[]; }
+  }
+
+  // advance dealer to a seat that's in the hand
+  let d=G.dealer;
+  for(let i=1;i<=NSEATS;i++){ const idx=(G.dealer+i)%NSEATS; if(G.seats[idx].inHand){ d=idx; break; } }
+  G.dealer=d;
+
+  G.deck=shuffleDeck(rng);
+  G.nonce=randomNonce();
+  G.deckIdx=0; G.board=[]; G.pot=0; G.seq=0; G.log_handStart=G.log.length;
+  G.lastWinners=[];
+  G.handId="h-"+Date.now().toString(36)+"-"+Math.floor((opts.seed!==undefined?strHash32(String(opts.seed)):Math.random()*1e9)).toString(36);
+  G.commitment=await deckCommitment(G.deck,G.nonce);
+  G.commitments.push({hand_id:G.handId, commitment:G.commitment});
+
+  // signed "deal" action by dealer seat (carries commitment)
+  await recordAction(G.dealer,"deal",0,{commitment:G.commitment});
+
+  // blinds: small = first in-hand seat left of dealer, big = next
+  const sbSeat=firstInHandAfter(G.dealer);
+  const bbSeat=firstInHandAfter(sbSeat);
+  G.phase="preflop";
+  await postBlind(sbSeat,SMALL_BLIND);
+  await postBlind(bbSeat,BIG_BLIND);
+  G.currentBet=BIG_BLIND;
+  G.minRaise=BIG_BLIND;
+
+  // deal holes (2 each, in seat order starting from sbSeat — order doesn't affect ranking)
+  const order=inHandOrder(G.dealer);
+  for(let r=0;r<2;r++){ for(const idx of order){ G.seats[idx].holes.push(draw()); } }
+
+  // first to act preflop = seat after big blind
+  G.actedThisRound=new Set();
+  G.lastAggressor=bbSeat;        // bb is the last "raise" preflop
+  G.toAct=nextSeat(bbSeat);
+  if(G.toAct===null) G.toAct=null;
+  G.msg="New hand dealt. Commitment "+G.commitment.slice(0,12)+"…";
+  G._starting=false;
+  render(); postState();
+  return { handId:G.handId, commitment:G.commitment, dealer:G.dealer };
+}
+function firstInHandAfter(from){
+  for(let i=1;i<=NSEATS;i++){ const idx=(from+i)%NSEATS; if(G.seats[idx].inHand && !G.seats[idx].folded) return idx; }
+  return from;
+}
+function inHandOrder(dealer){
+  const out=[]; for(let i=1;i<=NSEATS;i++){ const idx=(dealer+i)%NSEATS; if(G.seats[idx].inHand) out.push(idx); } return out;
+}
+
+async function postBlind(seatIdx,amount){
+  const s=G.seats[seatIdx];
+  const pay=Math.min(amount,s.chips);
+  s.chips-=pay; s.bet+=pay; G.pot+=pay; if(s.chips===0) s.allIn=true;
+  await recordAction(seatIdx,"post",pay);
+}
+
+/* ── apply a legal action for a seat (no auto-advance) ────────────────────── */
+async function applyAction(seatIdx, action, amount){
+  const s=G.seats[seatIdx];
+  amount=amount|0;
+  if(action==="fold"){
+    s.folded=true; await recordAction(seatIdx,"fold",0);
+  } else if(action==="check"){
+    await recordAction(seatIdx,"check",0);
+  } else if(action==="call"){
+    const need=G.currentBet - s.bet;
+    const pay=Math.min(need,s.chips);
+    s.chips-=pay; s.bet+=pay; G.pot+=pay; if(s.chips===0) s.allIn=true;
+    await recordAction(seatIdx,"call",pay);
+  } else if(action==="bet"){
+    // bet only legal when currentBet==0 (or seat already matched). amount is total this round.
+    const total=Math.max(amount,BIG_BLIND);
+    const pay=Math.min(total - s.bet, s.chips);
+    s.chips-=pay; s.bet+=pay; G.pot+=pay; if(s.chips===0) s.allIn=true;
+    // Only OPEN the round (reset who-must-respond) if the bet actually put chips out
+    // ABOVE the current bet. A degenerate bet that doesn't raise the price must NOT
+    // reset actedThisRound (that's what let two seats "bet/raise" forever w/o progress).
+    if(s.bet > G.currentBet){
+      G.currentBet=s.bet; G.minRaise=s.bet; G.lastAggressor=seatIdx;
+      G.actedThisRound=new Set([seatIdx]);
+    }
+    await recordAction(seatIdx,"bet",pay);
+  } else if(action==="raise"){
+    // amount = total bet to raise TO
+    const target=Math.max(amount, G.currentBet+G.minRaise);
+    const pay=Math.min(target - s.bet, s.chips);
+    s.chips-=pay; s.bet+=pay; G.pot+=pay; if(s.chips===0) s.allIn=true;
+    // a REAL raise must increase the price to call; only then do the other live
+    // players owe another action. If the "raise" didn't beat currentBet (e.g. a
+    // short all-in), treat it as a match — never reset the round (prevents an
+    // infinite reset cycle that never terminates the betting round).
+    if(s.bet > G.currentBet){
+      G.minRaise=Math.max(G.minRaise, s.bet-G.currentBet);
+      G.currentBet=s.bet; G.lastAggressor=seatIdx;
+      G.actedThisRound=new Set([seatIdx]);
+    }
+    await recordAction(seatIdx,"raise",pay);
+  } else { throw new Error("illegal action "+action); }
+  G.actedThisRound.add(seatIdx);
+}
+
+/* ── legal action set for a seat right now ────────────────────────────────── */
+function legalFor(seatIdx){
+  if(G.phase==="idle"||G.phase==="showdown") return [];
+  if(seatIdx===null||seatIdx===undefined) return [];
+  const s=G.seats[seatIdx];
+  if(!s.inHand||s.folded||s.allIn) return [];
+  const toCall=G.currentBet - s.bet;
+  const out=["fold"];
+  if(toCall<=0){ out.push("check"); }
+  else { out.push("call"); }
+  if(s.chips>0){
+    if(G.currentBet===0 || (G.currentBet===s.bet)) out.push("bet");
+    if(toCall>0 && s.chips>toCall) out.push("raise");
+    if(G.currentBet>0 && toCall<=0 && false){}
+  }
+  // allow raise also when checking-to-bet path: bet covers that
+  return out;
+}
+function toCallFor(seatIdx){
+  const s=G.seats[seatIdx]; return Math.max(0,G.currentBet - s.bet);
+}
+
+/* ── is the betting round complete? ───────────────────────────────────────── */
+function roundComplete(){
+  const live=G.seats.filter(s=>s.inHand && !s.folded);
+  if(live.length<=1) return true;
+  const actLive=live.filter(s=>!s.allIn);
+  if(actLive.length===0) return true;
+  for(const s of actLive){
+    if(s.bet!==G.currentBet) return false;        // someone hasn't matched
+    if(!G.actedThisRound.has(s.seat)) return false; // someone hasn't acted
+  }
+  return true;
+}
+
+/* ── advance to next betting round / phase / showdown ─────────────────────── */
+async function advancePhase(){
+  // collect bets into pot already done incrementally; reset round bets
+  for(const s of G.seats){ s.bet=0; }
+  G.currentBet=0; G.minRaise=BIG_BLIND; G.actedThisRound=new Set(); G.lastAggressor=null;
+
+  if(G.phase==="preflop"){
+    draw(); G.board.push(draw(),draw(),draw()); G.phase="flop";
+  } else if(G.phase==="flop"){
+    draw(); G.board.push(draw()); G.phase="turn";
+  } else if(G.phase==="turn"){
+    draw(); G.board.push(draw()); G.phase="river";
+  } else if(G.phase==="river"){
+    await doShowdown(); return;
+  }
+  // first to act post-flop = first in-hand non-folded seat after dealer
+  G.toAct=firstActiveAfter(G.dealer);
+  render(); postState();
+}
+function firstActiveAfter(from){
+  for(let i=1;i<=NSEATS;i++){ const idx=(from+i)%NSEATS; const s=G.seats[idx];
+    if(s.inHand && !s.folded && !s.allIn) return idx; }
+  return null;
+}
+
+/* ── showdown + pot award ─────────────────────────────────────────────────── */
+async function doShowdown(){
+  const live=G.seats.filter(s=>s.inHand && !s.folded);
+  // a CONTESTED showdown must rank over a FULL 5-card board — run out any streets
+  // still owed (deal from the committed deck, same burn pattern as advancePhase /
+  // engine.py) so the evaluator is never handed fewer than 5 cards. (Reached when
+  // betting closes with >=2 players before the river, e.g. an all-in pre-flop.)
+  if(live.length>=2){
+    if(G.board.length<3){ draw(); G.board.push(draw(),draw(),draw()); }   // flop  (burn + 3)
+    if(G.board.length<4){ draw(); G.board.push(draw()); }                  // turn  (burn + 1)
+    if(G.board.length<5){ draw(); G.board.push(draw()); }                  // river (burn + 1)
+  }
+  G.phase="showdown";
+  let winners=[], category="";
+  if(live.length===1){
+    winners=[live[0].seat];
+    category="(uncontested)";
+    live[0].chips+=G.pot;
+  } else {
+    let best=null;
+    for(const s of live){
+      const r=rankHand(s.holes.concat(G.board));
+      s._rank=r;
+      if(best===null||cmpRank(r,best)>0) best=r;
+    }
+    winners=live.filter(s=>cmpRank(s._rank,best)===0).map(s=>s.seat);
+    category=CATEGORY_NAME[best[0]];
+    const share=Math.floor(G.pot/winners.length);
+    let rem=G.pot - share*winners.length;
+    for(const w of winners){ G.seats[w].chips+=share; }
+    // odd chips to first winner left of dealer
+    if(rem>0){ for(let i=1;i<=NSEATS;i++){ const idx=(G.dealer+i)%NSEATS; if(winners.includes(idx)){ G.seats[idx].chips+=rem; break; } } }
+  }
+  G.lastWinners=winners;
+  // signed reveal action by dealer (carries deck+nonce so log can be verified)
+  await recordAction(G.dealer,"reveal",0,{deck:G.deck, nonce:G.nonce, commitment:G.commitment});
+  // attach reveal to commitments record for export
+  const cr=G.commitments[G.commitments.length-1];
+  if(cr && cr.hand_id===G.handId){ cr.deck=G.deck; cr.nonce=G.nonce; }
+
+  const names=winners.map(w=>G.seats[w].being.name).join(", ");
+  G.msg="Showdown — winner: "+names+" with "+category+". Pot "+G.pot+".";
+  G.pot=0; G.toAct=null;
+  saveLocal();
+  render(); postState();
+  G._lastShowdown={ winners:winners.slice(), category:category, board:G.board.slice() };
+}
+
+/* ── after an action, decide whether round/hand progresses ────────────────── */
+async function settleAfterAction(){
+  // hand ends if only one live seat
+  const live=G.seats.filter(s=>s.inHand && !s.folded);
+  if(live.length<=1){ await doShowdown(); return; }
+  if(roundComplete()){
+    // if only all-in players remain, run out the board to showdown
+    const actLive=live.filter(s=>!s.allIn);
+    await advancePhase();
+    // keep running rounds automatically while nobody can act
+    while(G.phase!=="showdown"){
+      const live2=G.seats.filter(s=>s.inHand && !s.folded);
+      const act2=live2.filter(s=>!s.allIn);
+      if(act2.length>=1 && live2.length>=2) break; // somebody can act -> stop and wait
+      if(live2.length<=1){ await doShowdown(); break; }
+      await advancePhase();
+    }
+    return;
+  }
+  // else advance turn to next actor
+  G.toAct=nextSeat(G.toAct===null?G.dealer:G.toAct);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BOT STRATEGY (simple but always legal)
+   ════════════════════════════════════════════════════════════════════════ */
+function botStrength(seatIdx){
+  const s=G.seats[seatIdx];
+  const cards=s.holes.concat(G.board);
+  if(cards.length<5){
+    const a=RANK_VAL[s.holes[0][0]], b=RANK_VAL[s.holes[1][0]];
+    const pair=a===b, suited=s.holes[0][1]===s.holes[1][1];
+    const hi=Math.max(a,b), lo=Math.min(a,b), gap=hi-lo;
+    let sc=((hi+lo))/28*0.5;
+    if(pair) sc+=0.4;
+    if(suited) sc+=0.07;
+    if(gap===1) sc+=0.05;
+    if(hi>=13) sc+=0.1;
+    return Math.max(0,Math.min(1,sc));
+  }
+  const r=rankHand(cards);
+  return Math.max(0,Math.min(1, r[0]/8*0.92 + 0.04));
+}
+function botDecide(seatIdx){
+  const s=G.seats[seatIdx];
+  const legal=legalFor(seatIdx);
+  const toCall=toCallFor(seatIdx);
+  const str=botStrength(seatIdx);
+  // deterministic jitter from rappid+phase+board for variety w/o randomness in seeded tests
+  const j=(strHash32(s.being.rappid+G.phase+G.board.join(""))%100)/100;
+  const potOdds = toCall>0 ? toCall/(G.pot+toCall) : 0;
+
+  if(toCall===0){
+    // can check or bet
+    if(str>0.62 && legal.includes("bet")){
+      const size=Math.max(BIG_BLIND, Math.round((G.pot||BIG_BLIND)*(0.5+0.4*str)));
+      return {action:"bet", amount:Math.min(s.bet+size, s.bet+s.chips)};
+    }
+    return {action:"check", amount:0};
+  }
+  // facing a bet
+  if(str<0.30 && potOdds>0.18){ return {action:"fold", amount:0}; }
+  if(str>0.78 && legal.includes("raise")){
+    const target=Math.max(G.currentBet+G.minRaise, Math.round(G.currentBet+ (G.pot)*0.6));
+    return {action:"raise", amount:Math.min(target, s.bet+toCall+s.chips)};
+  }
+  if(str<0.18){ return {action:"fold", amount:0}; }
+  // call (clamped by chips automatically in applyAction)
+  return {action:"call", amount:0};
+}
+
+/* ── drive bots until it's seat 0's turn again, or hand ends ──────────────── */
+async function runBots(){
+  let guard=0;
+  while(G.phase!=="idle" && G.phase!=="showdown" && guard<400){
+    guard++;
+    if(G.toAct===null){ break; }
+    if(G.toAct===0){ break; } // human's turn
+    const seatIdx=G.toAct;
+    const s=G.seats[seatIdx];
+    if(!s.inHand||s.folded||s.allIn){ await settleAfterAction(); continue; }
+    const dec=botDecide(seatIdx);
+    // validate against legal set, fall back safely
+    let act=dec.action;
+    const legal=legalFor(seatIdx);
+    if(!legal.includes(act)){
+      if(legal.includes("check")) act="check";
+      else if(legal.includes("call")) act="call";
+      else act="fold";
+    }
+    await applyAction(seatIdx, act, dec.amount||0);
+    await settleAfterAction();
+    render(); postState();
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PUBLIC STATE SHAPE
+   ════════════════════════════════════════════════════════════════════════ */
+function stateObj(){
+  const you=G.seats[0];
+  return {
+    handId:G.handId,
+    phase:G.phase,
+    board:G.board.slice(),
+    pot:G.pot,
+    dealer:G.dealer,
+    seats:G.seats.map(s=>({
+      seat:s.seat, rappid:s.being?s.being.rappid:null, chips:s.chips,
+      folded:s.folded, bet:s.bet, isYou:s.seat===0
+    })),
+    toAct:G.toAct,
+    you:{ seat:0, cards:(you&&you.holes)?you.holes.slice():[], chips:you?you.chips:0 },
+    toCall:(G.toAct!==null)?toCallFor(0):toCallFor(0),
+    legal:(G.phase!=="idle"&&G.phase!=="showdown"&&G.toAct===0)?legalFor(0):[],
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PERSISTENCE
+   ════════════════════════════════════════════════════════════════════════ */
+function exportObj(){
+  return {
+    schema:"rapp-commons-poker-save/1.0",
+    ts:new Date().toISOString(),
+    seats:G.seats.map(s=>({seat:s.seat, rappid:s.being?s.being.rappid:null, chips:s.chips})),
+    log:G.log.slice(),
+    commitments:G.commitments.slice(),
+  };
+}
+function importObj(obj){
+  try{
+    if(!obj||obj.schema!=="rapp-commons-poker-save/1.0") return {ok:false};
+    if(Array.isArray(obj.seats)){
+      for(const sv of obj.seats){ if(G.seats[sv.seat]) G.seats[sv.seat].chips=sv.chips|0; }
+    }
+    if(Array.isArray(obj.log)) G.log=obj.log.slice();
+    if(Array.isArray(obj.commitments)) G.commitments=obj.commitments.slice();
+    render(); postState(); saveLocal();
+    return {ok:true};
+  }catch(e){ return {ok:false}; }
+}
+function saveLocal(){
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(exportObj())); }catch(e){}
+}
+function loadLocal(){
+  try{
+    const raw=localStorage.getItem(SAVE_KEY); if(!raw) return;
+    const obj=JSON.parse(raw);
+    if(obj && Array.isArray(obj.seats)){
+      for(const sv of obj.seats){ if(G.seats[sv.seat]) G.seats[sv.seat].chips=sv.chips|0; }
+    }
+    if(obj && Array.isArray(obj.log)) G.log=obj.log.slice();
+    if(obj && Array.isArray(obj.commitments)) G.commitments=obj.commitments.slice();
+  }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RENDER (DOM table)
+   ════════════════════════════════════════════════════════════════════════ */
+function cardEl(card, faceUp){
+  const el=document.createElement("div");
+  if(!faceUp){ el.className="card back"; return el; }
+  const r=card[0], s=card[1];
+  const red=(s==="h"||s==="d");
+  el.className="card "+(red?"r":"b");
+  const sym={s:"♠",h:"♥",d:"♦",c:"♣"}[s]||s;
+  const top=document.createElement("div"); top.textContent=r+sym;
+  const bot=document.createElement("div"); bot.className="tr"; bot.textContent=r+sym;
+  el.appendChild(top); el.appendChild(bot);
+  return el;
+}
+const SEAT_POS=[ // %, around the oval; seat 0 = bottom center (you)
+  {x:50,y:92},{x:90,y:74},{x:90,y:30},{x:50,y:8},{x:10,y:30},{x:10,y:74}
+];
+function render(){
+  if(!G.ready) return;
+  const felt=document.getElementById("felt");
+  // board
+  const board=document.getElementById("board"); board.innerHTML="";
+  for(const c of G.board) board.appendChild(cardEl(c,true));
+  if(G.board.length===0){ const ph=document.createElement("div"); ph.style.color="#0a4a2a"; ph.textContent="— — — — —"; board.appendChild(ph); }
+  document.getElementById("potline").textContent="Pot: "+G.pot;
+  const phaseNames={idle:"Idle",preflop:"Pre-flop",flop:"Flop",turn:"Turn",river:"River",showdown:"Showdown"};
+  document.getElementById("phaseline").textContent=(G.handId?("Hand "+G.handId.slice(0,12)+" · "):"")+(phaseNames[G.phase]||G.phase);
+
+  // seats
+  felt.querySelectorAll(".seat").forEach(e=>e.remove());
+  const sbSeat=G.handId?firstInHandAfter(G.dealer):-1;
+  const bbSeat=G.handId?firstInHandAfter(sbSeat):-1;
+  for(let i=0;i<NSEATS;i++){
+    const s=G.seats[i]; const pos=SEAT_POS[i];
+    const wrap=document.createElement("div");
+    wrap.className="seat"+(s.folded?" folded":"")+(G.toAct===i?" active":"")+(G.lastWinners.includes(i)?" winner":"");
+    wrap.style.left=pos.x+"%"; wrap.style.top=pos.y+"%";
+    const plaque=document.createElement("div"); plaque.className="plaque";
+    const nm=document.createElement("div"); nm.className="nm";
+    const short=s.being?s.being.rappid.replace("rappid:v3:","").slice(0,8):"—";
+    nm.textContent=(s.being?s.being.name:"seat "+i)+" · "+short+(i===0?" (you)":"");
+    const ch=document.createElement("div"); ch.className="ch"; ch.textContent="⛁ "+s.chips;
+    const bet=document.createElement("div"); bet.className="bet"; bet.textContent=s.bet>0?("bet "+s.bet):(s.folded?"folded":(s.allIn?"all-in":""));
+    plaque.appendChild(nm); plaque.appendChild(ch); plaque.appendChild(bet);
+    wrap.appendChild(plaque);
+    const mk=document.createElement("div"); mk.className="markers";
+    if(i===G.dealer && G.handId){ const d=document.createElement("span"); d.className="chip d"; d.textContent="D"; mk.appendChild(d); }
+    if(i===sbSeat && G.handId){ const d=document.createElement("span"); d.className="chip sb"; d.textContent="SB"; mk.appendChild(d); }
+    if(i===bbSeat && G.handId){ const d=document.createElement("span"); d.className="chip bb"; d.textContent="BB"; mk.appendChild(d); }
+    wrap.appendChild(mk);
+    // hole cards
+    const holes=document.createElement("div"); holes.className="holes";
+    if(s.holes && s.holes.length){
+      const showFace=(i===0)||(G.phase==="showdown" && !s.folded);
+      for(const c of s.holes) holes.appendChild(cardEl(c,showFace));
+    }
+    wrap.appendChild(holes);
+    felt.appendChild(wrap);
+  }
+  document.getElementById("msg").textContent=G.msg||"";
+  updateControls();
+  const st=document.getElementById("status");
+  st.textContent="Signed actions logged: "+G.log.length+(framed?" · mirroring to commons":"");
+}
+function updateControls(){
+  const yourTurn = (G.phase!=="idle" && G.phase!=="showdown" && G.toAct===0);
+  const legal = yourTurn ? legalFor(0) : [];
+  const map={fold:"btn-fold",check:"btn-check",call:"btn-call",bet:"btn-bet",raise:"btn-raise"};
+  for(const k in map){ document.getElementById(map[k]).disabled = !legal.includes(k); }
+  document.getElementById("amt-bet").disabled=!legal.includes("bet");
+  document.getElementById("amt-raise").disabled=!legal.includes("raise");
+  // deal button enabled only when idle or showdown (no live hand to interrupt)
+  document.getElementById("btn-deal").disabled = (G.phase!=="idle" && G.phase!=="showdown");
+  // label call w/ amount
+  const tc=yourTurn?toCallFor(0):0;
+  document.getElementById("btn-call").textContent = tc>0 ? ("Call "+tc) : "Call";
+  if(yourTurn){
+    const minR=Math.max(G.currentBet+G.minRaise, BIG_BLIND);
+    document.getElementById("amt-raise").value=Math.min(minR, G.seats[0].bet+G.seats[0].chips);
+    document.getElementById("amt-bet").value=Math.max(BIG_BLIND, Math.min(G.pot||BIG_BLIND, G.seats[0].chips));
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PUBLIC API (window.pokerGame)
+   ════════════════════════════════════════════════════════════════════════ */
+async function api_deal(opts){
+  if(!G.ready) await setup();
+  saveLocal();
+  return startHand(opts||{});
+}
+async function api_act(action, amount){
+  if(G.phase==="idle"||G.phase==="showdown") return stateObj();
+  if(G.toAct!==0) return stateObj();   // not your turn
+  const legal=legalFor(0);
+  if(!legal.includes(action)){
+    // ignore illegal; do nothing
+    G.msg="Illegal action: "+action; render(); return stateObj();
+  }
+  await applyAction(0, action, amount|0);
+  await settleAfterAction();
+  render(); postState();
+  await runBots();
+  // if hand stalled with bots all-in, settle handled inside; ensure render
+  render(); postState();
+  if(G.phase==="showdown") saveLocal();
+  return stateObj();
+}
+async function api_autoPlayToShowdown(){
+  if(G.phase==="idle"){ await startHand({}); }
+  const startLen=G.log.length - (G.log_handStart||0);
+  let guard=0;
+  while(G.phase!=="showdown" && guard<600){
+    guard++;
+    if(G.toAct===null){ await settleAfterAction(); continue; }
+    if(G.toAct===0){
+      // default policy: check if possible else fold to a bet, else call small
+      const legal=legalFor(0);
+      let a;
+      if(legal.includes("check")) a="check";
+      else if(legal.includes("call")){
+        const tc=toCallFor(0);
+        a = (tc<=BIG_BLIND*2)?"call":"fold";
+      } else a="fold";
+      await applyAction(0,a,0);
+      await settleAfterAction();
+      render(); postState();
+    } else {
+      await runBots();
+    }
+  }
+  if(G.phase!=="showdown"){ await doShowdown(); }
+  saveLocal();
+  const ls=G._lastShowdown||{winners:G.lastWinners.slice(),category:"",board:G.board.slice()};
+  const actions = G.log.length - (G.log_handStart||0);
+  return { winners:ls.winners, category:ls.category, board:ls.board, actions:actions };
+}
+async function api_verifyLog(){
+  let signedOk=true; let n=0;
+  for(const act of G.log){
+    n++;
+    const ok=await verifyAction(act);
+    if(!ok) signedOk=false;
+  }
+  // verify the most recent revealed commitment(s)
+  let commitOk=true; let checked=0;
+  for(const cr of G.commitments){
+    if(cr.deck && cr.nonce){
+      checked++;
+      const ok=await verifyCommitment(cr.deck, cr.nonce, cr.commitment);
+      if(!ok) commitOk=false;
+    }
+  }
+  if(checked===0) commitOk=true; // nothing revealed yet -> vacuously ok
+  return { ok:(signedOk&&commitOk), actions:n, signedOk:signedOk, commitOk:commitOk };
+}
+async function api_rankParity(){
+  const royal=rankHand(["As","Ks","Qs","Js","Ts"]);
+  const pair=rankHand(["2h","2d","5s","9c","Kh"]);
+  const flush=rankHand(["2s","5s","9s","Js","Ks"]);
+  const straight=rankHand(["6h","7d","8s","9c","Th"]);
+  return {
+    royalBeatsPair: cmpRank(royal,pair)>0,
+    flushBeatsStraight: cmpRank(flush,straight)>0,
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SETUP
+   ════════════════════════════════════════════════════════════════════════ */
+async function setup(){
+  if(G.ready) return;
+  const names=["you","Marlowe","Juniper","Ezra","Calliope","Dashiell"];
+  G.seats=[];
+  for(let i=0;i<NSEATS;i++){
+    const being=await mintBeing(names[i]);
+    G.seats.push({ seat:i, being, chips:START_CHIPS, folded:false, bet:0, allIn:false, holes:[], inHand:true });
+  }
+  loadLocal();
+  G.ready=true;
+  render(); postState();
+}
+
+/* ── wire up UI ───────────────────────────────────────────────────────────── */
+function wireUI(){
+  document.getElementById("btn-deal").addEventListener("click", async()=>{ await api_deal({}); });
+  document.getElementById("btn-back").addEventListener("click", ()=>postClose());
+  document.getElementById("btn-fold").addEventListener("click", ()=>api_act("fold",0));
+  document.getElementById("btn-check").addEventListener("click", ()=>api_act("check",0));
+  document.getElementById("btn-call").addEventListener("click", ()=>api_act("call",0));
+  document.getElementById("btn-bet").addEventListener("click", ()=>{
+    const amt=parseInt(document.getElementById("amt-bet").value,10)||BIG_BLIND;
+    // bet amount = total this round; convert to absolute "to" for applyAction(bet uses total)
+    api_act("bet", G.seats[0].bet+amt);
+  });
+  document.getElementById("btn-raise").addEventListener("click", ()=>{
+    const amt=parseInt(document.getElementById("amt-raise").value,10)||(G.currentBet+G.minRaise);
+    api_act("raise", amt); // raise "to" absolute
+  });
+  document.getElementById("btn-export").addEventListener("click", ()=>{
+    const data=JSON.stringify(exportObj(),null,2);
+    const blob=new Blob([data],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="rapp-poker-backup-"+Date.now()+".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  document.getElementById("btn-import").addEventListener("click", ()=>{
+    document.getElementById("file-import").click();
+  });
+  document.getElementById("file-import").addEventListener("change", (ev)=>{
+    const f=ev.target.files[0]; if(!f) return;
+    const fr=new FileReader();
+    fr.onload=()=>{ try{ const obj=JSON.parse(fr.result); const r=importObj(obj);
+      G.msg=r.ok?"Backup imported.":"Import failed."; render(); }catch(e){ G.msg="Import failed (bad JSON)."; render(); } };
+    fr.readAsText(f);
+    ev.target.value="";
+  });
+}
+
+/* ── expose API ───────────────────────────────────────────────────────────── */
+window.pokerGame = {
+  deal: (opts)=>api_deal(opts),
+  state: ()=>stateObj(),
+  act: (action,amount)=>api_act(action,amount),
+  autoPlayToShowdown: ()=>api_autoPlayToShowdown(),
+  verifyLog: ()=>api_verifyLog(),
+  export: ()=>exportObj(),
+  import: (obj)=>importObj(obj),
+  rankParity: ()=>api_rankParity(),
+  // extras useful for debugging / verification (not required, but harmless)
+  _verifyCommitment: (d,n,c)=>verifyCommitment(d,n,c),
+  _rankHand: (cards)=>rankHand(cards),
+  _canonicalJSON: (o)=>canonicalJSON(o),
+};
+
+/* ── boot ─────────────────────────────────────────────────────────────────── */
+function boot(){
+  wireUI();
+  // do NOT auto-deal; just set up identities + show table with Deal button.
+  setup().then(()=>{ render(); postState(); });
+}
+if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", boot);
+else boot();
+</script>
+</body>
+</html>

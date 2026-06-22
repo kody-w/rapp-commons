@@ -1741,14 +1741,22 @@ const controls = new THREE.PointerLockControls(camera, renderer.domElement);
 scene.add(controls.getObject());
 
 const lockEl = document.getElementById("lock");
-lockEl.addEventListener("click", ()=> controls.lock());
+lockEl.addEventListener("click", ()=>{ if (typeof surfaceUp==="function" && surfaceUp()) return; controls.lock(); });
 controls.addEventListener("lock",   ()=>{ lockEl.style.display="none";
   // entering the world joins the SHARED real-time Commons stream (idempotent).
   try { if (typeof RC !== "undefined" && RC) RC.connect(); } catch(e){} });
-controls.addEventListener("unlock", ()=> lockEl.style.display="flex");
+// only re-show the "enter the commons" overlay when NO surface panel is up — it must
+// never float over an open panel (that was letting clicks fall back into world control).
+controls.addEventListener("unlock", ()=>{ if (!(typeof surfaceUp==="function" && surfaceUp())) lockEl.style.display="flex"; });
 
 const keys = {};
 addEventListener("keydown", e=>{
+  // a surface panel (house / poker / world / home) OWNS all input while open: the 3D
+  // world freezes behind it. Esc closes the panel and returns you to where you were.
+  if (typeof surfaceUp==="function" && surfaceUp()){
+    if (e.code==="Escape"){ e.preventDefault(); try { closeSurface(); } catch(_){} }
+    return;
+  }
   // don't steal typing in the post bar
   if (document.activeElement === sayEl){
     if (e.key === "Enter") submitPost();
@@ -1759,8 +1767,8 @@ addEventListener("keydown", e=>{
   if (e.code==="Slash" || e.key==="t"){ e.preventDefault(); sayEl.focus(); }
 });
 addEventListener("keyup", e=> keys[e.code]=false);
-// click while locked = "use" -> enter the highlighted target
-renderer.domElement.addEventListener("click", ()=>{ if (controls.isLocked) tryEnter(); });
+// click while locked = "use" -> enter the highlighted target (never while a panel is open)
+renderer.domElement.addEventListener("click", ()=>{ if (typeof surfaceUp==="function" && surfaceUp()) return; if (controls.isLocked) tryEnter(); });
 
 addEventListener("resize", ()=>{
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -1899,9 +1907,11 @@ function makeHome(room, angle){
        home no longer opens a tab — it flies the camera to that AREA inside the
        SAME scene and streams the surface inline. No tab-opening anywhere.
    ───────────────────────────────────────────────────────────────────────── */
+let _travelFrom = null, _surfaceReturn = null;
 function travelTo(target){
   // move the real avatar/camera to the area's coordinates (same object WASD moves).
   const o = controls.getObject();
+  _travelFrom = { x:o.position.x, y:o.position.y, z:o.position.z };   // remember where we came from (surface "back")
   let nx = target.x, nz = target.z;
   const R = 90, d = Math.hypot(nx,nz); if (d>R){ nx*=R/d; nz*=R/d; }
   o.position.x = nx; o.position.z = nz; o.position.y = DNA.cameraHeight;
@@ -1909,19 +1919,110 @@ function travelTo(target){
   toast("Travelled to "+(target.label||"area")+" — still in the one world");
 }
 const surfaceEl = document.getElementById("surface");
+// TRUE when an in-world surface panel (house / poker / world / home / fractal) is open.
+// While it is, the 3D world FREEZES (no movement, no look, no E/T, no re-lock) and all
+// input belongs to the panel — so you're never "driving the commons" behind the iframe.
+function surfaceUp(){ return !!(surfaceEl && surfaceEl.style.display !== "none"); }
 function openSurface(title, sub, url){
+  // remember exactly where the player was so closing drops them right back there.
+  try { const o = controls.getObject().position; _surfaceReturn = _travelFrom ? { ..._travelFrom } : { x:o.x, y:o.y, z:o.z }; } catch(_){ _surfaceReturn = _travelFrom; }
   document.getElementById("surfaceTitle").textContent = title || "surface";
   document.getElementById("surfaceSub").textContent   = sub || "";
   const fr = document.getElementById("surfaceFrame");
   if (url) fr.src = url; else fr.removeAttribute("src");
   surfaceEl.style.display = "flex";
+  // hand control to the panel: release pointer-lock, hide the "enter the commons"
+  // overlay (it sits above the panel and would let you click back into world control),
+  // clear any held movement keys, and focus the iframe so keyboard goes to the area.
   try { controls.unlock(); } catch(_){}
+  try { lockEl.style.display = "none"; } catch(_){}
+  try { for (const k in keys) keys[k] = false; } catch(_){}
+  try { setTimeout(()=>{ try { fr.focus(); if (fr.contentWindow) fr.contentWindow.focus(); } catch(_){} }, 60); } catch(_){}
 }
 function closeSurface(){
   surfaceEl.style.display = "none";
-  const fr = document.getElementById("surfaceFrame"); fr.removeAttribute("src");
+  const fr = document.getElementById("surfaceFrame");
+  fr.removeAttribute("src"); fr.removeAttribute("srcdoc");
+  if (typeof POKER !== "undefined" && POKER) POKER.spectating = false;
+  // drop the player back EXACTLY where they entered from.
+  if (_surfaceReturn){ try { const o = controls.getObject();
+    o.position.set(_surfaceReturn.x, _surfaceReturn.y != null ? _surfaceReturn.y : DNA.cameraHeight, _surfaceReturn.z);
+    if (typeof updateProximity === "function") updateProximity(); } catch(_){} _surfaceReturn = null; }
+  // resume the world: re-lock if this close was a direct click gesture (the ✕ button);
+  // otherwise show the "enter" overlay so one click resumes.
+  try { lockEl.style.display = "flex"; } catch(_){}
+  try { controls.lock(); } catch(_){}
 }
 document.getElementById("surfaceClose").addEventListener("click", closeSurface);
+
+// Any embedded area page (house / future areas) can ask the commons to close the
+// panel + return the player, and a house guestbook signing is surfaced in-world.
+addEventListener("message", (e)=>{
+  const d = e && e.data; if (!d) return;
+  if (e.origin && e.origin !== location.origin) return;          // only our own same-origin panels
+  if (d.type === "rapp-surface" && d.kind === "close"){ try { closeSurface(); } catch(_){} }
+  else if (d.type === "rapp-house" && d.kind === "guestbook" && d.text){
+    try { toast("📖 guestbook · " + String(d.text).slice(0,64)); } catch(_){}
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+   RESIDENT HOUSES — a walkable landmark whose OWN static page
+   (homes/kody/house.html) streams into the in-world surface panel, with the same
+   freeze-the-world + back-to-where-you-were behaviour as every other surface.
+   The page is a TEMPLATE parameterized by ?rappid (+ ?owner): inject a rappid and
+   the SAME file opens THAT resident's house. Kody is the default for now, but the
+   mechanism is open — any home/resident can call openHouse(theirRappid) later. The
+   URL is same-origin (resolves against wherever the commons is loaded — localhost /
+   github.io / raw), so it never 404s once shipped and postMessage stays same-origin.
+   ───────────────────────────────────────────────────────────────────────── */
+// Kody's CONSOLIDATED ETERNITY rappid (the operator's owned estate id, rappid:@<owner>/<slug>:<hex>;
+// see rappid.json / members.json / cubbies/kody-w/cubby.json). The house is owned by the operator's
+// eternal id — anonymous visitors stay rappid:v3 (the key IS the account); naming requires an owned
+// @owner/slug, so there is no auto-convert from a bare v3 (see federate.py::_parse_rappid).
+const KODY_RAPPID = "rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec";
+function houseUrl(rappid, owner){
+  try { const u = new URL("homes/kody/house.html", location.href);
+    if (rappid) u.searchParams.set("rappid", rappid);
+    if (owner)  u.searchParams.set("owner", owner);
+    return u.href;
+  } catch(e){ return "homes/kody/house.html"; }
+}
+function openHouse(rappid, owner){
+  rappid = rappid || KODY_RAPPID;
+  owner  = owner  || (rappid === KODY_RAPPID ? "Kody" : null);
+  const who = owner || ("rappid " + String(rappid).replace(/^rappid:[^:]*:/, "").slice(0,10));
+  openSurface(who + "'s House", "step inside · ✕ / Back / Esc returns you to where you were", houseUrl(rappid, owner));
+  return { opened:true, rappid, owner, url: houseUrl(rappid, owner) };
+}
+// a cozy cubby landmark west of the plaza, navigable; its E-action opens the house page.
+function buildKodyHouse(){
+  const hx = -58, hz = -16;
+  const hy = (typeof groundHeight === "function") ? groundHeight(hx, hz) : 0;
+  const g = new THREE.Group(); g.name = "KodyHouse"; g.position.set(hx, hy, hz); g.lookAt(0, hy, 0);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(6, 4.2, 6),
+    new THREE.MeshStandardMaterial({ color:0x6b4a2f, roughness:0.85, metalness:0.05 }));
+  body.position.y = 2.1; body.castShadow = body.receiveShadow = true; g.add(body);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(4.9, 2.6, 4),
+    new THREE.MeshStandardMaterial({ color:0xc0392b, emissive:0x2a0a06, roughness:0.7 }));
+  roof.position.y = 5.5; roof.rotation.y = Math.PI/4; roof.castShadow = true; g.add(roof);
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(2, 3),
+    new THREE.MeshBasicMaterial({ color:0xffcc66, transparent:true, opacity:0.9 }));
+  door.position.set(0, 1.5, 3.02); g.add(door);
+  const dl = new THREE.PointLight(0xffb24d, 1.5, 18); dl.position.set(0, 2.4, 4); g.add(dl);
+  if (typeof makeLabel === "function") g.add(makeLabel("🏡 Kody's House", 0xffe39a, 6.8));
+  scene.add(g);
+  const housePos = new THREE.Vector3(hx, DNA.cameraHeight, hz);
+  if (typeof makeAreaInteractable === "function") makeAreaInteractable({
+    pos: housePos, radius: 6, type: "home", label: "Kody's House", slug: "kody-house",
+    blurb: "The operator's place — step inside (its own page, streamed in-world). Different rappids open different houses.",
+    action: ()=>{ travelTo(Object.assign(housePos.clone(), { label:"Kody's House" }));
+      // E in-world (pointer-locked) opens the house; headless enter('kody-house') is
+      // never locked, so it just travels — no lingering iframe left open in tests.
+      try { if (controls.isLocked) openHouse(KODY_RAPPID, "Kody"); } catch(e){} }
+  });
+  return g;
+}
 
 /* room HUD (poker / words). Pure overlay; never a new page. */
 const roomHudEl = document.getElementById("roomHud");
@@ -2304,6 +2405,87 @@ function pokerState(){
   };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   POKER LIVE BRIDGE — "join the table" via a pop-out playable game, mirrored
+   back onto the 3D felt in real time.
+
+   Pressing E at the table (in-world) pops open the standalone, fully-playable
+   poker game (games/poker/poker.html) in the EXISTING in-world surface panel
+   (same-origin iframe — the commons stays loaded underneath; ✕ / Back exits).
+   That separate page is where the human actually competes; it postMessages its
+   live state + every signed rapp-poker-action/1.0 back to us. We:
+     • mirror the hand onto the native 3D felt (applyExternalPokerState →
+       renderPokerScene) so anyone in the room WATCHES the hand progress live
+       without opening the pop-out,
+     • persist each signed action into the world's append-only stream, and
+     • relay state to any connected presence peers (best-effort spectating).
+   ADDITIVE: the native engine + pokerState()/pokerAct() and the poker tests are
+   untouched; the pop-out only opens for a real in-world (pointer-locked) player,
+   so headless/programmatic enter('poker') never leaves an iframe open. ───────── */
+const POKER_BRIDGE = { opened:0, states:0, actions:0, lastState:null };
+
+// same-origin URL for the pop-out game (resolved against wherever commons.html is
+// loaded — localhost, github.io, or raw — so postMessage stays same-origin).
+function pokerGameUrl(){
+  try { return new URL("games/poker/poker.html", location.href).href; }
+  catch(e){ return "games/poker/poker.html"; }
+}
+
+// open the playable pop-out in the surface panel + pause native auto-dealing so
+// the felt follows the human's pop-out hand rather than fighting a demo hand.
+function openPokerGame(){
+  POKER_BRIDGE.opened++;
+  POKER.spectating = true;
+  POKER._autoRunning = false; POKER._driven = false;
+  openSurface("Poker — Texas Hold'em",
+    "play in the pop-out · the 3D table mirrors your hand live for the room · ✕ or Back to exit",
+    pokerGameUrl());
+  return { opened:true, url: pokerGameUrl() };
+}
+
+// mirror an external (pop-out / peer) hand state onto the native 3D felt. Maps
+// board/pot/phase/whose-turn + per-seat chips/folded by seat index, then redraws.
+// Never signs; only reflects. Safe if the table isn't seated yet (renders board).
+function applyExternalPokerState(s){
+  if (!s) return false;
+  try {
+    if (typeof buildPokerTable === "function" && !POKER.built) buildPokerTable();
+    if (!POKER.hand) POKER.hand = { board:[], pot:0, log:(POKER.hand && POKER.hand.log) || [] };
+    POKER.hand.board = Array.isArray(s.board) ? s.board.slice(0,5) : [];
+    POKER.hand.pot   = s.pot | 0;
+    POKER.phase      = s.phase || POKER.phase;
+    POKER.toAct      = (s.toAct == null ? null : s.toAct);
+    if (Array.isArray(s.seats)){
+      for (const es of s.seats){
+        const ns = POKER.seats[es.seat];
+        if (ns){ ns.chips = es.chips | 0; ns.folded = !!es.folded; }
+      }
+    }
+    POKER.spectating = true;
+    if (typeof renderPokerScene === "function") renderPokerScene();
+    return true;
+  } catch(e){ return false; }
+}
+
+// the pop-out (and connected peers) talk back via postMessage. Same-origin only.
+addEventListener("message", (e)=>{
+  const d = e && e.data;
+  if (!d || d.type !== "rapp-poker") return;
+  if (e.origin && e.origin !== location.origin) return;     // only our own pop-out
+  if (d.kind === "state" && d.state){
+    POKER_BRIDGE.states++; POKER_BRIDGE.lastState = d.state;
+    applyExternalPokerState(d.state);
+    try { broadcast({ t:"poker", kind:"state", state:d.state }); } catch(_){}   // let peers watch too
+  } else if (d.kind === "action" && d.action){
+    POKER_BRIDGE.actions++;
+    try { if (d.action.schema === "rapp-poker-action/1.0" && d.action.sig) persistAppend(d.action); } catch(_){}
+    try { broadcast({ t:"poker", kind:"action", action:d.action }); } catch(_){}
+  } else if (d.kind === "close"){
+    POKER.spectating = false;
+    try { closeSurface(); } catch(_){}
+  }
+});
+
 function buildPokerTable(){
   if (POKER.built) return;
   const C = POKER.pos;
@@ -2569,14 +2751,20 @@ function registerPokerRoom(){
       if (!POKER.seats.some(s=>s.occupied)) await seatPokerBots();
       renderPokerScene();
       showRoomHud("Poker Room — Texas Hold'em",
-        "You sit at seat 0. Five AI beings hold the other seats — each minted its own rappid and signs every action.",
-        [ {label:"deal a hand", onClick:()=>pokerPlayHand()},
+        "Sit down and <b>compete</b>: ▶ pops the full poker game open (its own page) where YOU play — and this 3D table mirrors your hand live so the room can watch without joining. Every action is a signed rapp-poker-action/1.0 under its own rappid.",
+        [ {label:"▶ play the full game", onClick:()=>openPokerGame()},
+          {label:"deal a demo hand", onClick:()=>pokerPlayHand()},
           {label:"leave table", onClick:()=>{ hideRoomHud(); } } ]);
       // play one passive demo hand so the felt shows community cards / pot /
       // showdown immediately on entry (also gives headless callers a live
       // pokerState()). The player's OWN seat-0 deal button starts an INTERACTIVE
       // hand where they choose each action via pokerAct().
       if (!POKER.hand) { try { await pokerPlayHand({ autoHuman:true }); } catch(e){ console.warn("poker auto-deal:", e); } }
+      // Pressing E in the world (pointer-locked) pops you STRAIGHT into the
+      // playable pop-out game. Headless / programmatic enter('poker') is never
+      // locked, so it stays on the native table — pokerState()/pokerAct() keep
+      // driving the tested engine unchanged (no lingering iframe in tests).
+      try { if (controls.isLocked) openPokerGame(); } catch(e){}
     }
   });
 }
@@ -4563,6 +4751,12 @@ function onPeerData(id, d){
   if (!d) return;
   if (d.t==="pos" || d.t==="hello"){ moveAvatar(id, d.x, d.z, d.ry); }
   if (d.t==="event"){ renderEvent({ from:d.ev.from, body:d.ev.body, ts:d.ev.ts }); }
+  // a peer is playing the pop-out poker game — mirror their live hand on our felt
+  // (watch without joining) + fold their signed actions into our stream.
+  if (d.t==="poker"){
+    if (d.kind==="state" && d.state){ try { applyExternalPokerState(d.state); } catch(_){} }
+    else if (d.kind==="action" && d.action){ try { if (d.action.schema==="rapp-poker-action/1.0" && d.action.sig) persistAppend(d.action); } catch(_){} }
+  }
 }
 function ensureAvatar(id){
   if (remoteAvatars.has(id)) return;
@@ -6036,6 +6230,7 @@ async function boot(){
   if (typeof buildLakespan === "function") buildLakespan();           // FIDELITY: the Lakespan — arched stone footbridge over CommonsLake
   if (typeof buildKoi === "function") buildKoi();                     // FIDELITY: the Koi — a rigged school swimming beneath the lake mirror
   if (typeof buildGrove === "function") buildGrove();                 // FIDELITY: the Whispering Grove — torii-gated birch garden east of the commons
+  if (typeof buildKodyHouse === "function") buildKodyHouse();         // AREAS: Kody's House — a walkable cubby whose own page streams into the surface panel
   if (typeof buildBloomHalos === "function") buildBloomHalos();   // FIDELITY: bloom halos on every light source
   if (typeof buildLightCones === "function") buildLightCones();   // FIDELITY: volumetric god-shafts from every lamp
   if (typeof buildContactShadows === "function") buildContactShadows();   // FIDELITY: grounding AO blobs under every standing thing
@@ -6732,6 +6927,24 @@ boot();
     minimap, feed, travelTo: travelToArea,
     // live poker-table snapshot for headless inspection (community/pot/seats/turn/phase).
     pokerState: () => (typeof pokerState === "function" ? pokerState() : null),
+    // POKER POP-OUT + LIVE BRIDGE: pressing E at the table pops open the standalone,
+    // fully-playable poker game (games/poker/poker.html) in the in-world surface panel;
+    // it postMessages its live state + signed actions back, which mirror onto the native
+    // 3D felt so the room watches without joining. openPokerGame() opens it (returns
+    // {opened,url}); pokerBridge() -> {opened, states, actions, lastState, spectating, url}.
+    openPokerGame: () => (typeof openPokerGame === "function" ? openPokerGame() : null),
+    pokerBridge:   () => ({ opened: POKER_BRIDGE.opened, states: POKER_BRIDGE.states, actions: POKER_BRIDGE.actions,
+      lastState: POKER_BRIDGE.lastState, spectating: !!POKER.spectating, url: pokerGameUrl() }),
+    // RESIDENT HOUSES (the same iframe-surface pattern): walking to Kody's House and
+    // pressing E opens its OWN page (homes/kody/house.html) streamed into the in-world
+    // panel; the world freezes behind it and ✕/Back/Esc returns you to where you were.
+    // The page is a TEMPLATE parameterized by ?rappid — openHouse(rappid, owner) opens
+    // ANY resident's house from the same file (Kody is the default). Returns {opened,
+    // rappid, owner, url}. surfaceOpen() reports whether a surface panel is currently up.
+    openHouse:     (rappid, owner) => (typeof openHouse === "function" ? openHouse(rappid, owner) : null),
+    openKodyHouse: () => (typeof openHouse === "function" ? openHouse() : null),
+    surfaceOpen:   () => (typeof surfaceUp === "function" ? surfaceUp() : false),
+    closeSurface:  () => (typeof closeSurface === "function" ? (closeSurface(), true) : false),
     // PLAYABLE seat 0: when it's your turn, act (check|call|bet|raise|fold). The
     // action is signed with YOUR own rappid via the existing signed hand loop and
     // the hand resumes (bots respond, streets advance, showdown).

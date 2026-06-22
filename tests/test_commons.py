@@ -1446,6 +1446,87 @@ async def run():
             else:
                 check("poker_play", False, "window.commonsAgent.pokerAct/pokerCanAct missing")
 
+            # poker_popout_bridge: pressing E at the table pops open the standalone
+            # playable game (games/poker/poker.html) in the in-world surface panel;
+            # that separate page postMessages its live hand state + every signed
+            # rapp-poker-action/1.0 back, which MIRROR onto the native 3D felt so the
+            # room watches WITHOUT joining. Assert: openPokerGame() points the surface
+            # iframe at the poker game URL + shows the panel; a simulated 'state'
+            # message mirrors board+pot+folded onto pokerState(); a simulated signed
+            # 'action' is counted; 'close' hides the panel. (Native engine untouched;
+            # the auto-open is gated on a real pointer-locked player, so this path only
+            # runs when explicitly invoked — headless enter('poker') leaves no iframe.)
+            has_bridge = await ev("()=>typeof window.commonsAgent.openPokerGame==='function'&&typeof window.commonsAgent.pokerBridge==='function'", False)
+            if has_bridge:
+                br = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const opened = A.openPokerGame();
+                    const fr = document.getElementById('surfaceFrame');
+                    const surf = document.getElementById('surface');
+                    const urlOk = !!(opened&&opened.url&&/games\\/poker\\/poker\\.html$/.test(opened.url));
+                    const srcOk = !!(fr&&/games\\/poker\\/poker\\.html(\\?|$)/.test(fr.src||fr.getAttribute('src')||''));
+                    const shown = !!(surf&&getComputedStyle(surf).display!=='none');
+                    const board=['As','Kd','2c','7h','9s'];
+                    window.dispatchEvent(new MessageEvent('message',{origin:location.origin,
+                      data:{type:'rapp-poker',kind:'state',state:{handId:'h1',phase:'river',board:board,pot:42,toAct:0,
+                        seats:[{seat:1,chips:500,folded:true}]}}}));
+                    const ps = A.pokerState();
+                    const mirrored = !!(ps && JSON.stringify(ps.community)===JSON.stringify(board) && ps.pot===42);
+                    const seat1 = (ps.seats||[]).find(s=>s.seat===1);
+                    const foldedMirror = !!(seat1 && seat1.folded===true);
+                    const before = A.pokerBridge().actions;
+                    window.dispatchEvent(new MessageEvent('message',{origin:location.origin,
+                      data:{type:'rapp-poker',kind:'action',action:{schema:'rapp-poker-action/1.0',hand_id:'h1',seq:1,seat:0,
+                        from:'rappid:v3:deadbeefdeadbeef',action:'bet',amount:10,ts:'2026-06-22T00:00:00Z',sig:'ab',pub:{}}}}));
+                    const actionsCounted = A.pokerBridge().actions===before+1;
+                    window.dispatchEvent(new MessageEvent('message',{origin:location.origin,data:{type:'rapp-poker',kind:'close'}}));
+                    const hidden = getComputedStyle(surf).display==='none';
+                    surf.style.display='none'; if(fr){fr.removeAttribute('src');fr.removeAttribute('srcdoc');}
+                    return { urlOk, srcOk, shown, mirrored, foldedMirror, actionsCounted, hidden };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("poker_popout_bridge",
+                      bool(br.get("urlOk") and br.get("srcOk") and br.get("shown")
+                           and br.get("mirrored") and br.get("foldedMirror")
+                           and br.get("actionsCounted") and br.get("hidden")),
+                      br)
+            else:
+                check("poker_popout_bridge", False, "openPokerGame/pokerBridge missing")
+
+            # house_popout + surface input-freeze: walking to Kody's House and pressing E
+            # opens its OWN page (homes/kody/house.html) in the in-world surface panel. The
+            # page is a TEMPLATE parameterized by ?rappid, so the SAME file opens any
+            # resident's house (Kody is default). Assert: 'kody-house' is a navigable area;
+            # openKodyHouse() points the surface iframe at house.html, SHOWS the panel, and
+            # FREEZES the world (the #lock enter-overlay is hidden so it can't float over the
+            # panel + surfaceOpen()===true); openHouse(<rappid>) injects ?rappid=<rappid>;
+            # pressing Escape closes the panel and unfreezes (surfaceOpen()===false).
+            has_house = await ev("()=>typeof window.commonsAgent.openKodyHouse==='function'&&typeof window.commonsAgent.openHouse==='function'&&typeof window.commonsAgent.surfaceOpen==='function'", False)
+            if has_house:
+                hs = await ev("""async ()=>{try{const A=window.commonsAgent;
+                    const names=(A.list()||[]).map(p=>(p.slug||p.name||p).toString().toLowerCase());
+                    const listed = names.some(n=>n.indexOf('kody-house')>=0 || n.indexOf("kody's house")>=0);
+                    const op = A.openKodyHouse();
+                    const fr = document.getElementById('surfaceFrame');
+                    const surf = document.getElementById('surface');
+                    const lock = document.getElementById('lock');
+                    const urlOk = !!(op&&op.url&&/homes\\/kody\\/house\\.html/.test(op.url));
+                    const srcOk = !!(fr&&/homes\\/kody\\/house\\.html/.test(fr.src||fr.getAttribute('src')||''));
+                    const shown = getComputedStyle(surf).display!=='none';
+                    const frozen = (A.surfaceOpen()===true) && (getComputedStyle(lock).display==='none');
+                    const op2 = A.openHouse('rappid:v3:abc123def456','Ada');
+                    const injected = !!(op2&&op2.url&&/[?&]rappid=rappid%3Av3%3Aabc123def456/.test(op2.url)&&op2.owner==='Ada');
+                    window.dispatchEvent(new KeyboardEvent('keydown',{code:'Escape',bubbles:true}));
+                    const closed = (A.surfaceOpen()===false) && (getComputedStyle(surf).display==='none');
+                    surf.style.display='none'; if(fr){fr.removeAttribute('src');fr.removeAttribute('srcdoc');} lock.style.display='none';
+                    return { listed, urlOk, srcOk, shown, frozen, injected, closed };
+                }catch(e){return {err:String(e)}}}""", {}) or {}
+                check("house_popout",
+                      bool(hs.get("listed") and hs.get("urlOk") and hs.get("srcOk")
+                           and hs.get("shown") and hs.get("frozen") and hs.get("injected")
+                           and hs.get("closed")),
+                      hs)
+            else:
+                check("house_popout", False, "openKodyHouse/openHouse/surfaceOpen missing")
+
             # wwf_renders: enter the Words-with-Friends room and assert the LIVE
             # 3D board is visible/inspectable -- it surfaces the EXISTING signed
             # match (tiles read straight off games/words-with-friends/matches/),
@@ -1763,6 +1844,79 @@ async def run():
                       squad_ok and wave_ok and sig_ok, sample)
             else:
                 check("apex_coop", False, "window.commonsAgent.apexState missing")
+
+        # ── standalone area pages: the SAME static files the in-world surface panel
+        #    streams in, loaded directly + driven headless. These are separate files
+        #    from commons.html (so the world + the games evolve independently). ──
+        # poker_game: games/poker/poker.html — a self-contained signed Texas Hold'em that
+        # mirrors engine.py byte-for-byte. Drive window.pokerGame: rank parity (royal>pair,
+        # flush>straight), a full hand reaches a winner with SIGNED actions that verify
+        # (+ commit-reveal), and export()->import() round-trips.
+        try:
+            pg = await b.new_page(viewport={"width": 1100, "height": 800})
+            pgerrs = []
+            pg.on("pageerror", lambda e: pgerrs.append(str(e)[:120]))
+            await pg.goto(BASE + "/games/poker/poker.html", wait_until="domcontentloaded", timeout=30000)
+            await pg.wait_for_timeout(800)
+            res = await pg.evaluate("""async ()=>{try{const G=window.pokerGame; if(!G) return {noapi:true};
+                const parity = await G.rankParity();
+                await G.deal({seed:'acceptance'});           // MUST await — racing deal+autoPlay double-deals
+                const sd = await G.autoPlayToShowdown();
+                const vl = await G.verifyLog();
+                const exp = G.export();
+                const imp = G.import(exp);
+                return { hasApi:true, parity,
+                         showdown:!!(sd&&Array.isArray(sd.winners)&&sd.winners.length>=1),
+                         signedActions:(sd&&sd.actions)||0, verify:vl,
+                         backup:!!(exp&&exp.schema==='rapp-commons-poker-save/1.0'&&imp&&imp.ok) };
+            }catch(e){return {err:String(e)}}}""")
+            res = res or {}
+            check("poker_game_no_errors", not pgerrs, pgerrs[:2])
+            check("poker_game_plays",
+                  bool(res.get("hasApi") and res.get("showdown")
+                       and (res.get("parity") or {}).get("royalBeatsPair") is True
+                       and (res.get("parity") or {}).get("flushBeatsStraight") is True),
+                  res)
+            check("poker_game_signed",
+                  bool((res.get("verify") or {}).get("ok") is True
+                       and (res.get("verify") or {}).get("signedOk") is True
+                       and (res.get("verify") or {}).get("commitOk") is True
+                       # a single hand TERMINATES in a bounded number of signed actions
+                       # (regression guard against the betting round never completing).
+                       and 1 <= (res.get("signedActions") or 0) < 120
+                       and res.get("backup") is True),
+                  res)
+            await pg.close()
+        except Exception as e:
+            check("poker_game_no_errors", False, e)
+            check("poker_game_plays", False, e)
+            check("poker_game_signed", False, e)
+
+        # house_page: homes/kody/house.html is the resident-house TEMPLATE. Default load is
+        # Kody's house; ?rappid=<rid>&owner=<name> makes the SAME file that resident's house.
+        try:
+            hp = await b.new_page(viewport={"width": 1000, "height": 800})
+            hperrs = []
+            hp.on("pageerror", lambda e: hperrs.append(str(e)[:120]))
+            await hp.goto(BASE + "/homes/kody/house.html", wait_until="domcontentloaded", timeout=30000)
+            await hp.wait_for_timeout(400)
+            dflt = await hp.evaluate("()=>{const H=window.kodyHouse; return H?{ready:H.ready,rooms:(H.rooms||[]).length,owner:H.owner,isDefault:H.isDefault,hasBack:typeof H.back==='function'}:{noapi:true}}") or {}
+            await hp.goto(BASE + "/homes/kody/house.html?rappid=rappid%3Av3%3Afeedface1234&owner=Ada", wait_until="domcontentloaded", timeout=30000)
+            await hp.wait_for_timeout(400)
+            custom = await hp.evaluate("()=>{const H=window.kodyHouse; return H?{owner:H.owner,rappid:H.rappid,isDefault:H.isDefault,title:document.title}:{noapi:true}}") or {}
+            check("house_page_no_errors", not hperrs, hperrs[:2])
+            check("house_page_template",
+                  bool(dflt.get("ready") is True and (dflt.get("rooms") or 0) >= 3
+                       and dflt.get("owner") == "Kody" and dflt.get("isDefault") is True
+                       and dflt.get("hasBack") is True
+                       and custom.get("owner") == "Ada" and custom.get("isDefault") is False
+                       and "Ada" in str(custom.get("title") or "")),
+                  {"default": dflt, "custom": custom})
+            await hp.close()
+        except Exception as e:
+            check("house_page_no_errors", False, e)
+            check("house_page_template", False, e)
+
         await b.close()
     print_summary()
 
