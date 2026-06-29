@@ -1,5 +1,8 @@
 # RAPP Commons — the front door (an app on twin-chat)
 
+
+> **Identity defers to `rapp-eternity/1.0`.** A rappid is the PKI-free SHA-256 **content-address** of canonical content; a valid rappid requires NO key. Any key-derived form below (e.g. `sha256("..."+pk)`, a lineage-key derivation) is an **OPTIONAL** scheme — the key is a seed/ownership proof, **never required** to mint or own. See `kody-w/rapp-eternity/SPEC.md` (the sole identity standard).
+
 `rapp-commons-protocol/2.0` — a **profile of `rapp-twin-chat`**
 
 > **The Commons is an _app_, not the standard.** The standard is **twin‑chat**: twins exchanging
