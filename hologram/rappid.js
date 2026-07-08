@@ -1,6 +1,6 @@
 /* (c) 2026 Kody Wildfeuer - PolyForm Noncommercial 1.0.0 - part of The RAPP Zoo */
 /* rappid — bridge a Moment into the RAPP Eternity Standard: the canonical id is rappid:<slug>:<64hex>,
-   256-bit, keypair-bound. A Moment's eternal address is its spacetime pk; its rappid is the ecosystem-
+   256-bit, a PKI-free content-address (keypair-binding is OPTIONAL — sig_suite is an add-on record field, never a required PKI). A Moment's eternal address is its spacetime pk; its rappid is the ecosystem-
    canonical form: rappid:moment:<sha256("moment:"+pk)>. Deterministic + eternal (the pk is eternal).
    COMPATIBILITY CONTRACT: read ALL legacy forms forever (pk, bare UTC ms, '|' separator), emit ONLY
    canonical; the 64-hex hash is the join key; NEVER version the string — add record fields instead.
