@@ -1980,7 +1980,7 @@ addEventListener("message", (e)=>{
 // see rappid.json / members.json / cubbies/kody-w/cubby.json). The house is owned by the operator's
 // eternal id — anonymous visitors stay rappid:v3 (the key IS the account); naming requires an owned
 // @owner/slug, so there is no auto-convert from a bare v3 (see federate.py::_parse_rappid).
-const KODY_RAPPID = "rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec";
+const KODY_RAPPID = "rappid:@kody-w/rapp:9a8f0a4b5a710e20f4d819a0f37d2a4c9f113b5e78fb3c29e70b54fff48a38f9";
 function houseUrl(rappid, owner){
   try { const u = new URL("homes/kody/house.html", location.href);
     if (rappid) u.searchParams.set("rappid", rappid);

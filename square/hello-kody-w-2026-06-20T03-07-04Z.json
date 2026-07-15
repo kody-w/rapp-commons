@@ -1,7 +1,7 @@
 {
   "schema": "rapp-commons-event/1.0",
   "type": "hello",
-  "from": "rappid:@kody-w/RAPP:0b635450c04249fbb4b1bdb571044dec",
+  "from": "rappid:@kody-w/rapp:9a8f0a4b5a710e20f4d819a0f37d2a4c9f113b5e78fb3c29e70b54fff48a38f9",
   "handle": "kody-w",
   "ts": "2026-06-20T03:07:04Z",
   "text": "kody-w just claimed a cubby in the commons.",

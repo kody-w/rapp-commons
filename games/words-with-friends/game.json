@@ -17,6 +17,6 @@
   "matches_dir": "matches/",
   "status": "open",
   "created_by": "kody-w",
-  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "from": "rappid:@kody-w/rapp-commons:fea3bd6e80bbac79efc22c4c1185c276d1833925a037ce120330be35e2afc3c7",
   "note": "Richer than the append-only commons games (keeps board state under matches/), but the pattern \u2014 signed, append-only moves \u2014 is identical."
 }

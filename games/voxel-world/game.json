@@ -30,6 +30,6 @@
   ],
   "status": "open",
   "created_by": "kody-w",
-  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "from": "rappid:@kody-w/rapp-commons:fea3bd6e80bbac79efc22c4c1185c276d1833925a037ce120330be35e2afc3c7",
   "note": "Same signed/append-only pattern as the other games \u2014 terrain regenerates from seed, only edits are stored, so the whole world is a tiny signed git log. The repo is the source of truth; the kited host is just the live relay."
 }

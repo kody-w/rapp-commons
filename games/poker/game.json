@@ -19,6 +19,6 @@
   "chips": "play-chips (no value)",
   "status": "open",
   "created_by": "kody-w",
-  "from": "rappid:@kody-w/rapp-commons:3929ce90ebe97fe2a95432e9f647f3a3",
+  "from": "rappid:@kody-w/rapp-commons:fea3bd6e80bbac79efc22c4c1185c276d1833925a037ce120330be35e2afc3c7",
   "note": "Engine is pure-stdlib and importable server-side; the browser room mirrors its action shape + hand ranking byte-for-byte so a hand played in-world replays/verifies here."
 }
