@@ -7,7 +7,7 @@ manual dispatch). The flow:
   1. Read members.json → list of {rappid, added_at, via}.
   2. For each member, derive their public-estate URL from their rappid.
      Convention (Article XLVIII):
-         operator rappid: rappid:@<owner>/<slug>:<hex>   (legacy v2 still read)
+         operator rappid: rappid:@<owner>/<slug>:<64-hex>  (canonical §6.1)
          public estate:   https://raw.githubusercontent.com/<owner>/<owner>-estate/main/outbound/<commons-rappid-slug>/
      (Operators without a `<owner>-estate` repo simply produce no posts;
       no error, just nothing to pull.)
@@ -88,29 +88,21 @@ def _gh_fetch(url: str) -> tuple[int, bytes]:
 
 def _parse_rappid(rappid: str) -> dict | None:
     """Parse a member rappid into at least {owner, repo}. Accepts BOTH the
-    consolidated Eternity form and the legacy v2 form (read-forever):
+    canonical RAPP form (spec §6.1); legacy v2 is not tolerated:
 
-      Eternity (emitted):  rappid:@<owner>/<slug>:<hex>
-      legacy v2 (read):    rappid:v2:<kind>:<ns>:<hash>@<host>/<owner>/<repo>
+      canonical (§6.1):  rappid:@<owner>/<slug>:<64-hex>
 
-    For the Eternity form the location IS @<owner>/<slug> (the github door);
-    for the legacy form the location is the @<host>/<owner>/<repo> suffix.
+    Canonical only (spec §6.1) — legacy v2 is not tolerated.
     """
     m = re.match(
-        r"^rappid:@(?P<owner>[A-Za-z0-9][\w.-]*)/(?P<repo>[A-Za-z0-9][\w.-]*):(?P<hash>[a-f0-9]+)$",
-        rappid,
-    )
-    if m:
-        d = m.groupdict()
-        d.update(kind=None, ns=f"@{d['owner']}/{d['repo']}", host="github.com")
-        return d
-    m = re.match(
-        r"^rappid:v2:(?P<kind>[a-z0-9_-]+):(?P<ns>[^:]+):(?P<hash>[a-f0-9]+)@(?P<host>[^/]+)/(?P<owner>[^/]+)/(?P<repo>.+)$",
+        r"^rappid:@(?P<owner>[a-z0-9]+(?:-[a-z0-9]+)*)/(?P<repo>[a-z0-9]+(?:-[a-z0-9]+)*):(?P<hash>[0-9a-f]{64})$",
         rappid,
     )
     if not m:
         return None
-    return m.groupdict()
+    d = m.groupdict()
+    d.update(kind=None, ns=f"@{d['owner']}/{d['repo']}", host="github.com")
+    return d
 
 
 def _outbound_url(member_rappid: str, commons_rappid_slug: str) -> str | None:
