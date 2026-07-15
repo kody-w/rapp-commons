@@ -45,7 +45,7 @@
       { "spec": "rapp-card/1.1.2",                "where": "card.json" },
       { "spec": "rapp-holo/1.1.2",                "where": "holo.md (front-matter)" },
       { "spec": "rapp-members/1.0",               "where": "members.json" },
-      { "spec": "rapp-rappid/2.0",                "where": "rappid.json" }
+      { "spec": "rapp/1",                "where": "rappid.json" }
     ],
     "purpose": "The commons is the canonical reference implementation — every spec the planter / federation / tether expects to find is present and validated here. Other neighborhoods clone the structure and adapt the soul/quirks/coordinates."
   },

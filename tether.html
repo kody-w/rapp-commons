@@ -2579,7 +2579,7 @@ function buildGrailFor(handle, rappid) {
             || rappid.match(/:([a-f0-9]+)@/)?.[1] || '';
   return {
     'rappid.json': JSON.stringify({
-      schema:    'rapp-rappid/2.0',
+      schema:    'rapp/1',
       rappid,
       kind:      'twin',
       namespace: `@${handle}/twin`,
