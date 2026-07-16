@@ -35,15 +35,37 @@ PERSONAS = {
 b64u = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
 canon = lambda o: json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
+_V3 = "rappid:v3:"  # legacy v3 prefix — read-forever in signed history, never minted anew
+
+
+def mint_rappid(pubkey) -> str:
+    """rapp/1 §6.2 KEYED mint: tail = sha256(b"rapp/1:rappid\\n" + SPKI_DER) hex."""
+    spki = pubkey.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    tail = hashlib.sha256(b"rapp/1:rappid\n" + spki).hexdigest()
+    return f"rappid:@being/{tail[:12]}:{tail}"
+
+
+def short_rid(r) -> str:
+    r = r or ""
+    if r.startswith("rappid:@"):
+        return r.split("/", 1)[-1].split(":", 1)[0][:10]
+    return r.replace(_V3, "")[:10]  # legacy v3 tail — read-forever display
+
 
 def identity(name):
     os.makedirs(KEYDIR, exist_ok=True)
     p = os.path.join(KEYDIR, name + ".json")
     if os.path.exists(p):
-        j = json.load(open(p)); return serialization.load_pem_private_key(j["pem"].encode(), None), j["pub"], j["rappid"]
+        j = json.load(open(p))
+        priv = serialization.load_pem_private_key(j["pem"].encode(), None)
+        if str(j.get("rappid", "")).startswith(_V3):  # legacy v3 id on disk — SAME key, re-derive the §6.2 keyed id
+            j["_migrated_from"], j["_migrated_from_note"] = j["rappid"], "legacy v3 string, read-forever"
+            j["rappid"] = mint_rappid(priv.public_key())
+            json.dump(j, open(p, "w"))
+        return priv, j["pub"], j["rappid"]
     priv = ec.generate_private_key(ec.SECP256R1())
     raw = priv.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-    pub, rid = b64u(raw), "rappid:v3:" + b64u(hashlib.sha256(raw).digest())
+    pub, rid = b64u(raw), mint_rappid(priv.public_key())  # §6.2 keyed mint; pub stays the raw point (wire compat)
     json.dump({"pem": priv.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                serialization.NoEncryption()).decode(), "pub": pub, "rappid": rid}, open(p, "w"))
     return priv, pub, rid
@@ -83,11 +105,11 @@ def snapshot(room):
                 names[e["from"]] = nm; rappid_of[nm.lower()] = e["from"]
     for e in evs:
         if e.get("kind") == "post":
-            lastpost[(names.get(e["from"]) or e["from"][:10]).lower()] = eid(e)
+            lastpost[(names.get(e["from"]) or short_rid(e["from"])).lower()] = eid(e)
     lines = []
     for e in evs:
         if e.get("kind") in ("post", "hello"):
-            who = names.get(e["from"]) or e["from"].replace("rappid:v3:", "")[:10]
+            who = names.get(e["from"]) or short_rid(e["from"])
             lines.append(f"{who}: {(e.get('body') or {}).get('text','')[:160]}")
     return "\n".join(lines[-18:]), rappid_of, lastpost, set(names.values())
 

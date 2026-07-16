@@ -106,7 +106,23 @@ function stableStringify(v){
 }
 const enc = s => new TextEncoder().encode(s);
 function status(t, cls){ $('pill').textContent=t; $('pill').className='pill '+(cls||''); }
-function shortName(rappid){ return (rappid||'').replace('rappid:v3:','').slice(0,12); }
+const hexOf = buf => [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+// rapp/1 §6.2 KEYED mint: tail = sha256("rapp/1:rappid\n" + SPKI_DER) hex; id = rappid:@being/<tail[:12]>:<tail>
+async function mintFromSpki(spki){
+  const dom = enc('rapp/1:rappid\n'), u = new Uint8Array(dom.length + spki.byteLength);
+  u.set(dom); u.set(new Uint8Array(spki), dom.length);
+  const tail = hexOf(await sha256(u));
+  return 'rappid:@being/'+tail.slice(0,12)+':'+tail;
+}
+// the wire still carries the RAW public point (ev.pub) — re-derive SPKI from it to check the binding
+async function rappidFromRaw(raw){
+  const k = await crypto.subtle.importKey('raw', raw, {name:'ECDSA',namedCurve:'P-256'}, true, ['verify']);
+  return mintFromSpki(await crypto.subtle.exportKey('spki', k));
+}
+function shortName(rappid){ const r = String(rappid||'');
+  if(r.startsWith('rappid:@')) return (r.split('/')[1]||'').split(':')[0].slice(0,12);
+  return r.replace('rappid:v3:','').slice(0,12);   // legacy v3 tail — read-forever display
+}
 function avatarFor(rappid){ let h=0; for(const c of (rappid||'')) h=(h*31+c.charCodeAt(0))>>>0; return AVATARS[h%AVATARS.length]; }
 
 // ---------- identity: your rappid = your username ----------
@@ -115,12 +131,17 @@ async function loadOrMint(){
   const saved = localStorage.getItem(IDKEY);
   if(saved){ try{ const j=JSON.parse(saved);
     const priv = await crypto.subtle.importKey('jwk', j.priv, {name:'ECDSA',namedCurve:'P-256'}, false, ['sign']);
+    if(String(j.rappid||'').startsWith('rappid:v3:')){ // legacy v3 id on disk — SAME key, re-derive the rapp/1 keyed id (the key is the account)
+      const rappid = await rappidFromRaw(ub64u(j.pub));
+      localStorage.setItem(IDKEY, JSON.stringify({ priv:j.priv, pub:j.pub, rappid, _migrated_from:j.rappid, _migrated_from_note:'legacy v3 string, read-forever' }));
+      return { priv, pubB64:j.pub, rappid };
+    }
     return { priv, pubB64:j.pub, rappid:j.rappid };
   }catch(e){ /* fall through and mint a fresh one */ } }
   const kp = await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'}, true, ['sign','verify']);
   const pubRaw = await crypto.subtle.exportKey('raw', kp.publicKey);
   const pubB64 = b64u(pubRaw);
-  const rappid = 'rappid:v3:'+b64u(await sha256(pubRaw));
+  const rappid = await mintFromSpki(await crypto.subtle.exportKey('spki', kp.publicKey));   // §6.2 keyed mint
   const privJwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
   localStorage.setItem(IDKEY, JSON.stringify({ priv:privJwk, pub:pubB64, rappid }));
   return { priv:kp.privateKey, pubB64, rappid };
@@ -137,8 +158,11 @@ async function makeEvent(kind, body){
 async function verify(ev){
   try{
     if(!ev || ev.schema!=='rapp-commons-event/1.0' || !ev.sig || !ev.pub || !ev.from) return false;
-    const raw = ub64u(ev.pub);
-    if(('rappid:v3:'+b64u(await sha256(raw)))!==ev.from) return false;        // fingerprint binds key→rappid
+    const raw = ub64u(ev.pub), from = String(ev.from);
+    let bound = false;                                                         // the key→rappid binding is the front-door rule
+    if(from.startsWith('rappid:@')) bound = ((await rappidFromRaw(raw))===from);           // rapp/1 §6.2 keyed binding
+    else if(from.startsWith('rappid:v3:')) bound = (('rappid:v3:'+b64u(await sha256(raw)))===from); // legacy v3 binding — read-forever, never minted anew
+    if(!bound) return false;
     const key = await crypto.subtle.importKey('raw', raw, {name:'ECDSA',namedCurve:'P-256'}, false, ['verify']);
     const { sig, ...noSig } = ev;
     return await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'}, key, ub64u(sig), enc(stableStringify(noSig)));

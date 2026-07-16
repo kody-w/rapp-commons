@@ -226,18 +226,26 @@ async function verifyCommitment(deck,nonce,commitment){
   return (await deckCommitment(deck,nonce))===commitment;
 }
 
-/* ── Identity per seat: ECDSA P-256; rappid = rappid:v3:<16 hex of sha256(canon(pubJwk))> ── */
+/* ── Identity per seat: ECDSA P-256; rapp/1 §6.2 KEYED mint —
+      tail = sha256("rapp/1:rappid\n" + SPKI_DER) hex; rappid = rappid:@being/<tail[:12]>:<tail> ── */
+async function rappidTailFromSpki(spki){
+  const dom=new TextEncoder().encode("rapp/1:rappid\n");
+  const u=new Uint8Array(dom.length+spki.byteLength);
+  u.set(dom); u.set(new Uint8Array(spki),dom.length);
+  const dg=await crypto.subtle.digest("SHA-256",u);
+  return [...new Uint8Array(dg)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function randomHexTail(){ let s=""; for(let i=0;i<64;i++) s+="0123456789abcdef"[(Math.random()*16)|0]; return s; }
 async function mintBeing(name){
   const being={ name, rappid:null, fp:null, key:null, pubJwk:null };
   try{
     being.key=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
     being.pubJwk=await crypto.subtle.exportKey("jwk",being.key.publicKey);
-    being.fp=(await sha256hex(canonicalJSON(being.pubJwk))).slice(0,16);
-    being.rappid="rappid:v3:"+being.fp;
+    being.fp=await rappidTailFromSpki(await crypto.subtle.exportKey("spki",being.key.publicKey));
   }catch(e){
-    being.fp=Math.random().toString(16).slice(2,18).padEnd(16,"0");
-    being.rappid="rappid:v3:"+being.fp;
+    being.fp=randomHexTail();                    // degraded keyless fallback — it cannot sign anyway
   }
+  being.rappid="rappid:@being/"+being.fp.slice(0,12)+":"+being.fp;
   return being;
 }
 async function signBody(being,body){
@@ -255,13 +263,21 @@ function hexToBytes(hex){
   return out;
 }
 async function rappidFromPub(pubJwk){
-  return "rappid:v3:"+(await sha256hex(canonicalJSON(pubJwk))).slice(0,16);
+  // rapp/1 §6.2 keyed binding: JWK -> SPKI DER -> domain-separated sha256 tail
+  const k=await crypto.subtle.importKey("jwk",pubJwk,{name:"ECDSA",namedCurve:"P-256"},true,["verify"]);
+  const tail=await rappidTailFromSpki(await crypto.subtle.exportKey("spki",k));
+  return "rappid:@being/"+tail.slice(0,12)+":"+tail;
+}
+async function rappidFromPubV3(pubJwk){ // legacy v3 binding (16-hex JWK-canon tail) — read-forever, never minted anew
+  return "rappid:v3:"+(await sha256hex(canonicalJSON(pubJwk))).slice(0,16); // legacy binding only — read-forever
 }
 /* Verify a single signed action: rebuild rappid from pub, verify sig over body-without-sig/pub. */
 async function verifyAction(act){
   try{
     if(!act||!act.pub||!act.sig) return false;
-    const expect=await rappidFromPub(act.pub);
+    const expect=String(act.from||"").startsWith("rappid:v3:")   // legacy v3 actions verify read-forever
+      ? await rappidFromPubV3(act.pub)
+      : await rappidFromPub(act.pub);
     if(expect!==act.from) return false;
     const body={}; for(const k of Object.keys(act)){ if(k==="sig"||k==="pub") continue; body[k]=act[k]; }
     const key=await crypto.subtle.importKey("jwk",act.pub,{name:"ECDSA",namedCurve:"P-256"},true,["verify"]);
@@ -805,7 +821,7 @@ function render(){
     wrap.style.left=pos.x+"%"; wrap.style.top=pos.y+"%";
     const plaque=document.createElement("div"); plaque.className="plaque";
     const nm=document.createElement("div"); nm.className="nm";
-    const short=s.being?s.being.rappid.replace("rappid:v3:","").slice(0,8):"—";
+    const short=s.being?(s.being.rappid.startsWith("rappid:@")?(s.being.rappid.split("/")[1]||"").split(":")[0]:s.being.rappid.replace("rappid:v3:","")).slice(0,8):"—"; // legacy v3 tail read-forever
     nm.textContent=(s.being?s.being.name:"seat "+i)+" · "+short+(i===0?" (you)":"");
     const ch=document.createElement("div"); ch.className="ch"; ch.textContent="⛁ "+s.chips;
     const bet=document.createElement("div"); bet.className="bet"; bet.textContent=s.bet>0?("bet "+s.bet):(s.folded?"folded":(s.allIn?"all-in":""));

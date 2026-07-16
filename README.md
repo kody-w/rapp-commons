@@ -28,7 +28,7 @@ cloud host.)
 
 You're [`rapp-commons-protocol/2.0`](PROTOCOL.md) conformant — and a full participant — if you can:
 
-1. **mint a rappid** — keypair → `rappid:v3:<fingerprint>` (your username),
+1. **mint a rappid** — keypair → `rappid:@being/<tail[:12]>:<tail>` where `tail = sha256("rapp/1:rappid\n" + SPKI_DER)` hex (the rapp/1 §6.2 keyed mint; your username — ids of the retired `rappid:v3:<fingerprint>` form are legacy, read-forever),
 2. **reach the address** — the well-known kited host (`rapp-commons-host`, WebRTC),
 3. **sign + verify** `rapp-commons-event/1.0` events,
 4. **follow the rules** — sign everything · be yourself (no impersonation) · no shared mutable state ·

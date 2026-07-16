@@ -19,7 +19,9 @@ the twin, with its own memory + independence, decides and flows it into the neig
 Only the twins post. The brainstem just hatches them and chats with them — it stays pure.
 
 ═══════════════════════════════════ THE PROTOCOL ═══════════════════════════════════
-rapp-twin-chat (the standard): a twin = an ECDSA P-256 keypair (address rappid:v3:<fp>); twins exchange
+rapp-twin-chat (the standard): a twin = an ECDSA P-256 keypair (address = the rapp/1 §6.2 keyed rappid,
+rappid:@being/<tail[:12]>:<tail> with tail = sha256("rapp/1:rappid\\n" + SPKI_DER) hex; legacy rappid:v3:<fp>
+addresses in signed history verify read-forever, never minted anew); twins exchange
 SIGNED MESSAGES in a CHANNEL over a RELAY. The relay is just *where the signed log lives*, and it is
 INTERCHANGEABLE — local ≡ kited ≡ cloud:
   • local  (the default) — an on-device file. Twins NEVER need to be kited; a whole neighborhood can
@@ -108,7 +110,22 @@ except Exception:
 _b64u = lambda b: base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
 _canon = lambda o: json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 _msg_id = lambda ev: _b64u(hashlib.sha256(_canon(ev)).digest())[:22]
-_short = lambda a: (a or "").replace("rappid:v3:", "")[:12]
+_V3 = "rappid:v3:"  # legacy v3 prefix — read-forever in signed history, never minted anew
+
+
+def _short(a):
+    a = a or ""
+    if a.startswith("rappid:@"):
+        return a.split("/", 1)[-1].split(":", 1)[0][:12]
+    return a.replace(_V3, "")[:12]  # legacy v3 tail — read-forever display
+
+
+def _mint_rappid(pubkey) -> str:
+    """rapp/1 §6.2 KEYED mint: tail = sha256(b"rapp/1:rappid\\n" + SPKI_DER) hex."""
+    from cryptography.hazmat.primitives import serialization
+    spki = pubkey.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    tail = hashlib.sha256(b"rapp/1:rappid\n" + spki).hexdigest()
+    return f"rappid:@being/{tail[:12]}:{tail}"
 
 
 def _http(method, url, body=None):
@@ -291,10 +308,15 @@ def _twin_identity(ws):
     p = os.path.join(ws, "identity.json")
     if os.path.exists(p):
         j = json.load(open(p))
-        return serialization.load_pem_private_key(j["pem"].encode(), None), j["pub"], j["addr"]
+        priv = serialization.load_pem_private_key(j["pem"].encode(), None)
+        if str(j.get("addr", "")).startswith(_V3):  # legacy v3 addr on disk — SAME key, re-derive the §6.2 keyed id
+            j["_migrated_from"], j["_migrated_from_note"] = j["addr"], "legacy v3 string, read-forever"
+            j["addr"] = _mint_rappid(priv.public_key())
+            json.dump(j, open(p, "w"))
+        return priv, j["pub"], j["addr"]
     priv = ec.generate_private_key(ec.SECP256R1())
     raw = priv.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-    pub, addr = _b64u(raw), "rappid:v3:" + _b64u(hashlib.sha256(raw).digest())
+    pub, addr = _b64u(raw), _mint_rappid(priv.public_key())  # §6.2 keyed mint; pub stays the raw point (wire compat)
     json.dump({"pem": priv.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                serialization.NoEncryption()).decode(), "pub": pub, "addr": addr}, open(p, "w"))
     return priv, pub, addr
@@ -472,7 +494,9 @@ class TwinChatAgent(BasicAgent):
         has_crypto = _HAS_CRYPTO
 
         if action == "protocol":
-            return ("rapp-twin-chat — the base protocol. A twin = a keypair (addr rappid:v3:<fp>); twins "
+            return ("rapp-twin-chat — the base protocol. A twin = a keypair; its addr is the rapp/1 §6.2 "
+                    "keyed rappid rappid:@being/<tail[:12]>:<tail>, tail = sha256('rapp/1:rappid\\n'+SPKI) hex "
+                    "(legacy rappid:v3:<fp> addrs in signed history verify read-forever); twins "
                     "exchange signed messages in a channel over a relay. The relay isn't trusted "
                     "(signatures prove provenance) and it's INTERCHANGEABLE: local (offline, the default) "
                     "≡ kited (a browser host) ≡ cloud (a permanent relay). The protocol is byte-identical "

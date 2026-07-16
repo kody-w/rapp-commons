@@ -96,6 +96,17 @@ def _b64u(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
 
 
+_V3 = "rappid:v3:"  # legacy v3 prefix — read-forever in signed history, never minted anew
+
+
+def _mint_rappid(pubkey) -> str:
+    """rapp/1 §6.2 KEYED mint: tail = sha256(b"rapp/1:rappid\\n" + SPKI_DER) hex."""
+    _ec, _h, ser, _d = _crypto()
+    spki = pubkey.public_bytes(ser.Encoding.DER, ser.PublicFormat.SubjectPublicKeyInfo)
+    tail = hashlib.sha256(b"rapp/1:rappid\n" + spki).hexdigest()
+    return f"rappid:@being/{tail[:12]}:{tail}"
+
+
 def _canon(o) -> bytes:
     return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
@@ -113,10 +124,14 @@ def identity():
     if os.path.exists(ID_PATH):
         j = json.load(open(ID_PATH))
         priv = ser.load_pem_private_key(j["pem"].encode(), password=None)
+        if str(j.get("rappid", "")).startswith(_V3):  # legacy v3 id on disk — SAME key, re-derive the §6.2 keyed id
+            j["_migrated_from"], j["_migrated_from_note"] = j["rappid"], "legacy v3 string, read-forever"
+            j["rappid"] = _mint_rappid(priv.public_key())
+            json.dump(j, open(ID_PATH, "w"))
         return priv, j["pub"], j["rappid"]
     priv = ec.generate_private_key(ec.SECP256R1())
     raw = priv.public_key().public_bytes(ser.Encoding.X962, ser.PublicFormat.UncompressedPoint)
-    pub, rappid = _b64u(raw), "rappid:v3:" + _b64u(hashlib.sha256(raw).digest())
+    pub, rappid = _b64u(raw), _mint_rappid(priv.public_key())  # §6.2 keyed mint; pub stays the raw point (wire compat)
     os.makedirs(STATE_DIR, exist_ok=True)
     json.dump({"pem": priv.private_bytes(ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()).decode(),
                "pub": pub, "rappid": rappid}, open(ID_PATH, "w"))
@@ -141,8 +156,47 @@ def read(room, since=0):
     return _http("GET", f"{RESIDENT}/rooms/{room}/events?since={since}").get("events", [])
 
 
+def verify_event(ev) -> bool:
+    """Signature + key→rappid binding check for a rapp-commons-event/1.0.
+
+    New events bind via the rapp/1 §6.2 keyed mint (SPKI re-derived from the raw
+    point carried in `pub`); events from legacy v3 ids verify read-forever via the
+    old sha256(raw) binding. The relay is never trusted — signatures prove provenance."""
+    ec, hashes, ser, _d = _crypto()
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+    try:
+        if not ev or ev.get("schema") != "rapp-commons-event/1.0":
+            return False
+        frm, sig_b64, pub_b64 = ev.get("from", ""), ev.get("sig"), ev.get("pub")
+        if not (frm and sig_b64 and pub_b64):
+            return False
+        raw = base64.urlsafe_b64decode(pub_b64 + "=" * (-len(pub_b64) % 4))
+        pubkey = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), raw)
+        if frm.startswith("rappid:@"):
+            bound = _mint_rappid(pubkey) == frm                                  # §6.2 keyed binding
+        elif frm.startswith(_V3):  # legacy v3 binding — read-forever, never minted anew
+            bound = _V3 + _b64u(hashlib.sha256(raw).digest()) == frm
+        else:
+            bound = False
+        if not bound:
+            return False
+        sig = base64.urlsafe_b64decode(sig_b64 + "=" * (-len(sig_b64) % 4))
+        if len(sig) != 64:
+            return False
+        der = encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
+        no_sig = {k: v for k, v in ev.items() if k != "sig"}
+        pubkey.verify(der, _canon(no_sig), ec.ECDSA(hashes.SHA256()))
+        return True
+    except (InvalidSignature, ValueError, TypeError):
+        return False
+
+
 def _short(r):
-    return (r or "").replace("rappid:v3:", "")[:12]
+    r = r or ""
+    if r.startswith("rappid:@"):
+        return r.split("/", 1)[-1].split(":", 1)[0][:12]
+    return r.replace(_V3, "")[:12]  # legacy v3 tail — read-forever display
 
 
 def watch(room):

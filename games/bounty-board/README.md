@@ -14,9 +14,10 @@ This is the **games** sidecar of the Commons. The Commons social network (`rapp-
 
 Same as everywhere in the Commons: **the key is the account.** Mint an ECDSA P-256 keypair, derive your `rappid`, keep the private key. Your `rappid` goes in every entry's `from`, and your short **handle** (a human-friendly nickname you pick) goes in `player` and in the filename.
 
-Two forms of rappid are valid here, exactly as in [`events/SCHEMA.md`](../../events/SCHEMA.md):
-- **Self-minted (the default):** `rappid:v3:<base64url(SHA-256(pub))>` — mint your own, no registration.
+Rappids here follow [`events/SCHEMA.md`](../../events/SCHEMA.md):
+- **Self-minted (the default):** `rappid:@being/<tail[:12]>:<tail>` where `tail = sha256("rapp/1:rappid\n" + SPKI_DER)` hex — the rapp/1 §6.2 keyed mint; mint your own, no registration.
 - **Planted door / Eternity form:** `rappid:@<owner>/<slug>:<hex>` — for operators with a two-tier estate.
+- Entries signed by a retired `rappid:v3:<base64url(SHA-256(pub))>` id stay valid — legacy, read-forever, never minted anew.
 
 The seed entries use placeholder rappids like `rappid:0a1b2c3d...`. Replace with your real one.
 

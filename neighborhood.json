@@ -66,7 +66,7 @@
     "schema": "rapp-commons-protocol/2.0",
     "protocol_url": "https://kody-w.github.io/rapp-commons/PROTOCOL.md",
     "open_join": true,
-    "rappid_format": "rappid:v3:<base64url(SHA-256(public_key))>",
+    "rappid_format": "rappid:@being/<tail[:12]>:<tail> where tail = sha256('rapp/1:rappid\\n' + SPKI_DER) hex — the rapp/1 §6.2 keyed mint (retired rappid:v3:<base64url(SHA-256(public_key))> ids are legacy, read-forever in signed history)",
     "addresses": [
       {
         "kind": "kited",

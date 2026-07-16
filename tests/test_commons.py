@@ -1216,7 +1216,9 @@ async def run():
                 # FIDELITY: LIVE COMMONS STREAM — the 3D world now joins the SAME real-time signed
                 # chat the front door (index.html, rapp-commons-protocol/2.0) runs, sharing ONE
                 # conversation + ONE identity across pages. The RC module adopts the front-door event
-                # protocol VERBATIM (rapp-commons-event/1.0: from=rappid:v3:b64u(sha256(raw pub)),
+                # protocol VERBATIM (rapp-commons-event/1.0: from = the rapp/1 §6.2 keyed rappid
+                # rappid:@being/<tail[:12]>:<tail>, tail=sha256hex("rapp/1:rappid\n"+SPKI_DER); events
+                # from legacy rappid:v3: ids verify read-forever via the old raw-key binding;
                 # pub=raw-key b64u, alg ecdsa-p256, body {text}, stable canonicalisation, b64u sig) and
                 # mints/loads under the SAME localStorage key ('rapp-commons-id'). Network is gated on
                 # world-entry (.live), so this asserts protocol correctness WITHOUT touching the public
@@ -1225,13 +1227,13 @@ async def run():
                 lc = await ev("""async ()=>{try{const A=window.commonsAgent;
                     const ev0 = await A.liveChatSign('acceptance livechat hello');   // mints/loads the unified id
                     const lc = A.liveChat();
-                    const ridOk = typeof lc.rappid==='string' && lc.rappid.indexOf('rappid:v3:')===0;
+                    const ridOk = typeof lc.rappid==='string' && /^rappid:@being\\/[0-9a-f]{12}:[0-9a-f]{64}$/.test(lc.rappid);
                     const stored = JSON.parse(localStorage.getItem('rapp-commons-id')||'null');
                     const sameId = !!(stored && stored.rappid===lc.rappid);          // SAME key+format as front door
                     const shapeOk = !!(ev0 && ev0.schema==='rapp-commons-event/1.0' && ev0.alg==='ecdsa-p256'
                         && typeof ev0.pub==='string' && typeof ev0.sig==='string'
                         && ev0.body && typeof ev0.body.text==='string'
-                        && typeof ev0.from==='string' && ev0.from.indexOf('rappid:v3:')===0);
+                        && typeof ev0.from==='string' && /^rappid:@being\\/[0-9a-f]{12}:[0-9a-f]{64}$/.test(ev0.from));
                     const verifyGood = await A.liveChatVerify(ev0);
                     const tampered = JSON.parse(JSON.stringify(ev0)); tampered.body.text='forged';
                     const verifyTamper = await A.liveChatVerify(tampered);
@@ -1476,7 +1478,7 @@ async def run():
                     const before = A.pokerBridge().actions;
                     window.dispatchEvent(new MessageEvent('message',{origin:location.origin,
                       data:{type:'rapp-poker',kind:'action',action:{schema:'rapp-poker-action/1.0',hand_id:'h1',seq:1,seat:0,
-                        from:'rappid:v3:deadbeefdeadbeef',action:'bet',amount:10,ts:'2026-06-22T00:00:00Z',sig:'ab',pub:{}}}}));
+                        from:'rappid:v3:deadbeefdeadbeef',action:'bet',amount:10,ts:'2026-06-22T00:00:00Z',sig:'ab',pub:{}}}})); // legacy v3-form action — read-forever
                     const actionsCounted = A.pokerBridge().actions===before+1;
                     window.dispatchEvent(new MessageEvent('message',{origin:location.origin,data:{type:'rapp-poker',kind:'close'}}));
                     const hidden = getComputedStyle(surf).display==='none';
@@ -1512,7 +1514,7 @@ async def run():
                     const srcOk = !!(fr&&/homes\\/kody\\/house\\.html/.test(fr.src||fr.getAttribute('src')||''));
                     const shown = getComputedStyle(surf).display!=='none';
                     const frozen = (A.surfaceOpen()===true) && (getComputedStyle(lock).display==='none');
-                    const op2 = A.openHouse('rappid:v3:abc123def456','Ada');
+                    const op2 = A.openHouse('rappid:v3:abc123def456','Ada'); // legacy v3-form id — read-forever, houses still open
                     const injected = !!(op2&&op2.url&&/[?&]rappid=rappid%3Av3%3Aabc123def456/.test(op2.url)&&op2.owner==='Ada');
                     window.dispatchEvent(new KeyboardEvent('keydown',{code:'Escape',bubbles:true}));
                     const closed = (A.surfaceOpen()===false) && (getComputedStyle(surf).display==='none');
