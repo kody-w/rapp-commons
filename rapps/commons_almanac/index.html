@@ -78,23 +78,24 @@ canvas#density { width: 100%; aspect-ratio: 1/1; max-width: 360px; display: bloc
 
 </div>
 
-<div class="fineprint" id="fineprint">commons_almanac/0.1.0 · pure client-side · reads <code>events/</code> via GitHub contents API</div>
+<div class="fineprint" id="fineprint">commons_almanac/0.1.0 · pure client-side · reads a CI-harvested <code>data/events.json</code> snapshot (Static Data Covenant — no runtime GitHub API calls)</div>
 
 <script>
 // ── Discover the host neighborhood ──
 // When loaded inside the tether iframe, the rapp resolves its own
 // origin to figure out which repo it's running in. Works for any
-// neighborhood that drops commons_almanac in their rapps/.
+// neighborhood that drops commons_almanac in their rapps/. This is
+// display-only now (the label under the title) — data comes from a
+// same-origin static snapshot, never from api.github.com.
 function detectRepo() {
   // GitHub Pages URL format: https://<owner>.github.io/<repo>/...
   const m = location.host.match(/^([^.]+)\.github\.io$/);
   if (m) {
     const path = location.pathname.split('/').filter(Boolean);
-    return { owner: m[1], repo: path[0] || '', api: `https://api.github.com/repos/${m[1]}/${path[0]}` };
+    return { owner: m[1], repo: path[0] || '' };
   }
   // file:// or localhost — fall back to a hardcoded commons.
   return { owner: 'kody-w', repo: 'rapp-commons',
-           api: 'https://api.github.com/repos/kody-w/rapp-commons',
            note: 'detected non-Pages host; using kody-w/rapp-commons as fallback' };
 }
 
@@ -103,26 +104,24 @@ document.getElementById('sub').textContent =
   `Live view · ${repo.owner}/${repo.repo}${repo.note ? ' · ' + repo.note : ''}`;
 
 // ── Fetch events ──
+// Static Data Covenant: read the CI-harvested rollup of events/*.json instead
+// of listing+fetching them from the GitHub API in the visitor browser. The
+// harvester (scripts/harvest_commons_events.py, run by each neighborhood's
+// own CI) reads events/ straight off the checked-out repo — no API call at
+// all is needed to produce it. Path is relative so this file works unchanged
+// wherever a neighborhood drops it under rapps/commons_almanac/.
 async function fetchEvents() {
   try {
-    const listing = await (await fetch(`${repo.api}/contents/events`)).json();
-    if (!Array.isArray(listing)) {
-      throw new Error(listing.message || 'unexpected response');
+    const r = await fetch('data/events.json');
+    if (!r.ok) throw new Error(`snapshot fetch returned ${r.status}`);
+    const events = await r.json();
+    if (!Array.isArray(events)) {
+      throw new Error('unexpected snapshot shape');
     }
-    const files = listing.filter(f => f.type === 'file' && f.name.endsWith('.json'));
-    // Fetch up to 50 events in parallel
-    const subset = files.slice(0, 50);
-    const events = await Promise.all(subset.map(async f => {
-      try {
-        const r = await fetch(f.download_url);
-        if (!r.ok) return null;
-        return await r.json();
-      } catch { return null; }
-    }));
-    return events.filter(Boolean);
+    return events;
   } catch (e) {
     document.getElementById('fineprint').innerHTML =
-      `<span class="err">Could not load events/: ${e.message}. (Probably no events yet, or GitHub API rate-limited.)</span>`;
+      `<span class="err">Could not load events/: ${e.message}. (Probably no events yet, or the snapshot hasn't been harvested.)</span>`;
     return [];
   }
 }

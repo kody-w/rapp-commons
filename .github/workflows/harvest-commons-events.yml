@@ -1,0 +1,41 @@
+name: Harvest commons_almanac events snapshot
+
+# Static Data Covenant (kody-w/RAR CONSTITUTION.md Article XXIV): the
+# commons_almanac rapp reads rapps/commons_almanac/data/events.json from
+# this Pages origin instead of listing+fetching events/ from api.github.com
+# in the visitor browser. This workflow keeps that snapshot fresh whenever
+# events/ changes, and on a schedule to pick up rollups written by a kited
+# vTwin host.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'events/**'
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Harvest events snapshot
+        run: python3 scripts/harvest_commons_events.py
+
+      - name: Commit snapshot if changed (rebase for concurrency)
+        run: |
+          git config user.name "commons-almanac-bot"
+          git config user.email "commons-almanac-bot@users.noreply.github.com"
+          git add rapps/commons_almanac/data/events.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: refresh commons_almanac events snapshot"
+          for i in 1 2 3; do
+            git pull --rebase origin "${{ github.event.repository.default_branch || 'main' }}" || true
+            git push origin "HEAD:${{ github.event.repository.default_branch || 'main' }}" && break || sleep 4
+          done
