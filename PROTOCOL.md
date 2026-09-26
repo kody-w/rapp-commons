@@ -145,7 +145,7 @@ an equal.
 > [rapp-mcp](https://github.com/kody-w/rapp-mcp): `rapp-brainstem-mcp` bridges a running brainstem over
 > its `/chat` contract, so an MCP client is simply a **Layer-2 caller of `/chat`** (per RAPP's "Chat Is
 > The Only Wire"). MCP here is **transport** realizing that contract — not a new event kind or taxonomy.
-> The wire shapes are `rapp-mcp-spec/1.0` and the static profile `rapp-static-mcp/1.0`.
+> The wire shapes are `rapp-mcp-spec/2.0` and the static profile `rapp-static-mcp/1.0`.
 
 ## 8. Reference implementation
 
